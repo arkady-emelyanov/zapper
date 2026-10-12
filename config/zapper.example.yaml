@@ -1,0 +1,125 @@
+# zapper startup config. `zapper init` copies this to ~/.config/zapper/zapper.yaml
+# (mode 0600) once and never overwrites it.
+#
+# The daemon loads this file at start as the running config. API changes
+# (`zapper rule add`, `zapper config edit`, approvals remembered in a profile)
+# change the running config only: `zapper config diff` shows them,
+# `zapper config save` writes them here, `zapper config reload` drops them.
+#
+# Policy is layered: session → profile → the profiles it extends → global.
+# Within a layer the first matching rule wins; `final: true` rules are checked
+# first, from global down, and cannot be overridden. Unmatched requests get the
+# most specific `defaults`, else deny.
+
+daemon:
+  firecracker: ~/.local/share/zapper/bin/firecracker
+  images: ~/.local/share/zapper/images
+  kernels: ~/.local/share/zapper/kernels
+  state: ~/.local/state/zapper
+  ui: 127.0.0.1:7878
+  ask_timeout_secs: 60
+  max_sessions: 16
+  # Private networks sessions may reach, when a rule allows the host.
+  # Loopback, link-local and this host's addresses stay unreachable.
+  private_networks: []
+
+# Secrets. With `mode: proxy` (the default) the session sees the placeholder
+# `zapper-secret-<name>`, and the proxy puts the value into requests that a
+# rule allows to the secret's `hosts`. With `mode: guest` the value is written
+# where a profile uses {{secret:<name>}}, for credentials the client holds
+# itself, such as S3 keys and client certificates; issue those scoped and
+# short-lived.
+secrets:
+  anthropic:
+    env: ANTHROPIC_API_KEY
+    hosts: [api.anthropic.com]
+  # A long-lived Claude token from `claude setup-token`, in a 0600 file.
+  claude:
+    file: ~/.config/zapper/claude-token
+    hosts: [api.anthropic.com]
+  # s3:
+  #   file: ~/.config/zapper/s3-session.env
+  #   mode: guest
+
+policy:
+  defaults: { net: deny, exec: allow }
+  net:
+    - { action: deny, host: "metadata.google.internal", final: true, comment: cloud metadata }
+  exec: []
+
+profiles:
+  # Everything inherits from here.
+  base:
+    description: Ubuntu shell; network only as rules allow
+    engine:
+      image: ubuntu-24.04
+      kernel: vmlinux-6.1
+      vcpus: 2
+      memory_mib: 2048
+      disk: 4GiB
+      network: nic        # or vsock: no NIC, proxy-aware programs only
+    agent:
+      kind: generic
+      command: [bash, -l]
+      user: user
+      workdir: /work
+
+  # `zapper run`: a shell on a copy of the current directory.
+  default:
+    extends: base
+    description: Shell on a copy of the current directory
+    mounts:
+      - { host: "{workdir}", guest: /work, mode: rw }
+    policy:
+      fs:
+        - { path: "/work/**/.env", access: hidden }
+        - { path: "/work/.git/config", access: ro }
+
+  # Claude Code with its credentials injected by the proxy.
+  # Image: make image IMAGE=claude (see the Makefile).
+  claude:
+    extends: default
+    description: Claude Code, API access only
+    engine: { image: claude, memory_mib: 4096 }
+    agent:
+      kind: claude-code
+      command: [claude]
+      user: agent
+      model: claude-opus-5-5
+      permission_mode: bypassPermissions
+      env:
+        CLAUDE_CODE_OAUTH_TOKEN: "{{secret:claude}}"
+      claude_md: |
+        You run in a zapper sandbox. Network access is limited by policy;
+        a 403 from the proxy means a rule denied the request.
+    policy:
+      net:
+        - { action: allow, host: api.anthropic.com, ports: [443], secrets: [claude, anthropic] }
+        - { action: allow, host: "github.com", ports: [443], methods: [GET], comment: read-only GitHub }
+        - { action: allow, host: "*.githubusercontent.com", ports: [443], methods: [GET] }
+      defaults: { net: ask }
+
+  # A language sandbox for studying: packages from the index only, 4 hours.
+  study-python:
+    extends: default
+    description: Python with PyPI, 4 hour limit
+    engine: { image: python, ttl_secs: 14400 }
+    agent: { command: [bash, -l] }
+    policy:
+      net:
+        - { action: allow, host: pypi.org, ports: [443], methods: [GET] }
+        - { action: allow, host: files.pythonhosted.org, ports: [443], methods: [GET] }
+
+  # An interview candidate for 2 hours. To let them reach lab services, add
+  # the lab subnet to daemon.private_networks, rules for the hosts, and the
+  # credentials you issue as secrets.
+  slurm-interview:
+    extends: default
+    description: Interview, lab Slurm REST only, 2 hours
+    engine: { ttl_secs: 7200 }
+    agent: { root: false }
+    policy:
+      net: []
+      exec:
+        - { action: deny, path: "nc", comment: no raw sockets tools }
+      defaults: { net: deny, exec: allow }

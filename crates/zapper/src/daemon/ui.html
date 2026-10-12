@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>zapper</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { --bg:#0f1115; --panel:#171a21; --line:#262b36; --text:#d7dae0; --dim:#8b93a3; --ok:#4cc38a; --bad:#ef6b73; --warn:#e5b454; --accent:#6ea8fe; }
+  @media (prefers-color-scheme: light) { :root { --bg:#f6f7f9; --panel:#fff; --line:#e3e6eb; --text:#1d2129; --dim:#6b7280; } }
+  * { box-sizing: border-box; }
+  body { margin:0; font: 13px/1.45 ui-sans-serif, system-ui, sans-serif; background:var(--bg); color:var(--text); }
+  header { display:flex; gap:16px; align-items:center; padding:10px 18px; border-bottom:1px solid var(--line); background:var(--panel); position:sticky; top:0; z-index:1; }
+  header h1 { font-size:15px; margin:0; letter-spacing:.5px; }
+  header .ro { color:var(--dim); font-size:11px; border:1px solid var(--line); padding:1px 6px; border-radius:9px; }
+  nav button { background:none; border:0; color:var(--dim); font:inherit; padding:6px 10px; cursor:pointer; border-radius:6px; }
+  nav button.on { color:var(--text); background:var(--line); }
+  .stat { margin-left:auto; display:flex; gap:14px; color:var(--dim); }
+  .stat b { color:var(--text); }
+  main { padding:16px 18px; }
+  section { display:none; } section.on { display:block; }
+  table { width:100%; border-collapse:collapse; background:var(--panel); border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+  th, td { text-align:left; padding:6px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--dim); font-weight:500; font-size:12px; }
+  tr.click { cursor:pointer; } tr.click:hover td { background:var(--line); }
+  .mono, pre, code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12px; }
+  pre { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px; overflow:auto; max-height:70vh; margin:0; }
+  .pill { display:inline-block; padding:0 7px; border-radius:9px; font-size:11px; border:1px solid currentColor; }
+  .allow, .running { color:var(--ok); } .deny, .failed { color:var(--bad); } .ask, .starting { color:var(--warn); } .stopped { color:var(--dim); }
+  .dim { color:var(--dim); }
+  .bar { display:flex; gap:10px; align-items:center; margin-bottom:10px; }
+  .bar select, .bar input { background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:4px 8px; font:inherit; }
+  h2 { font-size:13px; color:var(--dim); font-weight:500; margin:18px 0 8px; text-transform:uppercase; letter-spacing:.6px; }
+  .grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap:8px; margin-bottom:12px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:8px 10px; }
+  .card .k { color:var(--dim); font-size:11px; } .card .v { font-size:15px; }
+  .diff-add { color:var(--ok); } .diff-del { color:var(--bad); } .diff-hunk { color:var(--accent); }
+  .empty { color:var(--dim); padding:14px; text-align:center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>⚡ zapper</h1><span class="ro">read-only</span>
+  <nav id="nav"></nav>
+  <div class="stat" id="stat"></div>
+</header>
+<main>
+  <section id="sessions"></section>
+  <section id="session"></section>
+  <section id="events">
+    <div class="bar">
+      <select id="ev-session"><option value="">all sessions</option></select>
+      <select id="ev-type"><option value="">all types</option><option>net</option><option>dns</option><option>exec</option><option>ask</option><option>answer</option><option>guest</option><option>shell</option><option>session</option><option>config</option></select>
+      <select id="ev-action"><option value="">any action</option><option>allow</option><option>deny</option></select>
+      <input id="ev-q" placeholder="filter text">
+      <span class="dim" id="ev-count"></span>
+    </div>
+    <table><thead><tr><th>time</th><th>session</th><th>type</th><th>action</th><th>detail</th><th>rule</th></tr></thead><tbody id="ev-body"></tbody></table>
+  </section>
+  <section id="approvals"></section>
+  <section id="rules"></section>
+  <section id="config">
+    <div class="bar"><select id="cfg-view"><option value="running">running config</option><option value="startup">startup config</option><option value="diff">diff startup → running</option></select><span class="dim" id="cfg-hint"></span></div>
+    <pre id="cfg"></pre>
+  </section>
+</main>
+<script>
+// Everything shown comes from sessions that may be hostile: build the DOM
+// with textContent only, never innerHTML.
+const $ = (id) => document.getElementById(id);
+function el(tag, props = {}, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === 'class') e.className = v; else if (k === 'on') e.addEventListener('click', v); else e.setAttribute(k, v);
+  }
+  for (const k of kids.flat()) e.append(k instanceof Node ? k : document.createTextNode(k == null ? '' : String(k)));
+  return e;
+}
+const api = (p) => fetch('/api' + p).then(r => { if (!r.ok) throw new Error(r.status); return (r.headers.get('content-type') || '').includes('json') ? r.json() : r.text(); });
+const time = (t) => new Date(t * 1000).toLocaleTimeString();
+const ago = (t) => { const s = Math.round(Date.now() / 1000 - t); return s < 90 ? s + 's' : s < 5400 ? Math.round(s / 60) + 'm' : Math.round(s / 3600) + 'h'; };
+const pill = (cls, text) => el('span', { class: 'pill ' + cls }, text ?? cls);
+
+const tabs = ['sessions', 'events', 'approvals', 'rules', 'config'];
+let tab = 'sessions', current = null;
+function show(t, arg) {
+  tab = t; current = arg ?? null;
+  for (const s of document.querySelectorAll('section')) s.classList.toggle('on', s.id === t);
+  for (const b of $('nav').children) b.classList.toggle('on', b.dataset.t === t || (t === 'session' && b.dataset.t === 'sessions'));
+  refresh();
+}
+for (const t of tabs) { const b = el('button', { on: () => show(t) }, t); b.dataset.t = t; $('nav').append(b); }
+
+async function refresh() {
+  try {
+    const st = await api('/status');
+    $('stat').replaceChildren(
+      el('span', {}, el('b', {}, st.running), ' running'),
+      el('span', {}, el('b', {}, st.pending_approvals), ' pending'),
+      st.unsaved_changes ? el('span', { class: 'ask' }, 'unsaved config') : el('span', {}, 'config saved'));
+    if (tab === 'sessions') await renderSessions();
+    if (tab === 'session') await renderSession(current);
+    if (tab === 'approvals') await renderApprovals();
+    if (tab === 'rules') await renderRules();
+    if (tab === 'config') await renderConfig();
+  } catch (e) { $('stat').replaceChildren(el('span', { class: 'deny' }, 'daemon unreachable')); }
+}
+
+async function renderSessions() {
+  const list = await api('/sessions');
+  const sel = $('ev-session'), keep = sel.value;
+  sel.replaceChildren(el('option', { value: '' }, 'all sessions'), ...list.map(s => el('option', { value: s.id }, s.id + ' · ' + s.profile)));
+  sel.value = keep;
+  if (!list.length) return $('sessions').replaceChildren(el('div', { class: 'empty' }, 'No sessions. Start one with `zapper run`.'));
+  const rows = list.sort((a, b) => b.created - a.created).map(s => {
+    const c = s.counters;
+    const left = s.expires ? Math.max(0, Math.round((s.expires - Date.now() / 1000) / 60)) + ' min left' : '';
+    const tr = el('tr', { class: 'click', on: () => show('session', s.id) },
+      el('td', { class: 'mono' }, s.id), el('td', {}, s.profile), el('td', {}, pill(s.state), ' ', el('span', { class: 'dim' }, s.detail || '')),
+      el('td', {}, ago(s.created) + ' ago', el('div', { class: 'dim' }, left)),
+      el('td', { class: 'mono' }, s.image, el('div', { class: 'dim' }, s.vcpus + ' vCPU · ' + s.memory_mib + ' MiB')),
+      el('td', {}, el('span', { class: 'allow' }, c.net_allowed), ' / ', el('span', { class: 'deny' }, c.net_denied)),
+      el('td', {}, el('span', { class: 'allow' }, c.exec_allowed), ' / ', el('span', { class: 'deny' }, c.exec_denied)),
+      el('td', {}, c.exits), el('td', {}, s.root ? pill('ask', 'root') : s.user));
+    return tr;
+  });
+  $('sessions').replaceChildren(el('table', {}, el('thead', {}, el('tr', {}, ['id', 'profile', 'state', 'age', 'vm', 'net ✓/✗', 'exec ✓/✗', 'exits', 'user'].map(h => el('th', {}, h)))), el('tbody', {}, rows)));
+}
+
+async function renderSession(id) {
+  const [s, audit] = await Promise.all([api('/sessions/' + id), api('/sessions/' + id + '/audit')]);
+  const events = audit.split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+  const card = (k, v) => el('div', { class: 'card' }, el('div', { class: 'k' }, k), el('div', { class: 'v' }, v));
+  const c = s.counters;
+  const top = {};
+  for (const e of events) if (e.type === 'net') { const k = e.host + ':' + e.port; top[k] = top[k] || { allow: 0, deny: 0 }; top[k][e.action]++; }
+  const hosts = Object.entries(top).sort((a, b) => (b[1].allow + b[1].deny) - (a[1].allow + a[1].deny)).slice(0, 15);
+  const execs = events.filter(e => e.type === 'exec').slice(-200).reverse();
+  const exits = events.filter(e => e.type === 'guest' && e.event.event === 'exit').slice(-200).reverse();
+  $('session').replaceChildren(
+    el('div', { class: 'bar' }, el('button', { on: () => show('sessions') }, '← sessions'), el('b', { class: 'mono' }, s.id), pill(s.state), el('span', { class: 'dim' }, s.detail || '')),
+    el('div', { class: 'grid' }, card('profile', s.profile), card('image', s.image), card('user', s.root ? 'root' : s.user), card('workdir', s.workdir),
+      card('net allowed / denied', c.net_allowed + ' / ' + c.net_denied), card('exec allowed / denied', c.exec_allowed + ' / ' + c.exec_denied),
+      card('process exits', c.exits), card('shells', c.shells), card('session rules', s.rules),
+      card('expires', s.expires ? new Date(s.expires * 1000).toLocaleString() : 'never')),
+    el('h2', {}, 'destinations'),
+    hosts.length ? el('table', {}, el('thead', {}, el('tr', {}, el('th', {}, 'host'), el('th', {}, 'allowed'), el('th', {}, 'denied'))),
+      el('tbody', {}, hosts.map(([h, n]) => el('tr', {}, el('td', { class: 'mono' }, h), el('td', { class: 'allow' }, n.allow), el('td', { class: 'deny' }, n.deny))))) : el('div', { class: 'empty' }, 'no network activity'),
+    el('h2', {}, 'exec (latest first)'),
+    execs.length ? el('table', {}, el('thead', {}, el('tr', {}, ['time', 'action', 'pid', 'command', 'cwd', 'rule', 'wait'].map(h => el('th', {}, h)))),
+      el('tbody', {}, execs.map(e => el('tr', {}, el('td', {}, time(e.ts)), el('td', {}, pill(e.action)), el('td', { class: 'mono' }, e.pid),
+        el('td', { class: 'mono' }, e.argv.join(' ')), el('td', { class: 'mono dim' }, e.cwd || ''), el('td', { class: 'mono' }, e.rule || 'default'), el('td', {}, e.wait_ms.toFixed(1) + ' ms'))))) : el('div', { class: 'empty' }, 'no execs'),
+    el('h2', {}, 'process exits (latest first)'),
+    exits.length ? el('table', {}, el('thead', {}, el('tr', {}, ['time', 'pid', 'command', 'exit', 'elapsed', 'cpu user/sys', 'avg mem', 'io'].map(h => el('th', {}, h)))),
+      el('tbody', {}, exits.map(({ ts, event: x }) => el('tr', {}, el('td', {}, time(ts)), el('td', { class: 'mono' }, x.pid), el('td', { class: 'mono' }, x.comm),
+        el('td', {}, x.signal ? pill('deny', 'sig ' + x.signal) : x.exit_code ? pill('deny', x.exit_code) : pill('allow', '0')),
+        el('td', {}, x.elapsed_ms + ' ms'), el('td', {}, x.user_ms + ' / ' + x.sys_ms + ' ms'), el('td', {}, x.mem_kib + ' KiB'), el('td', {}, x.io_bytes + ' B'))))) : el('div', { class: 'empty' }, 'no exits yet'));
+}
+
+async function renderApprovals() {
+  const list = await api('/approvals');
+  if (!list.length) return $('approvals').replaceChildren(el('div', { class: 'empty' }, 'Nothing is waiting for a decision.'));
+  $('approvals').replaceChildren(
+    el('p', { class: 'dim' }, 'This UI is read-only. Answer with `zapper approve ID` or `zapper deny ID` (add --remember session|profile).'),
+    el('table', {}, el('thead', {}, el('tr', {}, ['id', 'session', 'kind', 'request', 'waiting'].map(h => el('th', {}, h)))),
+      el('tbody', {}, list.map(p => el('tr', {}, el('td', { class: 'mono' }, p.id), el('td', { class: 'mono' }, p.session), el('td', {}, p.kind), el('td', { class: 'mono' }, p.subject), el('td', {}, ago(p.created)))))));
+}
+
+function ruleText(r) {
+  if (r.kind === 'net') return [r.host + (r.ports ? ':' + r.ports.join(',') : ''), r.methods ? r.methods.join(',') : '', r.path || '', r.secrets ? 'secrets: ' + r.secrets.join(',') : ''].filter(Boolean).join('  ');
+  if (r.kind === 'exec') return r.path + (r.args ? '  args: ' + r.args : '');
+  return r.path + '  ' + r.access;
+}
+async function renderRules() {
+  const rules = await api('/rules');
+  const groups = {};
+  for (const r of rules) (groups[r.scope] = groups[r.scope] || []).push(r);
+  const order = Object.keys(groups).sort((a, b) => (a.startsWith('session') ? 0 : a.startsWith('profile') ? 1 : 2) - (b.startsWith('session') ? 0 : b.startsWith('profile') ? 1 : 2) || a.localeCompare(b));
+  $('rules').replaceChildren(
+    el('p', { class: 'dim' }, 'Evaluation: final rules from global down, then session → profile → parent profiles → global; first match wins within a layer.'),
+    ...order.map(scope => [el('h2', {}, scope),
+      el('table', {}, el('thead', {}, el('tr', {}, ['id', 'kind', 'action', 'match', 'comment'].map(h => el('th', {}, h)))),
+        el('tbody', {}, groups[scope].map(r => el('tr', {}, el('td', { class: 'mono' }, r.id, r.final ? ' ' : '', r.final ? pill('deny', 'final') : ''),
+          el('td', {}, r.kind), el('td', {}, r.action ? pill(r.action) : pill('dim', r.access)), el('td', { class: 'mono' }, ruleText(r)), el('td', { class: 'dim' }, r.comment || '')))))]).flat());
+}
+
+async function renderConfig() {
+  const view = $('cfg-view').value;
+  const text = await api(view === 'running' ? '/config' : view === 'startup' ? '/config/startup' : '/config/diff');
+  $('cfg-hint').textContent = view === 'diff' ? 'save with `zapper config save`, discard with `zapper config reload`' : 'secret values are redacted';
+  const pre = $('cfg');
+  if (view !== 'diff') return pre.replaceChildren(text);
+  if (!text.trim()) return pre.replaceChildren('No unsaved changes.');
+  pre.replaceChildren(...text.split('\n').map(l => el('div', { class: l.startsWith('+') ? 'diff-add' : l.startsWith('-') ? 'diff-del' : l.startsWith('@@') ? 'diff-hunk' : '' }, l)));
+}
+$('cfg-view').addEventListener('change', renderConfig);
+
+// Live events.
+const events = [];
+function eventRow(e) {
+  let action = e.action, detail = '', rule = e.rule || '';
+  switch (e.type) {
+    case 'net': detail = (e.method ? e.method + ' ' : 'connect ') + e.host + ':' + e.port + (e.path || '') + (e.status ? ' → ' + e.status : '') + (e.secrets ? '  [secrets: ' + e.secrets.join(',') + ']' : '') + (e.error ? '  ' + e.error : '') + (e.inspected ? '' : '  (tunnel)'); break;
+    case 'exec': detail = e.argv.join(' ') + '  (' + e.wait_ms.toFixed(1) + ' ms)'; break;
+    case 'ask': action = 'ask'; detail = e.id + ': ' + e.subject; break;
+    case 'answer': action = e.allow ? 'allow' : 'deny'; detail = e.id + (e.remember ? ' · ' + e.remember : ''); break;
+    case 'guest': { const x = e.event; detail = x.event === 'exit' ? x.comm + ' pid ' + x.pid + ' exit ' + (x.signal ? 'signal ' + x.signal : x.exit_code) + ' · ' + x.elapsed_ms + ' ms' : x.event === 'setup' ? (x.ok ? 'ok: ' : 'FAILED: ') + x.step : JSON.stringify(x); break; }
+    case 'shell': detail = 'shell ' + e.id + ' ' + e.state + (e.argv ? ': ' + e.argv.join(' ') : '') + (e.exit_code != null ? ' exit ' + e.exit_code : ''); break;
+    case 'dns': action = e.allowed ? 'allow' : 'deny'; detail = 'resolve ' + e.name + (e.answer ? ' → ' + e.answer : ''); break;
+    case 'session': detail = e.state + (e.detail ? ': ' + e.detail : ''); break;
+    case 'config': detail = e.change; break;
+  }
+  return { e, action: action || '', detail, rule };
+}
+function renderEvents() {
+  const s = $('ev-session').value, t = $('ev-type').value, a = $('ev-action').value, q = $('ev-q').value.toLowerCase();
+  const rows = events.filter(r => (!s || r.e.session === s) && (!t || r.e.type === t) && (!a || r.action === a) && (!q || r.detail.toLowerCase().includes(q))).slice(-500).reverse();
+  $('ev-count').textContent = rows.length + ' shown';
+  $('ev-body').replaceChildren(...rows.map(r => el('tr', {}, el('td', {}, time(r.e.ts)), el('td', { class: 'mono' }, r.e.session || ''), el('td', {}, r.e.type),
+    el('td', {}, r.action ? pill(r.action) : ''), el('td', { class: 'mono' }, r.detail), el('td', { class: 'mono dim' }, r.rule))));
+}
+for (const id of ['ev-session', 'ev-type', 'ev-action']) $(id).addEventListener('change', renderEvents);
+$('ev-q').addEventListener('input', renderEvents);
+let pending = false;
+const es = new EventSource('/api/events?history=true');
+es.onmessage = (m) => {
+  events.push(eventRow(JSON.parse(m.data)));
+  if (events.length > 5000) events.splice(0, 1000);
+  if (!pending) { pending = true; setTimeout(() => { pending = false; if (tab === 'events') renderEvents(); }, 250); }
+};
+
+show('sessions');
+setInterval(refresh, 3000);
+</script>
+</body>
+</html>

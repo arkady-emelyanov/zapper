@@ -1,0 +1,768 @@
+use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
+
+use anyhow::{anyhow, bail, Context, Result};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+/// The whole daemon configuration. This is what `GET /config` returns and what
+/// `POST /config/save` writes to the startup file.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Config {
+    #[serde(default)]
+    pub daemon: DaemonConfig,
+    /// Named secrets. Their values live on the host only; the sandbox sees a
+    /// placeholder that the proxy swaps for the value on allowed requests.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub secrets: BTreeMap<String, Secret>,
+    /// The global policy layer, below every profile.
+    #[serde(default)]
+    pub policy: Policy,
+    #[serde(default)]
+    pub profiles: BTreeMap<String, Profile>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DaemonConfig {
+    /// Firecracker binary.
+    pub firecracker: String,
+    /// Static `zapper-agent` binary; empty looks next to `zapper`.
+    pub agent: String,
+    /// Directory of root filesystem images (`<name>.ext4`).
+    pub images: String,
+    /// Directory of guest kernels.
+    pub kernels: String,
+    /// Directory of per-session state: sockets, disks, audit logs.
+    pub state: String,
+    /// Address of the read-only web UI; empty disables it.
+    pub ui: String,
+    /// How long an `ask` decision waits for an approval before denying.
+    pub ask_timeout_secs: u64,
+    /// Upper bound on concurrent sessions.
+    pub max_sessions: usize,
+    /// Private networks (CIDR) sessions may reach at all, if a rule allows.
+    /// Loopback, link-local (cloud metadata) and the host's own addresses are
+    /// never reachable; other private and unique-local addresses only if
+    /// listed here.
+    pub private_networks: Vec<String>,
+}
+
+impl Default for DaemonConfig {
+    fn default() -> Self {
+        Self {
+            firecracker: "~/.local/share/zapper/bin/firecracker".into(),
+            agent: String::new(),
+            images: "~/.local/share/zapper/images".into(),
+            kernels: "~/.local/share/zapper/kernels".into(),
+            state: "~/.local/state/zapper".into(),
+            ui: "127.0.0.1:7878".into(),
+            ask_timeout_secs: 60,
+            max_sessions: 16,
+            private_networks: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Secret {
+    #[serde(flatten)]
+    pub source: SecretSource,
+    /// How the secret reaches its user.
+    #[serde(default, skip_serializing_if = "SecretMode::is_proxy")]
+    pub mode: SecretMode,
+    /// Host globs the proxy may send the secret to. A rule can only inject a
+    /// secret into requests to these hosts, whatever else it matches. Required
+    /// for `proxy` secrets.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hosts: Vec<String>,
+    /// Also inject into plain `http://` requests. Off by default: anything
+    /// on the path can read them. For lab-internal services only.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub plaintext: bool,
+}
+
+impl Secret {
+    pub fn allows_host(&self, host: &str) -> bool {
+        self.hosts.iter().any(|h| crate::eval::host_matches(h, host))
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SecretMode {
+    /// The guest sees a placeholder; the proxy puts the value into the headers
+    /// of allowed requests to `hosts`. For bearer tokens and API keys.
+    #[default]
+    Proxy,
+    /// `{{secret:NAME}}` in the agent's env and files becomes the value
+    /// itself, readable by the workload. For credentials the client must hold:
+    /// signing keys (S3), client certificates, kubeconfigs. Scope them and
+    /// make them expire.
+    Guest,
+}
+
+impl SecretMode {
+    fn is_proxy(&self) -> bool {
+        *self == SecretMode::Proxy
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged, deny_unknown_fields)]
+pub enum SecretSource {
+    /// Read from the daemon's environment.
+    Env { env: String },
+    /// Read from a file, optionally a string field of a JSON file selected by a
+    /// JSON pointer (e.g. `/claudeAiOauth/accessToken`).
+    File {
+        file: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        json: Option<String>,
+    },
+    /// Inline value. Saved into the startup file as is; prefer `env` or `file`.
+    Value { value: String },
+}
+
+impl SecretSource {
+    pub fn resolve(&self) -> Result<String> {
+        match self {
+            SecretSource::Env { env } => {
+                std::env::var(env).with_context(|| format!("environment variable {env} is not set"))
+            }
+            SecretSource::File { file, json } => {
+                let path = expand_home(file);
+                let text = std::fs::read_to_string(&path).with_context(|| format!("reading {path}"))?;
+                match json {
+                    None => Ok(text.trim().to_string()),
+                    Some(pointer) => {
+                        let v: Value = serde_json::from_str(&text).with_context(|| format!("parsing {path}"))?;
+                        v.pointer(pointer)
+                            .and_then(Value::as_str)
+                            .map(str::to_string)
+                            .ok_or_else(|| anyhow!("{path}: no string at {pointer}"))
+                    }
+                }
+            }
+            SecretSource::Value { value } => Ok(value.clone()),
+        }
+    }
+}
+
+/// Expands a leading `~/` to `$HOME`.
+pub fn expand_home(path: &str) -> String {
+    match (path.strip_prefix("~/"), std::env::var("HOME")) {
+        (Some(rest), Ok(home)) => format!("{home}/{rest}"),
+        _ => path.to_string(),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Action {
+    Allow,
+    Deny,
+    Ask,
+}
+
+impl fmt::Display for Action {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Action::Allow => "allow",
+            Action::Deny => "deny",
+            Action::Ask => "ask",
+        })
+    }
+}
+
+/// One policy layer.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Policy {
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub net: Vec<NetRule>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub exec: Vec<ExecRule>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub fs: Vec<FsRule>,
+    /// Action when no rule matches. The most specific layer that sets it wins;
+    /// `deny` if none does.
+    #[serde(skip_serializing_if = "Defaults::is_empty")]
+    pub defaults: Defaults,
+}
+
+impl Policy {
+    pub fn is_empty(&self) -> bool {
+        self.net.is_empty() && self.exec.is_empty() && self.fs.is_empty() && self.defaults.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Defaults {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub net: Option<Action>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exec: Option<Action>,
+}
+
+impl Defaults {
+    pub fn is_empty(&self) -> bool {
+        self.net.is_none() && self.exec.is_none()
+    }
+}
+
+/// Egress rule, matched against every connection and, when the connection is
+/// inspected, every HTTP request on it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NetRule {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    pub action: Action,
+    /// Host glob, case-insensitive: `api.github.com`, `*.github.com`, `*`.
+    #[serde(default = "any")]
+    pub host: String,
+    /// Destination ports; empty matches any.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ports: Vec<u16>,
+    /// HTTP methods; empty matches any. Setting it makes the proxy inspect TLS.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub methods: Vec<String>,
+    /// URL path glob (no query string). Setting it makes the proxy inspect TLS.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    /// Secrets whose placeholders are replaced with their values in the
+    /// headers of requests this rule allows.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub secrets: Vec<String>,
+    /// Headers set on requests this rule allows; values may use
+    /// `{{secret:NAME}}`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub set_headers: BTreeMap<String, String>,
+    #[serde(default, rename = "final", skip_serializing_if = "is_false")]
+    pub final_: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comment: Option<String>,
+}
+
+impl NetRule {
+    /// Whether matching or applying this rule needs the decrypted HTTP request.
+    pub fn needs_inspection(&self) -> bool {
+        !self.methods.is_empty() || self.path.is_some() || !self.secrets.is_empty() || !self.set_headers.is_empty()
+    }
+}
+
+/// Exec rule, matched against every `execve` inside the sandbox.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExecRule {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    pub action: Action,
+    /// Glob over the resolved executable path if it contains `/`
+    /// (`/usr/bin/*`), otherwise over its file name (`git`).
+    #[serde(default = "any")]
+    pub path: String,
+    /// Glob over the arguments after argv[0], joined by spaces.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub args: Option<String>,
+    #[serde(default, rename = "final", skip_serializing_if = "is_false")]
+    pub final_: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comment: Option<String>,
+}
+
+/// Filesystem rule, applied inside the sandbox when the session starts.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FsRule {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    /// Guest path glob, e.g. `/work/**/.env`.
+    pub path: String,
+    pub access: FsAccess,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comment: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FsAccess {
+    /// Covered by an empty file or directory.
+    Hidden,
+    /// Remounted read-only.
+    Ro,
+}
+
+fn any() -> String {
+    "*".into()
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Profile {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extends: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Merged field by field over the parent's.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub engine: Option<Value>,
+    /// Merged field by field over the parent's.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent: Option<Value>,
+    /// Added to the parent's.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub mounts: Vec<Mount>,
+    /// Shell commands run as root when the sandbox is created, after the
+    /// parent's. Network goes through the proxy with this profile's policy.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub setup: Vec<String>,
+    #[serde(skip_serializing_if = "Policy::is_empty")]
+    pub policy: Policy,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Mount {
+    /// Host directory; `{workdir}` is the directory `zapper run` was started
+    /// in. It is copied into an ext4 disk when the session starts: changes in
+    /// the guest stay in the session until copied out with `zapper cp`.
+    pub host: String,
+    pub guest: String,
+    #[serde(default)]
+    pub mode: MountMode,
+    /// Free space added to a `rw` disk, e.g. `1GiB`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extra: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MountMode {
+    Ro,
+    #[default]
+    Rw,
+}
+
+/// The microVM a session runs in.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Engine {
+    /// Root filesystem image name, built with `zapper image build`. The
+    /// session gets a private copy; the image itself is never written.
+    pub image: String,
+    /// Guest kernel name in the images directory.
+    pub kernel: String,
+    pub vcpus: u8,
+    pub memory_mib: u32,
+    /// Size of the session's root disk, e.g. `4GiB`; the image is grown to it.
+    pub disk: String,
+    /// Session lifetime; the VM is destroyed when it runs out. `0` is no limit.
+    pub ttl_secs: u64,
+    /// Extra kernel command line.
+    pub boot_args: String,
+    /// How the guest reaches the network.
+    pub network: NetworkMode,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NetworkMode {
+    /// A virtio NIC. The VMM runs in its own network namespace whose only way
+    /// out is zapper: every TCP connection and DNS query from the guest is
+    /// captured there and goes through policy, whatever the program.
+    #[default]
+    Nic,
+    /// Loopback and `HTTP(S)_PROXY` pointing at a vsock forwarder, for programs
+    /// that use proxy variables. Works without user namespaces on the host.
+    Vsock,
+}
+
+impl Default for Engine {
+    fn default() -> Self {
+        Self {
+            image: "ubuntu-24.04".into(),
+            kernel: "vmlinux-6.1".into(),
+            vcpus: 2,
+            memory_mib: 2048,
+            disk: "4GiB".into(),
+            ttl_secs: 0,
+            boot_args: String::new(),
+            network: NetworkMode::Nic,
+        }
+    }
+}
+
+/// What runs inside the sandbox and how it is configured.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AgentSpec {
+    /// `claude-code` renders Claude Code's settings; `generic` only writes
+    /// `files` and `env`.
+    pub kind: String,
+    /// Default command of `zapper run`.
+    pub command: Vec<String>,
+    /// User the command runs as, created with uid 1000 if missing.
+    pub user: String,
+    /// Run as root instead. The workload can then tamper with in-guest
+    /// controls (exec policy, `fs` rules, instrumentation); host-side
+    /// controls (network, secrets, disks, limits) still hold.
+    pub root: bool,
+    /// Working directory of the command.
+    pub workdir: String,
+    /// Environment; values may use `{{secret:NAME}}`.
+    pub env: BTreeMap<String, String>,
+    /// Claude Code: `model` in settings.json.
+    pub model: Option<String>,
+    /// Claude Code: `permissions.defaultMode` in settings.json.
+    pub permission_mode: Option<String>,
+    /// Claude Code: merged into `~/.claude/settings.json`.
+    pub settings: Option<Value>,
+    /// Claude Code: `mcpServers` in `~/.claude.json`.
+    pub mcp_servers: Option<Value>,
+    /// Claude Code: `~/.claude/CLAUDE.md`.
+    pub claude_md: Option<String>,
+    /// Extra files, guest path (`~` is the user's home) to content.
+    pub files: BTreeMap<String, String>,
+}
+
+impl Default for AgentSpec {
+    fn default() -> Self {
+        Self {
+            kind: "claude-code".into(),
+            command: vec!["claude".into()],
+            user: "agent".into(),
+            root: false,
+            workdir: "/work".into(),
+            env: BTreeMap::new(),
+            model: None,
+            permission_mode: None,
+            settings: None,
+            mcp_servers: None,
+            claude_md: None,
+            files: BTreeMap::new(),
+        }
+    }
+}
+
+/// A profile with its `extends` chain resolved.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ResolvedProfile {
+    pub name: String,
+    pub engine: Engine,
+    pub agent: AgentSpec,
+    pub mounts: Vec<Mount>,
+    pub setup: Vec<String>,
+    /// Policy layers from the profile itself up to its root ancestor, global
+    /// layer excluded.
+    pub layers: Vec<(Scope, Policy)>,
+}
+
+/// Where a policy layer comes from.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(into = "String", try_from = "String")]
+pub enum Scope {
+    Global,
+    Profile(String),
+    Session(String),
+}
+
+impl fmt::Display for Scope {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Scope::Global => f.write_str("global"),
+            Scope::Profile(p) => write!(f, "profile:{p}"),
+            Scope::Session(s) => write!(f, "session:{s}"),
+        }
+    }
+}
+
+impl std::str::FromStr for Scope {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> Result<Self> {
+        match s.split_once(':') {
+            None if s == "global" => Ok(Scope::Global),
+            Some(("profile", p)) if !p.is_empty() => Ok(Scope::Profile(p.into())),
+            Some(("session", id)) if !id.is_empty() => Ok(Scope::Session(id.into())),
+            _ => bail!("invalid scope {s:?}: expected global, profile:NAME or session:ID"),
+        }
+    }
+}
+
+impl From<Scope> for String {
+    fn from(s: Scope) -> String {
+        s.to_string()
+    }
+}
+
+impl TryFrom<String> for Scope {
+    type Error = anyhow::Error;
+    fn try_from(s: String) -> Result<Self> {
+        s.parse()
+    }
+}
+
+/// Rule categories.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Kind {
+    Net,
+    Exec,
+    Fs,
+}
+
+impl fmt::Display for Kind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Kind::Net => "net",
+            Kind::Exec => "exec",
+            Kind::Fs => "fs",
+        })
+    }
+}
+
+/// A rule of any kind, as accepted by the rules API.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum AnyRule {
+    Net(NetRule),
+    Exec(ExecRule),
+    Fs(FsRule),
+}
+
+impl AnyRule {
+    pub fn kind(&self) -> Kind {
+        match self {
+            AnyRule::Net(_) => Kind::Net,
+            AnyRule::Exec(_) => Kind::Exec,
+            AnyRule::Fs(_) => Kind::Fs,
+        }
+    }
+
+    pub fn set_id(&mut self, id: String) {
+        match self {
+            AnyRule::Net(r) => r.id = Some(id),
+            AnyRule::Exec(r) => r.id = Some(id),
+            AnyRule::Fs(r) => r.id = Some(id),
+        }
+    }
+
+    pub fn id(&self) -> Option<&str> {
+        match self {
+            AnyRule::Net(r) => r.id.as_deref(),
+            AnyRule::Exec(r) => r.id.as_deref(),
+            AnyRule::Fs(r) => r.id.as_deref(),
+        }
+    }
+}
+
+impl Policy {
+    fn ids(&self) -> impl Iterator<Item = &str> {
+        let net = self.net.iter().filter_map(|r| r.id.as_deref());
+        let exec = self.exec.iter().filter_map(|r| r.id.as_deref());
+        let fs = self.fs.iter().filter_map(|r| r.id.as_deref());
+        net.chain(exec).chain(fs)
+    }
+
+    /// Gives every rule without an id one that is not in `taken`.
+    pub fn assign_ids(&mut self, taken: &mut BTreeSet<String>) {
+        fn fresh(kind: Kind, taken: &mut BTreeSet<String>) -> String {
+            let id = (1..).map(|n| format!("{kind}-{n}")).find(|id| !taken.contains(id)).unwrap();
+            taken.insert(id.clone());
+            id
+        }
+        for r in &mut self.net {
+            r.id.get_or_insert_with(|| fresh(Kind::Net, taken));
+        }
+        for r in &mut self.exec {
+            r.id.get_or_insert_with(|| fresh(Kind::Exec, taken));
+        }
+        for r in &mut self.fs {
+            r.id.get_or_insert_with(|| fresh(Kind::Fs, taken));
+        }
+    }
+
+    /// Inserts a rule at `position` within its kind's list (end if `None`).
+    pub fn insert(&mut self, rule: AnyRule, position: Option<usize>) {
+        fn put<T>(list: &mut Vec<T>, item: T, position: Option<usize>) {
+            let at = position.unwrap_or(list.len()).min(list.len());
+            list.insert(at, item);
+        }
+        match rule {
+            AnyRule::Net(r) => put(&mut self.net, r, position),
+            AnyRule::Exec(r) => put(&mut self.exec, r, position),
+            AnyRule::Fs(r) => put(&mut self.fs, r, position),
+        }
+    }
+
+    /// Removes the rule with this id, returning it.
+    pub fn remove(&mut self, id: &str) -> Option<AnyRule> {
+        if let Some(i) = self.net.iter().position(|r| r.id.as_deref() == Some(id)) {
+            return Some(AnyRule::Net(self.net.remove(i)));
+        }
+        if let Some(i) = self.exec.iter().position(|r| r.id.as_deref() == Some(id)) {
+            return Some(AnyRule::Exec(self.exec.remove(i)));
+        }
+        if let Some(i) = self.fs.iter().position(|r| r.id.as_deref() == Some(id)) {
+            return Some(AnyRule::Fs(self.fs.remove(i)));
+        }
+        None
+    }
+
+    /// All rules in evaluation order, tagged with their kind.
+    pub fn rules(&self) -> Vec<AnyRule> {
+        let net = self.net.iter().cloned().map(AnyRule::Net);
+        let exec = self.exec.iter().cloned().map(AnyRule::Exec);
+        let fs = self.fs.iter().cloned().map(AnyRule::Fs);
+        net.chain(exec).chain(fs).collect()
+    }
+}
+
+impl Config {
+    pub fn from_yaml(text: &str) -> Result<Self> {
+        let mut config: Config = serde_yaml::from_str(text)?;
+        config.normalize();
+        config.validate()?;
+        Ok(config)
+    }
+
+    pub fn to_yaml(&self) -> String {
+        serde_yaml::to_string(self).expect("config serialises")
+    }
+
+    /// Ids of every rule in the config.
+    pub fn rule_ids(&self) -> BTreeSet<String> {
+        let profiles = self.profiles.values().flat_map(|p| p.policy.ids());
+        self.policy.ids().chain(profiles).map(str::to_string).collect()
+    }
+
+    /// Gives every rule an id.
+    pub fn normalize(&mut self) {
+        let mut taken = self.rule_ids();
+        self.policy.assign_ids(&mut taken);
+        for p in self.profiles.values_mut() {
+            p.policy.assign_ids(&mut taken);
+        }
+    }
+
+    pub fn policy(&self, scope: &Scope) -> Option<&Policy> {
+        match scope {
+            Scope::Global => Some(&self.policy),
+            Scope::Profile(name) => self.profiles.get(name).map(|p| &p.policy),
+            Scope::Session(_) => None,
+        }
+    }
+
+    pub fn policy_mut(&mut self, scope: &Scope) -> Option<&mut Policy> {
+        match scope {
+            Scope::Global => Some(&mut self.policy),
+            Scope::Profile(name) => self.profiles.get_mut(name).map(|p| &mut p.policy),
+            Scope::Session(_) => None,
+        }
+    }
+
+    /// Finds the scope holding the rule with this id.
+    pub fn find_rule(&self, id: &str) -> Option<Scope> {
+        if self.policy.ids().any(|i| i == id) {
+            return Some(Scope::Global);
+        }
+        self.profiles.iter().find(|(_, p)| p.policy.ids().any(|i| i == id)).map(|(n, _)| Scope::Profile(n.clone()))
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        let mut errors = Vec::new();
+        let mut seen = BTreeSet::new();
+        let mut layers = vec![(Scope::Global, &self.policy)];
+        layers.extend(self.profiles.iter().map(|(n, p)| (Scope::Profile(n.clone()), &p.policy)));
+        for (scope, policy) in layers {
+            for id in policy.ids() {
+                if !seen.insert(id) {
+                    errors.push(format!("{scope}: duplicate rule id {id}"));
+                }
+            }
+            if let Err(e) = crate::eval::check_globs(policy) {
+                errors.push(format!("{scope}: {e}"));
+            }
+            for r in &policy.net {
+                let refs = r.set_headers.values().flat_map(|v| crate::secret_refs(v));
+                for s in r.secrets.iter().cloned().chain(refs) {
+                    if !self.secrets.contains_key(&s) {
+                        errors.push(format!("{scope}: rule {} uses unknown secret {s}", r.id.as_deref().unwrap_or("?")));
+                    }
+                }
+            }
+        }
+        for (name, s) in &self.secrets {
+            if s.mode == SecretMode::Proxy && s.hosts.is_empty() {
+                errors.push(format!("secret {name}: a proxy secret needs hosts it may be sent to"));
+            }
+        }
+        for name in self.profiles.keys() {
+            if let Err(e) = self.resolve(name) {
+                errors.push(format!("profile {name}: {e:#}"));
+            }
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            bail!("invalid config:\n  {}", errors.join("\n  "))
+        }
+    }
+
+    /// Resolves a profile's `extends` chain.
+    pub fn resolve(&self, name: &str) -> Result<ResolvedProfile> {
+        let mut chain = Vec::new();
+        let mut next = Some(name.to_string());
+        while let Some(n) = next {
+            if chain.iter().any(|(c, _)| *c == n) {
+                bail!("extends cycle through {n}");
+            }
+            let p = self.profiles.get(&n).ok_or_else(|| anyhow!("unknown profile {n}"))?;
+            next = p.extends.clone();
+            chain.push((n, p));
+        }
+        // Merge from the root ancestor down to the profile itself.
+        let mut engine = Value::Object(Default::default());
+        let mut agent = Value::Object(Default::default());
+        let mut mounts = Vec::new();
+        let mut setup = Vec::new();
+        for (_, p) in chain.iter().rev() {
+            if let Some(e) = &p.engine {
+                merge(&mut engine, e);
+            }
+            if let Some(a) = &p.agent {
+                merge(&mut agent, a);
+            }
+            mounts.extend(p.mounts.iter().cloned());
+            setup.extend(p.setup.iter().cloned());
+        }
+        let engine: Engine = serde_json::from_value(engine).context("engine")?;
+        let agent: AgentSpec = serde_json::from_value(agent).context("agent")?;
+        let layers = chain.into_iter().map(|(n, p)| (Scope::Profile(n), p.policy.clone())).collect();
+        Ok(ResolvedProfile { name: name.into(), engine, agent, mounts, setup, layers })
+    }
+}
+
+/// Deep-merges `over` into `base`: objects merge key by key, anything else
+/// replaces, and `null` removes the key.
+pub fn merge(base: &mut Value, over: &Value) {
+    match (base, over) {
+        (Value::Object(b), Value::Object(o)) => {
+            for (k, v) in o {
+                if v.is_null() {
+                    b.remove(k);
+                } else {
+                    merge(b.entry(k.clone()).or_insert(Value::Null), v);
+                }
+            }
+        }
+        (b, o) => *b = o.clone(),
+    }
+}

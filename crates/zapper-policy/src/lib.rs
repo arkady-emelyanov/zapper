@@ -1,0 +1,17 @@
+//! Configuration model and rule evaluation for zapper.
+//!
+//! A [`Config`] is the whole serialisable state of the daemon (the "running
+//! config"). Policy is layered: rules in a session override its profile, a
+//! profile overrides the profile it `extends`, and every profile overrides the
+//! global policy. Within a layer rules are an ordered list and the first match
+//! wins, like an ACL. Rules marked `final` are checked before anything else,
+//! from the global layer down, so a global `final` deny cannot be overridden.
+
+mod config;
+mod eval;
+mod template;
+pub mod proto;
+
+pub use config::*;
+pub use eval::*;
+pub use template::*;

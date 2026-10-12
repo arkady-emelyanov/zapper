@@ -1,0 +1,127 @@
+[← README](../README.md) · [Docs](README.md) · **Policy**
+
+# Policy
+
+## Overview
+
+A policy layer holds three ordered rule lists, `net`, `exec` and `fs`, and optional `defaults`. Each session is evaluated against a stack of layers:
+
+```
+final rules  every layer's final rules, global first
+session      rules added to a running session (approvals, `zapper rule add session:ID`)
+profile      the session's profile
+parents      the profiles it extends, nearest first
+global       `policy:` at the top of the config
+defaults     `defaults.net` / `defaults.exec` from the most specific layer that sets them, else deny
+```
+
+Within a layer, the first matching rule decides, as in an ACL. Evaluation uses the running config, so a rule change applies to running sessions at once.
+
+## Rules
+
+### net
+
+```
+- { action: allow, host: "*.github.com", ports: [443], methods: [GET], path: "/repos/**", secrets: [gh], comment: … }
+```
+
+| Field | Meaning |
+|---|---|
+| `action` | `allow`, `deny`, or `ask`, which waits for an operator and denies after `daemon.ask_timeout_secs` |
+| `host` | Case-insensitive glob. `*` also matches dots, so `*.github.com` matches `api.github.com` but `github.com` needs its own rule. An IP address matches as text. |
+| `ports` | Ports the rule applies to; empty means all. |
+| `methods`, `path` | Match the HTTP request. `path` is a glob over the path without the query, where `*` stays within one segment and `**` spans segments. Either field makes connections to matching hosts inspected. |
+| `secrets` | Secrets whose placeholders are replaced with their values in the headers of allowed requests. Makes connections inspected. |
+| `set_headers` | Headers set on allowed requests; values may use `{{secret:NAME}}`. Makes connections inspected. |
+| `final` | Evaluated before the other rules, starting with the global layer. |
+
+An inspected connection is decided request by request; a rule without `methods` or `path` matches each request to its host. A passed-through connection is decided once, on host and port. How connections reach these rules is described on the [network](network.md) page.
+
+### exec
+
+```
+- { action: deny, path: curl, args: "*--upload-file*" }
+- { action: ask, path: "/usr/bin/*" }
+```
+
+If `path` contains `/`, it's a glob over the resolved executable path, otherwise over the file name. `args` is a glob over the arguments after argv[0], joined with spaces.
+
+### fs
+
+```
+- { path: "/work/**/.env", access: hidden }     # covered by an empty file or directory
+- { path: "/work/.git/config", access: ro }     # remounted read-only
+```
+
+The guest applies these rules at boot ([limitations](security.md#limitations)). The `fs` rules of all layers apply.
+
+## Secrets
+
+A session can use every secret it's given, and can read the value of each `guest` secret; see [security: secrets given to a session](security.md#secrets-given-to-a-session-can-be-used-by-it).
+
+```
+secrets:
+  gh:      { env: GITHUB_TOKEN, hosts: [api.github.com] }
+  claude:  { file: ~/.config/zapper/claude-token, hosts: [api.anthropic.com] }
+  oauth:   { file: ~/.claude/.credentials.json, json: /claudeAiOauth/accessToken, hosts: [api.anthropic.com] }
+  slurm:   { file: ~/.config/zapper/slurm.jwt, hosts: [slurmrestd.lab], plaintext: true }
+  s3:      { file: ~/.config/zapper/s3-session-key, mode: guest }
+  tls_key: { file: ~/.config/zapper/client.key, mode: guest }
+```
+
+`mode` sets how the secret reaches the workload:
+
+| Mode | The guest sees | Use for |
+|---|---|---|
+| `proxy` (default) | a placeholder | bearer tokens and API keys, which travel in headers |
+| `guest` | the value | credentials the client holds itself: S3 signing keys, client certificates and keys, kubeconfigs |
+
+Profiles refer to secrets as `{{secret:<name>}}` in `agent.env` or `agent.files`. The workload can read and use a `guest` secret once it's delivered, so issue those scoped and short-lived.
+
+A `proxy` secret appears in the guest as `zapper-secret-<name>`. The proxy replaces the placeholder with the value when:
+
+- a rule that lists the secret allows the request
+- the destination matches the secret's `hosts`
+- the connection uses TLS, or the secret sets `plaintext: true`
+
+Values are read each time they're used, so a rotated file or variable takes effect without a restart.
+
+## Approvals
+
+`ask` holds the connection, request or exec and emits an `ask` event:
+
+```
+zapper approvals                                # pending
+zapper approve 3sicfmqu                         # allow this request
+zapper approve 3sicfmqu --remember session      # and add an allow rule to the session
+zapper deny 3sicfmqu --remember profile         # and add a deny rule to the profile in the running config
+```
+
+A session can have up to 32 pending approvals; further requests are denied until some are answered.
+
+## Usage
+
+```
+zapper rules                                    # all layers, each in evaluation order
+zapper rule add global '{kind: net, action: deny, host: "*.evil.example", final: true}'
+zapper rule add profile:claude '{kind: exec, action: ask, path: "/usr/bin/ssh"}' --at 0
+zapper rule add session:tusn49 '{kind: net, action: allow, host: pypi.org}'
+zapper rule rm net-4
+zapper eval -p claude net api.github.com:443 GET /user     # the decision, its rule and layer
+zapper eval -s tusn49 exec /usr/bin/perl perl -e 1
+```
+
+A rule gets its id when it's added, such as `net-4`, or `s-net-1` for a session rule, and keeps it when saved.
+
+## Verification
+
+`zapper eval` shows which rule decides and in which layer. `make test` covers layering, final rules, defaults, inspection and DNS answers. `make test-e2e` covers allow, deny, ask, method rules, secret injection and exec rules with real VMs.
+
+## Limitations
+
+- Host globs match names. Addresses are covered by the [address checks](network.md#address-checks).
+- A passed-through connection is decided on host and port. Inspection rules can restrict methods and paths.
+
+## References
+
+- Sources: `crates/zapper-policy/src/{config,eval,template}.rs`, `crates/zapper/src/daemon/{proxy,dns}.rs`
