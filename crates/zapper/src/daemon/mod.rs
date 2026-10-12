@@ -27,7 +27,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, oneshot};
 use zapper_policy::proto::GuestEvent;
-use zapper_policy::{expand_home, Action, AnyRule, Config, Kind, Scope, SecretSource};
+use zapper_policy::{expand_home, Action, AnyRule, Config, Kind, SecretSource};
 
 use session::Session;
 
@@ -142,9 +142,11 @@ pub struct Pending {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+/// What an answer to an `ask` is remembered for. Answers are kept in memory:
+/// for the request alone (no `remember`) or in the session's own layer, which
+/// ends with the session. They never change the config.
 pub enum Remember {
     Session,
-    Profile,
 }
 
 pub struct Paths {
@@ -224,14 +226,10 @@ impl Daemon {
         let state = PathBuf::from(expand_home(&d.state));
         std::fs::create_dir_all(state.join("sessions"))?;
         std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700))?;
-        // Disks of sessions a previous daemon left behind; audit logs stay.
+        // VMM directories (disks, sockets) of sessions a previous daemon left
+        // behind; audit logs and recordings stay.
         for dir in std::fs::read_dir(state.join("sessions"))?.flatten() {
-            for f in std::fs::read_dir(dir.path()).into_iter().flatten().flatten() {
-                let name = f.file_name().to_string_lossy().into_owned();
-                if name.ends_with(".ext4") || name.starts_with("v.sock") {
-                    let _ = std::fs::remove_file(f.path());
-                }
-            }
+            let _ = std::fs::remove_dir_all(vm::vm_dir(&dir.path()));
         }
         let initrd = state.join("initrd.cpio");
         vm::build_initrd(&find_agent(&d.agent)?, &initrd)?;
@@ -423,13 +421,6 @@ impl Daemon {
             match r {
                 Remember::Session => {
                     session.add_rule(rule, Some(0));
-                }
-                Remember::Profile => {
-                    let scope = Scope::Profile(session.profile.clone());
-                    self.change(&format!("approval {id} remembered in {scope}"), |c| {
-                        c.policy_mut(&scope).ok_or_else(|| anyhow!("no profile {}", session.profile))?.insert(rule, Some(0));
-                        Ok(())
-                    })?;
                 }
             }
         }

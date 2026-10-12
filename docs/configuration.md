@@ -40,7 +40,7 @@ profiles:   name → profile
 | `images` | `~/.local/share/zapper/images` | Root filesystem images, `<name>.ext4` |
 | `kernels` | `~/.local/share/zapper/kernels` | Guest kernels |
 | `state` | `~/.local/state/zapper` | Session directories with audit logs, recordings, and disks while running |
-| `ui` | `127.0.0.1:7878` | Read-only UI address, which must be loopback; empty turns the UI off |
+| `ui` | `127.0.0.1:7878` | Address of the UI (state and approvals), which must be loopback; empty turns the UI off |
 | `ask_timeout_secs` | `60` | How long an `ask` waits before it denies |
 | `max_sessions` | `16` | Sessions starting or running at the same time |
 | `private_networks` | `[]` | CIDRs of private networks sessions may reach ([network](network.md#address-checks)) |
@@ -74,7 +74,8 @@ profiles:
 | `workdir` | `/work` | Working directory |
 | `env` | | Environment. `{{secret:NAME}}` becomes a placeholder for `proxy` secrets and the value for `guest` secrets |
 | `files` | | Guest path (`~` is the home directory) → content, with `{{secret:NAME}}` as in `env`. Files with a `guest` secret are created 0600 |
-| `model`, `permission_mode` | | Claude Code: `model` and `permissions.defaultMode` in `~/.claude/settings.json` |
+| `model` | | Claude Code: `model` in `~/.claude/settings.json` |
+| `permission_mode` | | Claude Code: `permissions.defaultMode` in the managed settings file, `/etc/claude-code/managed-settings.json`, which is root-owned. Set there, Claude Code doesn't ask at each start whether to switch to auto mode, and the workload can't change it. With `bypassPermissions`, the file also sets `skipDangerousModePermissionPrompt` |
 | `settings` | | Claude Code: merged into `~/.claude/settings.json` |
 | `mcp_servers` | | Claude Code: `mcpServers` in `~/.claude.json` |
 | `claude_md` | | Claude Code: `~/.claude/CLAUDE.md` |

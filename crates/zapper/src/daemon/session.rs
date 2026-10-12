@@ -52,6 +52,8 @@ pub struct Session {
     pub usage: Mutex<Option<zapper_policy::proto::GuestEvent>>,
     /// Names given out by the session's DNS, by synthetic address.
     pub dns: Mutex<super::dns::FakeDns>,
+    /// The session's terminals, for watching them from the UI.
+    pub terminals: Mutex<std::collections::BTreeMap<u64, Arc<Terminal>>>,
     guest: Mutex<Option<mpsc::Sender<HostMsg>>>,
     vm: tokio::sync::Mutex<Option<Child>>,
     audit: Mutex<Option<std::fs::File>>,
@@ -221,6 +223,7 @@ pub async fn create(daemon: Arc<Daemon>, new: NewSession) -> Result<Arc<Session>
         counters: Counters::default(),
         usage: Mutex::new(None),
         dns: Mutex::new(Default::default()),
+        terminals: Mutex::new(Default::default()),
         guest: Mutex::new(None),
         vm: tokio::sync::Mutex::new(None),
         audit: Mutex::new(Some(audit)),
@@ -271,15 +274,17 @@ pub async fn create(daemon: Arc<Daemon>, new: NewSession) -> Result<Arc<Session>
 
 async fn boot(daemon: &Arc<Daemon>, session: &Arc<Session>) -> Result<()> {
     let dir = &session.dir;
+    let vmdir = vm::vm_dir(dir);
+    std::fs::create_dir_all(&vmdir)?;
     let engine = &session.resolved.engine;
-    let root = dir.join("root.ext4");
+    let root = vmdir.join("root.ext4");
     vm::root_disk(&daemon.paths.images.join(format!("{}.ext4", engine.image)), &root, vm::parse_size(&engine.disk)?)
         .await
         .context("root disk")?;
     let mut disks = Vec::new();
     let mut guest_disks = Vec::new();
     for (i, m) in session.resolved.mounts.iter().enumerate() {
-        let path = dir.join(format!("disk{i}.ext4"));
+        let path = vmdir.join(format!("disk{i}.ext4"));
         let host = vm::mount_disk(m, &session.workdir, &path).await.with_context(|| format!("mount {}", m.host))?;
         let ro = m.mode == MountMode::Ro;
         disks.push((path, ro));
@@ -300,7 +305,7 @@ async fn boot(daemon: &Arc<Daemon>, session: &Arc<Session>) -> Result<()> {
     let proxy = UnixListener::bind(&proxy_path)?;
     let nic = engine.network == zapper_policy::NetworkMode::Nic;
     if nic {
-        let listener = UnixListener::bind(dir.join(crate::netns::SOCKET))?;
+        let listener = UnixListener::bind(vmdir.join(crate::netns::SOCKET))?;
         tokio::spawn(super::nic::serve(daemon.clone(), session.clone(), listener));
     }
 
@@ -312,6 +317,7 @@ async fn boot(daemon: &Arc<Daemon>, session: &Arc<Session>) -> Result<()> {
         disks,
         engine,
         dir,
+        id: &session.id,
         nic,
     })
     .await?;
@@ -512,14 +518,13 @@ async fn teardown(daemon: &Arc<Daemon>, session: &Arc<Session>, reason: Option<&
     if let Some(reason) = reason {
         daemon.emit(Some(session), EventBody::Session { state: "stopped".into(), detail: Some(reason.into()) });
     }
-    if let Ok(entries) = std::fs::read_dir(&session.dir) {
-        for e in entries.flatten() {
-            let name = e.file_name().to_string_lossy().into_owned();
-            if name.ends_with(".ext4") || name.starts_with("v.sock") || name == crate::netns::SOCKET {
-                let _ = std::fs::remove_file(e.path());
-            }
-        }
+    // The VMM's directory: disks and sockets go; its config and metrics are
+    // kept next to the audit log.
+    let vmdir = vm::vm_dir(&session.dir);
+    for f in ["vm.json", "metrics.json"] {
+        let _ = std::fs::rename(vmdir.join(f), session.dir.join(f));
     }
+    let _ = std::fs::remove_dir_all(vmdir);
     *session.audit.lock().unwrap() = None;
 }
 
@@ -531,6 +536,9 @@ where
 {
     daemon.emit(Some(&session), EventBody::Shell { id, state: "open".into(), argv: Some(argv.clone()), exit_code: None });
     let cast = Arc::new(Mutex::new(Recorder::new(&session.dir, id, tty, &argv)));
+    let term = Arc::new(Terminal::new(id, argv.clone(), tty.unwrap_or((24, 80))));
+    session.terminals.lock().unwrap().insert(id, term.clone());
+    let watch = term.clone();
     let (mut cr, mut cw) = tokio::io::split(client);
     let (mut gr, mut gw) = guest.into_split();
     let rec = cast.clone();
@@ -538,7 +546,10 @@ where
         while let Ok(Some(frame)) = read_frame(&mut cr).await {
             match &frame {
                 Frame::Data(d) => rec.lock().unwrap().write("i", d),
-                Frame::Resize(r, c) => rec.lock().unwrap().write("r", format!("{c}x{r}").as_bytes()),
+                Frame::Resize(r, c) => {
+                    rec.lock().unwrap().write("r", format!("{c}x{r}").as_bytes());
+                    watch.push(TermChunk::Resize(*r, *c));
+                }
                 _ => {}
             }
             let mut buf = Vec::new();
@@ -552,7 +563,10 @@ where
     let mut exit_code = None;
     while let Ok(Some(frame)) = read_frame(&mut gr).await {
         match &frame {
-            Frame::Data(d) | Frame::Stderr(d) => cast.lock().unwrap().write("o", d),
+            Frame::Data(d) | Frame::Stderr(d) => {
+                cast.lock().unwrap().write("o", d);
+                term.push(TermChunk::Output(d.clone()));
+            }
             Frame::Exit(c) => exit_code = Some(*c),
             _ => {}
         }
@@ -564,7 +578,92 @@ where
     }
     let _ = cw.shutdown().await;
     upstream.abort();
+    term.push(TermChunk::End(exit_code));
     daemon.emit(Some(&session), EventBody::Shell { id, state: "closed".into(), argv: None, exit_code });
+}
+
+/// What a watcher of a terminal receives.
+#[derive(Debug, Clone)]
+pub enum TermChunk {
+    Output(Vec<u8>),
+    /// Rows, columns.
+    Resize(u16, u16),
+    /// The terminal closed, with the command's exit code if known.
+    End(Option<i32>),
+}
+
+/// A terminal's output so far and its live stream, for read-only watchers.
+pub struct Terminal {
+    pub id: u64,
+    pub argv: Vec<String>,
+    state: Mutex<TermState>,
+    tx: tokio::sync::broadcast::Sender<TermChunk>,
+}
+
+struct TermState {
+    /// Current size.
+    size: (u16, u16),
+    /// Size in effect at the start of `history`.
+    base: (u16, u16),
+    open: bool,
+    history: std::collections::VecDeque<TermChunk>,
+    bytes: usize,
+}
+
+/// Output kept per terminal for watchers who join late.
+const TERMINAL_HISTORY: usize = 2 << 20;
+
+#[derive(Serialize)]
+pub struct TerminalInfo {
+    pub id: u64,
+    pub argv: Vec<String>,
+    pub rows: u16,
+    pub cols: u16,
+    pub open: bool,
+}
+
+impl Terminal {
+    fn new(id: u64, argv: Vec<String>, size: (u16, u16)) -> Self {
+        let state = TermState { size, base: size, open: true, history: Default::default(), bytes: 0 };
+        Terminal { id, argv, state: Mutex::new(state), tx: tokio::sync::broadcast::channel(1024).0 }
+    }
+
+    fn push(&self, chunk: TermChunk) {
+        let mut st = self.state.lock().unwrap();
+        match &chunk {
+            TermChunk::Output(d) => st.bytes += d.len(),
+            TermChunk::Resize(r, c) => st.size = (*r, *c),
+            TermChunk::End(_) => st.open = false,
+        }
+        st.history.push_back(chunk.clone());
+        while st.bytes > TERMINAL_HISTORY {
+            match st.history.pop_front() {
+                Some(TermChunk::Output(d)) => st.bytes -= d.len(),
+                Some(TermChunk::Resize(r, c)) => st.base = (r, c),
+                Some(_) => {}
+                None => break,
+            }
+        }
+        // Sent under the lock, so a watcher subscribing in `watch` sees each
+        // chunk exactly once.
+        let _ = self.tx.send(chunk);
+    }
+
+    /// The kept output, starting with the size it was written at, and a
+    /// receiver for what comes after.
+    pub fn watch(&self) -> (Vec<TermChunk>, tokio::sync::broadcast::Receiver<TermChunk>) {
+        let st = self.state.lock().unwrap();
+        let rx = self.tx.subscribe();
+        let mut snapshot = Vec::with_capacity(st.history.len() + 1);
+        snapshot.push(TermChunk::Resize(st.base.0, st.base.1));
+        snapshot.extend(st.history.iter().cloned());
+        (snapshot, rx)
+    }
+
+    pub fn info(&self) -> TerminalInfo {
+        let st = self.state.lock().unwrap();
+        TerminalInfo { id: self.id, argv: self.argv.clone(), rows: st.size.0, cols: st.size.1, open: st.open }
+    }
 }
 
 pub async fn read_frame(r: &mut (impl tokio::io::AsyncRead + Unpin)) -> std::io::Result<Option<Frame>> {

@@ -32,7 +32,7 @@ Global options are `--config FILE` (or `$ZAPPER_CONFIG`; default `~/.config/zapp
 | `zapper audit ID` | The session's audit log (JSON lines) |
 | `zapper events [-s ID] [--history]` | Follow events, one line each, or raw with `--json` |
 | `zapper approvals` | Pending `ask` decisions |
-| `zapper approve ID [--remember session\|profile]` / `zapper deny …` | Answer one |
+| `zapper approve ID [--remember session]` / `zapper deny …` | Answer one, for this request or the rest of the session |
 | `zapper rules [--scope S]` | List rules of all layers, or of `global`, `profile:NAME` or `session:ID` |
 | `zapper rule add SCOPE 'YAML' [--at N]` / `zapper rule rm ID` | Change rules in the running config |
 | `zapper eval [-s ID\|-p PROFILE] net HOST[:PORT] [METHOD PATH]` | Dry run of a connection or request |

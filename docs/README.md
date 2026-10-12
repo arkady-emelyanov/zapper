@@ -4,13 +4,14 @@
 
 Using zapper:
 
+- [Quickstart](quickstart.md): from install to your first session, a rule, and Claude Code.
 - [Commands](commands.md): `zapper` commands and `make` targets.
 - [Configuration](configuration.md): the config file, profiles, agents, and the running and startup config.
 - [Network](network.md): NIC and vsock modes, DNS, how connections are decided, address checks.
 - [Policy](policy.md): net, exec and fs rules, layering, secrets, approvals, dry runs.
 - [Images and kernels](images.md): building root filesystems from OCI images, and guest kernels.
 - [Instrumentation](instrumentation.md): events, audit logs, terminal recordings and the UI.
-- [API](api.md): the REST API on the unix socket, and the read-only UI API.
+- [API](api.md): the REST API on the unix socket, and the UI's API.
 
 How it works:
 

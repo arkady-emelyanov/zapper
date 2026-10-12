@@ -15,23 +15,18 @@ zapper is a poor fit for GPU work inside the VM, because Firecracker can't pass 
 
 ## How it works
 
-```
- you ── zapper CLI ──unix socket──▶ zapper daemon ──▶ Firecracker microVM (one per session)
-          ▲ REST API: rules, sessions,   │  ▲            ┌──────────────────────────────────┐
-          │ approvals, config save/diff  │  │ vsock      │ zapper-agent (PID 1)             │
- browser ─┘ read-only UI (localhost)     │  └────────────│  • fetches spec, sets up guest   │
-                                         │               │  • terminals over vsock          │
-            egress proxy ◀── netns capture ◀─── eth0 ────│  • asks host before every exec   │
-            • rules per connection/request               │  • reports process exits         │
-            • injects secrets, TLS inspection            │ workload as uid 1000             │
-            • policy DNS, address checks                 └──────────────────────────────────┘
-                 │
-                 ▼ internet / lab
-```
+- Each session is a small Linux virtual machine (Firecracker).
+- Your program runs inside it as a normal user.
+- The VM gets a copy of your project folder, not the folder itself.
+- All its network traffic goes through zapper on the host.
+- zapper checks each connection and each started program against your rules.
+- Rules say allow, deny, or ask you first.
+- Tokens can be added by the host on the way out, so the program never sees them.
+- Everything the session does is logged, and terminals are recorded.
+- You manage it with the `zapper` command. A local web page shows what's happening and lets you answer approvals.
+- Rule changes apply at once; `zapper config save` keeps them.
 
-Rules are layered: session, then profile, then the profiles it extends, then global. Within a layer the first matching rule wins. Rules marked `final` in the global layer win over everything else. Configuration works like a router's: API changes apply to the running config at once, `zapper config save` writes them to the startup file, and `zapper config diff` shows what hasn't been saved.
-
-More detail: [architecture](docs/architecture.md), [network](docs/network.md), [policy](docs/policy.md), [security model](docs/security.md).
+More: [architecture](docs/architecture.md), [network](docs/network.md), [policy](docs/policy.md), [security](docs/security.md).
 
 ## Quickstart
 
@@ -43,7 +38,7 @@ make install                  # zapper and zapper-agent into ~/.local/bin
 zapper init                   # ~/.config/zapper/zapper.yaml from the example
 make image                    # base Ubuntu image (~2 min); `make image IMAGE=claude` for Claude Code
 zapper check                  # each line "ok", or the command that fixes it
-zapper serve                  # the daemon; prints the read-only UI URL
+zapper serve                  # the daemon; prints the UI URL
 ```
 
 In another terminal:
@@ -57,7 +52,7 @@ zapper rule add profile:claude '{kind: net, action: allow, host: pypi.org, metho
 zapper config diff            # the unsaved change; `zapper config save` keeps it
 ```
 
-[docs/commands.md](docs/commands.md) lists every command, and [docs/README.md](docs/README.md) indexes the documentation.
+The [quickstart](docs/quickstart.md) walks through this step by step. [docs/commands.md](docs/commands.md) lists every command, and [docs/README.md](docs/README.md) indexes the documentation.
 
 ## Status
 
@@ -66,8 +61,7 @@ zapper is early software that works end to end. `make test-e2e` boots real VMs a
 ## Next
 
 1. **Network rate and volume limits** per session: bandwidth and packet rate on the NIC, using Firecracker's rate limiter, and byte counts per destination and per session in the proxy, with an event when a limit is hit.
-2. **VMM filesystem confinement:** run Firecracker with only its session directory visible, through a mount namespace or the jailer.
-3. **UDP egress** where a rule allows it, for QUIC and NTP.
+2. **UDP egress** where a rule allows it, for QUIC and NTP.
 
 ## License
 

@@ -7,6 +7,7 @@ mod daemon;
 mod image;
 mod netns;
 mod term;
+mod vmm;
 
 use std::path::{Path, PathBuf};
 
@@ -89,14 +90,15 @@ enum Cmd {
     /// Allow a pending request.
     Approve {
         id: String,
-        /// Also add a rule: `session` or `profile`.
-        #[arg(long)]
+        /// Also add a rule to the session, kept in memory until it ends.
+        #[arg(long, value_parser = ["session"])]
         remember: Option<String>,
     },
     /// Deny a pending request.
     Deny {
         id: String,
-        #[arg(long)]
+        /// Also add a deny rule to the session, kept in memory until it ends.
+        #[arg(long, value_parser = ["session"])]
         remember: Option<String>,
     },
     /// List rules.
@@ -213,12 +215,12 @@ fn load_config(path: &Path) -> Result<Config> {
 }
 
 fn main() {
-    // The namespace shim must start before any thread does.
+    // The VMM shim must start before any thread does.
     let args: Vec<String> = std::env::args().collect();
-    if args.get(1).map(String::as_str) == Some("__netns") {
+    if args.get(1).map(String::as_str) == Some("__vmm") {
         let code = match args.get(2).map(String::as_str) {
-            Some("--probe") => netns::probe(),
-            _ => netns::main(&args[2..]),
+            Some("--probe") => vmm::probe(args.get(3).map(String::as_str) == Some("nic")),
+            _ => vmm::main(&args[2..]),
         };
         std::process::exit(code);
     }
@@ -593,6 +595,7 @@ fn event_line(e: &Value) -> String {
             match g["event"].as_str() {
                 Some("exit") => format!("exit {} pid {} code {} {}ms", s(&g["comm"]), g["pid"], g["exit_code"], g["elapsed_ms"]),
                 Some("setup") => format!("setup {}: {}", if g["ok"] == json!(true) { "ok" } else { "FAILED" }, s(&g["step"])),
+                Some("shell_exit") => format!("shell {} exited with {}", g["id"], g["exit_code"]),
                 _ => g.to_string(),
             }
         }
@@ -633,10 +636,12 @@ async fn serve(config_path: PathBuf) -> Result<()> {
             bail!("daemon.ui must be a loopback address, not {addr}");
         }
         let tcp = tokio::net::TcpListener::bind(addr).await.with_context(|| format!("UI on {addr}"))?;
-        let port = tcp.local_addr()?.port();
-        let url = format!("http://{addr}/?token={}", d.ui_token);
+        let bound = tcp.local_addr()?;
+        let port = bound.port();
+        // The bound address: with port 0 in the config, the kernel picks one.
+        let url = format!("http://{bound}/?token={}", d.ui_token);
         daemon::write_private(&d.paths.state.join("ui-url"), format!("{url}\n").as_bytes())?;
-        eprintln!("zapper: read-only UI at {url}");
+        eprintln!("zapper: UI at {url}");
         let app = daemon::api::ui(d.clone(), port);
         tokio::spawn(async move {
             if let Err(e) = axum::serve(tcp, app).await {
@@ -709,15 +714,25 @@ async fn check(config_path: &Path) -> Result<i32> {
             report(k.is_file(), &format!("profile {name}: kernel {}", p.engine.kernel), "make deps");
         }
     }
-    let uses_nic = config.profiles.keys().filter_map(|n| config.resolve(n).ok()).any(|p| p.engine.network == zapper_policy::NetworkMode::Nic);
-    if uses_nic {
-        let probe = std::process::Command::new(std::env::current_exe()?).args(["__netns", "--probe"]).output();
-        let (ok, why) = match probe {
+    let probe = |nic: bool| {
+        let mut cmd = std::process::Command::new(std::env::current_exe()?);
+        cmd.args(["__vmm", "--probe"]);
+        if nic {
+            cmd.arg("nic");
+        }
+        Ok::<_, anyhow::Error>(match cmd.output() {
             Ok(o) => (o.status.success(), String::from_utf8_lossy(&o.stderr).trim().to_string()),
             Err(e) => (false, e.to_string()),
-        };
-        let what = if ok { "unprivileged user and network namespaces with tap and nftables (network: nic)".to_string() } else { format!("network: nic needs a user namespace with tap and nftables: {why}") };
-        report(ok, &what, "sudo apt install iproute2 nftables; if user namespaces are restricted: sudo sysctl kernel.apparmor_restrict_unprivileged_userns=0, or use network: vsock");
+        })
+    };
+    let (ok, why) = probe(false)?;
+    let what = if ok { "unprivileged user and mount namespaces (VMM confinement)".to_string() } else { format!("unprivileged user and mount namespaces (VMM confinement): {why}") };
+    report(ok, &what, "sudo sysctl kernel.apparmor_restrict_unprivileged_userns=0 (or an AppArmor profile allowing userns for zapper)");
+    let uses_nic = config.profiles.keys().filter_map(|n| config.resolve(n).ok()).any(|p| p.engine.network == zapper_policy::NetworkMode::Nic);
+    if uses_nic && ok {
+        let (ok, why) = probe(true)?;
+        let what = if ok { "tap and nftables in the VMM's network namespace (network: nic)".to_string() } else { format!("tap and nftables in the VMM's network namespace (network: nic): {why}") };
+        report(ok, &what, "sudo apt install iproute2 nftables, or use network: vsock");
     }
     let oci = std::env::var("ZAPPER_OCI").unwrap_or_else(|_| "podman".into());
     let oci_ok = std::process::Command::new(&oci).arg("--version").output().is_ok_and(|o| o.status.success());
@@ -728,7 +743,12 @@ async fn check(config_path: &Path) -> Result<i32> {
         use std::os::unix::fs::PermissionsExt;
         report(meta.permissions().mode() & 0o077 == 0, "config readable only by you", &format!("chmod 600 {}", config_path.display()));
     }
-    let daemon_up = tokio::net::UnixStream::connect(client::socket_path()).await.is_ok();
-    report(daemon_up, &format!("daemon listening on {}", client::socket_path().display()), "zapper serve");
+    // Not a prerequisite: the daemon is started after setup.
+    let socket = client::socket_path();
+    if tokio::net::UnixStream::connect(&socket).await.is_ok() {
+        println!("ok     daemon listening on {}", socket.display());
+    } else {
+        println!("note   the daemon isn't running; start it with `zapper serve`");
+    }
     Ok(if bad == 0 { 0 } else { 1 })
 }

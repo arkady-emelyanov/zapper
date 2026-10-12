@@ -1,4 +1,4 @@
-//! REST API on the daemon's unix socket, and the read-only UI over TCP.
+//! REST API on the daemon's unix socket, and the web UI over TCP.
 
 use std::collections::HashMap;
 use std::convert::Infallible;
@@ -77,6 +77,8 @@ fn read_routes() -> Router<Arc<Daemon>> {
         .route("/sessions", get(list_sessions))
         .route("/sessions/{id}", get(get_session))
         .route("/sessions/{id}/audit", get(get_audit))
+        .route("/sessions/{id}/terminals", get(list_terminals))
+        .route("/sessions/{id}/terminals/{n}/stream", get(terminal_stream))
         .route("/events", get(events))
         .route("/approvals", get(list_approvals))
 }
@@ -98,17 +100,24 @@ pub fn api(daemon: Arc<Daemon>) -> Router {
     Router::new().nest("/v1", read_routes().merge(write)).with_state(daemon)
 }
 
+/// The UI: the read routes, plus answering approvals.
 pub fn ui(daemon: Arc<Daemon>, port: u16) -> Router {
     Router::new()
         .route("/", get(super::ui::index))
-        .nest("/api", read_routes())
+        .route("/terminal", get(super::ui::terminal))
+        .route("/assets/xterm.js", get(super::ui::xterm_js))
+        .route("/assets/xterm.css", get(super::ui::xterm_css))
+        .nest("/api", read_routes().route("/approvals/{id}", post(answer)))
         .layer(middleware::from_fn_with_state((daemon.clone(), port), ui_guard))
         .with_state(daemon)
 }
 
-/// The UI is read-only and local, but a browser can be tricked into talking
-/// to it: require the token (query once, then a strict cookie) and a local
-/// Host header, which defeats DNS rebinding.
+/// The UI is local, but a browser can be tricked into talking to it. Every
+/// request needs the token (in the query once, then a strict cookie) and a
+/// local Host header, which defeats DNS rebinding. A request that changes
+/// something also needs the `X-Zapper-UI` header, which another site's page
+/// can't send without a CORS preflight that is never granted, and an Origin
+/// naming the UI itself.
 async fn ui_guard(State((d, port)): State<(Arc<Daemon>, u16)>, req: Request, next: Next) -> Response {
     let host = req.headers().get(header::HOST).and_then(|h| h.to_str().ok()).unwrap_or("");
     let local = [format!("127.0.0.1:{port}"), format!("localhost:{port}"), format!("[::1]:{port}")];
@@ -131,6 +140,13 @@ async fn ui_guard(State((d, port)): State<(Arc<Daemon>, u16)>, req: Request, nex
         .any(|c| c.trim() == format!("zapper_token={}", d.ui_token));
     if !cookie_ok {
         return (StatusCode::UNAUTHORIZED, "open the URL printed by `zapper serve`").into_response();
+    }
+    if !matches!(*req.method(), axum::http::Method::GET | axum::http::Method::HEAD) {
+        let origin = req.headers().get(header::ORIGIN).and_then(|h| h.to_str().ok()).unwrap_or("");
+        let marked = req.headers().get("x-zapper-ui").is_some_and(|v| v == "1");
+        if !marked || !local.iter().any(|l| origin == format!("http://{l}")) {
+            return (StatusCode::FORBIDDEN, "missing X-Zapper-UI or a local Origin").into_response();
+        }
     }
     let mut resp = next.run(req).await;
     let h = resp.headers_mut();
@@ -350,6 +366,32 @@ async fn get_audit(State(d): D, Path(id): Path<String>) -> R<Response> {
     let s = d.session(&id)?;
     let text = tokio::fs::read_to_string(s.audit_path()).await.unwrap_or_default();
     Ok(([(header::CONTENT_TYPE, "application/x-ndjson")], text).into_response())
+}
+
+async fn list_terminals(State(d): D, Path(id): Path<String>) -> R<Json<Vec<session::TerminalInfo>>> {
+    let s = d.session(&id)?;
+    let terms = s.terminals.lock().unwrap().values().map(|t| t.info()).collect();
+    Ok(Json(terms))
+}
+
+/// A terminal's kept output, then its live output, as server-sent events:
+/// `{"o": base64}` output, `{"r": [rows, cols]}` a resize, `{"end": code}`
+/// when it closes. Read-only: nothing goes back to the terminal.
+async fn terminal_stream(State(d): D, Path((id, n)): Path<(String, u64)>) -> R<Sse<impl Stream<Item = Result<SseEvent, Infallible>>>> {
+    use base64::Engine as _;
+    let s = d.session(&id)?;
+    let term = s.terminals.lock().unwrap().get(&n).cloned().ok_or_else(|| anyhow::anyhow!("no terminal {n}"))?;
+    let (snapshot, rx) = term.watch();
+    let live = BroadcastStream::new(rx).filter_map(|r| async move { r.ok() });
+    let stream = stream::iter(snapshot).chain(live).map(|chunk| {
+        let data = match chunk {
+            session::TermChunk::Output(bytes) => json!({ "o": base64::engine::general_purpose::STANDARD.encode(bytes) }),
+            session::TermChunk::Resize(rows, cols) => json!({ "r": [rows, cols] }),
+            session::TermChunk::End(code) => json!({ "end": code }),
+        };
+        Ok(SseEvent::default().data(data.to_string()))
+    });
+    Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }
 
 #[derive(Deserialize)]

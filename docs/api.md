@@ -4,7 +4,7 @@
 
 ## Overview
 
-The daemon serves the API on its unix socket, mode 0600 in a 0700 directory; whoever can open the socket can use the API. Request bodies are YAML or JSON, and responses are JSON unless noted. Errors are `{"error": "…"}` with status 400 or 404. The read-only UI serves the GET routes marked **ui** under `/api` on its TCP address, behind its token.
+The daemon serves the API on its unix socket, mode 0600 in a 0700 directory; whoever can open the socket can use the API. Request bodies are YAML or JSON, and responses are JSON unless noted. Errors are `{"error": "…"}` with status 400 or 404. The UI serves the routes marked **ui** under `/api` on its TCP address, behind its token: the reads, and answering approvals ([instrumentation: the UI](instrumentation.md#the-ui)).
 
 ```
 curl --unix-socket $XDG_RUNTIME_DIR/zapper/api.sock http://zapper/v1/status
@@ -32,11 +32,13 @@ curl --unix-socket $XDG_RUNTIME_DIR/zapper/api.sock http://zapper/v1/status
 | `POST /v1/sessions/{id}/stop` | | Stop, keep listed |
 | `DELETE /v1/sessions/{id}` | | Stop and forget |
 | `GET /v1/sessions/{id}/audit` | ✓ | Audit log (`application/x-ndjson`) |
+| `GET /v1/sessions/{id}/terminals` | ✓ | The session's terminals: `id`, `argv`, `rows`, `cols`, `open` |
+| `GET /v1/sessions/{id}/terminals/{n}/stream` | ✓ | Server-sent events, read-only: the terminal's kept output, then live output. Each `data:` is `{"r": [rows, cols]}`, `{"o": "<base64 bytes>"}`, or `{"end": exit_code}` |
 | `GET /v1/sessions/{id}/attach?tty=RxC&argv=JSON&system=bool` | | Upgrade (`Upgrade: zapper-shell`) to a terminal; frames below |
 | `POST /v1/evaluate` | | `{session?\|profile?, net?: {host, port, method?, path?}, exec?: {path, argv}}` → decision |
 | `GET /v1/events[?session=ID&history=true]` | ✓ | Server-sent events, one JSON event per `data:` line |
 | `GET /v1/approvals` | ✓ | Pending approvals with suggested rules |
-| `POST /v1/approvals/{id}` | | `{allow, remember?: session\|profile}` |
+| `POST /v1/approvals/{id}` | ✓ | `{allow, remember?: session}`; through the UI, also needs `X-Zapper-UI: 1` and a local `Origin` |
 
 ## Terminal frames
 

@@ -95,6 +95,11 @@ fn setup(control: &Control, spec: &GuestSpec) -> Result<()> {
     for d in &spec.disks {
         let flags = if d.read_only { libc::MS_RDONLY } else { 0 } | libc::MS_NOSUID | libc::MS_NODEV;
         sys::mount(&d.device, &d.path, "ext4", flags, "").with_context(|| format!("disk {}", d.device))?;
+        // mkfs leaves an empty lost+found in each copied folder; it isn't
+        // the user's.
+        if !d.read_only {
+            let _ = fs::remove_dir(Path::new(&d.path).join("lost+found"));
+        }
     }
     for f in &spec.files {
         write_file(&f.path, &f.content, f.mode, f.user_owned).with_context(|| format!("file {}", f.path))?;

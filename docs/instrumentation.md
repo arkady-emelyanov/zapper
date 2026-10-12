@@ -33,23 +33,24 @@ Each session directory, `state/sessions/<id>/`, holds:
 | `audit.jsonl` | The session's events, one JSON object per line |
 | `shell-<n>.cast` | asciicast v2 recording of terminal *n*, with output (`o`), input (`i`) and resizes (`r`); replay it with `asciinema play shell-1.cast` |
 | `console.log` | Serial console and Firecracker messages, up to 1 MiB |
-| `metrics.json` | Firecracker metrics: vCPU exits, block, network and vsock counters |
-| `vm.json` | The Firecracker configuration the session started with |
+| `metrics.json` | Firecracker metrics: vCPU exits, block, network and vsock counters (in `vm/` while the session runs) |
+| `vm.json` | The Firecracker configuration the session started with (in `vm/` while the session runs) |
 
-These files stay after the session ends; its disks are deleted.
+These files stay after the session ends. The `vm/` directory, with the disks and sockets, is deleted.
 
 ## The UI
 
-`zapper serve` prints `http://127.0.0.1:7878/?token=…` and writes the URL to `state/ui-url` (0600). The UI is read-only, with these views:
+`zapper serve` prints `http://127.0.0.1:7878/?token=…` and writes the URL to `state/ui-url` (0600). The UI shows the daemon's state, and its one action is answering approvals. Its views:
 
 - **sessions**, with counters
-- **session detail**: top destinations, exec history with decisions and wait times, process exits with CPU and memory
+- **session detail**: the session's terminals, top destinations, exec history with decisions and wait times, process exits with CPU and memory
+- **terminal viewer**: "Watch" on a terminal opens it in its own browser window (`/terminal?session=ID&n=N`), as you'd see it, through xterm.js: what it has printed so far, then live output, until it closes. Clicking "Watch" again brings that window forward. It's read-only: keystrokes in the viewer go nowhere. The daemon keeps up to 2 MiB of output per terminal for this; the full recording stays in `shell-<n>.cast`
 - **events**: the live stream, filtered by session, type, action and text
-- **approvals**: pending requests, which you answer from the CLI
+- **approvals**: pending requests, each with Allow and Deny buttons and a choice of answering this request only, or the rest of the session. The tab shows how many are waiting
 - **rules**, grouped by layer
 - **config**: running, startup and the diff between them
 
-The UI exchanges the token for a strict cookie and requires a local `Host` header, which defeats DNS rebinding. It renders session data as text.
+The UI exchanges the token for a strict cookie and requires a local `Host` header, which defeats DNS rebinding. Answering an approval also needs an `X-Zapper-UI` header and an `Origin` naming the UI. A page on another site can't send that header without a CORS preflight, which the UI never grants, so it can't answer approvals through your browser. Rules, profiles, sessions and the config are changed with the CLI or the API on the unix socket. The UI renders session data as text.
 
 ## Usage
 

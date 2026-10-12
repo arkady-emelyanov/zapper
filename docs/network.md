@@ -8,8 +8,10 @@ A session reaches the network in one of two modes, set per profile with `engine.
 
 | Mode | The guest has | Which programs get out | Host needs |
 |---|---|---|---|
-| `nic` (default) | `eth0` with an address, a default route and a DNS server | Any program, over TCP | Unprivileged user namespaces, `ip`, `nft` |
-| `vsock` | Loopback, and `HTTP(S)_PROXY` set to a local forwarder | Programs that use the proxy variables | Nothing extra |
+| `nic` (default) | `eth0` with an address, a default route and a DNS server | Any program, over TCP | `ip` and `nft` |
+| `vsock` | Loopback, and `HTTP(S)_PROXY` set to a local forwarder | Programs that use the proxy variables | Nothing beyond what every session needs |
+
+Every session needs unprivileged user namespaces on the host, because the VMM runs confined in its own namespaces ([security](security.md#the-vmm)). In vsock mode the VMM's network namespace is empty.
 
 In both modes, each connection is decided by the session's `net` rules on the host ([policy](policy.md)). Allowed connections are made by the host.
 
@@ -17,12 +19,12 @@ In both modes, each connection is decided by the session's `net` rules on the ho
 
 ### NIC mode
 
-The daemon starts the VMM through `zapper __netns`. This shim:
+The daemon starts the VMM through `zapper __vmm`. This shim:
 
-1. enters a new user namespace and network namespace, and becomes root inside both without any host privileges;
+1. enters a new user namespace and network namespace (and a mount namespace, for [confinement](security.md#the-vmm)), and becomes root inside them without any host privileges;
 2. creates `tap0` with `10.0.2.1/30`, plus loopback. These are the namespace's only interfaces, and it has no routes to the host's network;
 3. loads nftables rules that redirect every TCP connection arriving on `tap0` to a local listener, and every UDP packet to port 53 to a local DNS listener, and drop the remaining traffic;
-4. passes each captured connection to the daemon as `TCP <destination> <port>`, and each query as `DNS`, over the session's `nic.sock`;
+4. passes each captured connection to the daemon as `TCP <destination> <port>`, and each query as `DNS`, over `nic.sock` in the session's VMM directory;
 5. starts Firecracker, which attaches `tap0` to the guest as `eth0`.
 
 The guest kernel configures `eth0` as `10.0.2.2/30`, with gateway and DNS server `10.0.2.1`. The capture runs in the namespace, outside the VM, so changing routes or DNS settings inside the guest, even as root, still leaves all traffic going through it.
@@ -97,7 +99,7 @@ From inside a guest, a denied name fails to resolve (`getent hosts` prints nothi
 ## Verification
 
 ```
-zapper check                  # "unprivileged user and network namespaces with tap and nftables"
+zapper check                  # "unprivileged user and mount namespaces", "tap and nftables in the VMM's network namespace"
 make test-e2e                 # the NIC, root and vsock groups in docs/testing.md
 ```
 

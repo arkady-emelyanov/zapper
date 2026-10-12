@@ -109,9 +109,19 @@ fn claude_files(profile: &ResolvedProfile, home: &str, api_key: Option<&String>)
     if let Some(m) = &agent.model {
         merge(&mut settings, &json!({ "model": m }));
     }
-    if let Some(mode) = &agent.permission_mode {
-        merge(&mut settings, &json!({ "permissions": { "defaultMode": mode } }));
-    }
+    // The permission mode goes in managed settings, not ~/.claude/settings.json:
+    // Claude Code asks whether to switch to auto mode when the user settings
+    // file sets another mode and no other file does, and each session starts
+    // with a fresh home, so it would ask every time. The managed file is also
+    // root-owned, so the workload can't change it.
+    // https://code.claude.com/docs/en/permission-modes#which-mode-a-session-starts-in
+    let managed = agent.permission_mode.as_ref().map(|mode| {
+        let mut m = json!({ "permissions": { "defaultMode": mode } });
+        if mode == "bypassPermissions" {
+            merge(&mut m, &json!({ "skipDangerousModePermissionPrompt": true }));
+        }
+        m
+    });
     let mut state = json!({
         "hasCompletedOnboarding": true,
         "bypassPermissionsModeAccepted": true,
@@ -134,10 +144,37 @@ fn claude_files(profile: &ResolvedProfile, home: &str, api_key: Option<&String>)
     if let Some(md) = &agent.claude_md {
         files.push(GuestFile { path: format!("{home}/.claude/CLAUDE.md"), content: md.clone(), mode: 0o644, user_owned: true });
     }
+    if let Some(m) = managed {
+        files.push(GuestFile { path: MANAGED_SETTINGS.into(), content: pretty(&m), mode: 0o644, user_owned: false });
+    }
     files
 }
+
+/// Claude Code's managed settings file on Linux.
+/// https://code.claude.com/docs/en/managed-settings
+const MANAGED_SETTINGS: &str = "/etc/claude-code/managed-settings.json";
 
 /// Policy layers of a session in evaluation order.
 pub fn layers_of<'a>(layers: &'a [(Scope, zapper_policy::Policy)]) -> Vec<(Scope, &'a zapper_policy::Policy)> {
     layers.iter().map(|(s, p)| (s.clone(), p)).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn permission_mode_goes_to_managed_settings() {
+        let config = Config::from_yaml("profiles:\n  c:\n    agent: { kind: claude-code, permission_mode: bypassPermissions, model: m }\n").unwrap();
+        let profile = config.resolve("c").unwrap();
+        let spec = build(&config, &profile, "s", "", vec![]).unwrap();
+        let file = |p: &str| spec.files.iter().find(|f| f.path == p).map(|f| serde_json::from_str::<Value>(&f.content).unwrap());
+        let user = file("/home/agent/.claude/settings.json").unwrap();
+        assert_eq!(user["model"], "m");
+        assert!(user.get("permissions").is_none(), "no defaultMode in user settings: {user}");
+        let managed = file(MANAGED_SETTINGS).unwrap();
+        assert_eq!(managed["permissions"]["defaultMode"], "bypassPermissions");
+        assert_eq!(managed["skipDangerousModePermissionPrompt"], true);
+        assert!(!spec.files.iter().find(|f| f.path == MANAGED_SETTINGS).unwrap().user_owned);
+    }
 }

@@ -19,6 +19,7 @@ zapper assumes that whatever runs in a session may be hostile, up to a person wi
 
 | Control | Enforced by | Holds with root in the guest |
 |---|---|---|
+| The VMM runs in its own user, network and mount namespaces, in a read-only root holding its own files: the session's `vm/` directory, the kernel, the initramfs, its binary and four devices ([the VMM](#the-vmm)) | `zapper __vmm` on the host | Yes |
 | Guest traffic goes through zapper. With a NIC, the VMM runs in a network namespace whose only interfaces are loopback and the guest's tap, and nftables there sends TCP to the daemon and DNS to its resolver and drops the rest. In vsock mode the guest has loopback only ([network](network.md)) | Network namespace and nftables outside the VM; Firecracker's device model | Yes |
 | DNS answers names that some rule could allow, with per-session synthetic addresses, without contacting any DNS server | Host resolver | Yes |
 | Policy for each connection and, when inspected, each request | Host proxy | Yes |
@@ -51,6 +52,17 @@ Every secret a session receives, in any mode, gives the session the authority th
 
 `proxy` mode protects the value, so the session can't take the raw token elsewhere or keep it after it ends. It doesn't limit what the token can do at those hosts. Choose the token's own scope (repository, permissions, lifetime) as if the session held it.
 
+## The VMM
+
+A guest that escapes Firecracker gets the Firecracker process. zapper starts each VMM through `zapper __vmm`, which, before Firecracker runs:
+
+1. enters new user, network and mount namespaces, and becomes root inside them without host privileges;
+2. for a NIC session, builds the guest's network in the new network namespace ([network](network.md)); in vsock mode, that namespace stays empty;
+3. builds a root on a tmpfs, holding bind mounts at their host paths: the session's `vm/` directory (disks, VM config, metrics, sockets), the kernel, the initramfs and the Firecracker binary read-only, `/dev/kvm`, `/dev/null`, `/dev/urandom`, `/dev/net/tun` for a NIC, and a private `/tmp`;
+4. `pivot_root`s into it and makes it read-only.
+
+From there, the VMM sees none of the daemon user's other files: the config, secret files, the session's audit log and recordings, and other sessions all stay outside its view. `tests/e2e.sh` checks this through `/proc/<pid>/root` of a running VMM.
+
 ## Usage
 
 - Run people and agents you don't trust with `root: false`, the default.
@@ -77,7 +89,7 @@ make test-e2e      # ends with "all e2e checks passed"
 
 - **Exec checks may race.** The host decides on the path the process passed. A multithreaded process written for it may change that memory between the check and the kernel's own read; the kernel documents this limit of seccomp user notification. The tests haven't shown it, but treat exec policy as a guardrail and rely on network and secrets for the boundary.
 - **`fs` rules apply at boot.** Files created later aren't covered, and root in the guest can undo the rules.
-- **Firecracker runs as the daemon's user.** It applies its own seccomp filters, and with a NIC it runs in its own user and network namespace, but it can read the files the daemon user can, including secret files. Restricting its view to the session directory, with a mount namespace or the jailer, is planned.
+- **The VMM keeps the daemon user's uid.** Its namespaces hide the daemon user's files and the host network from it, but kernel interfaces it keeps (`/dev/kvm`, and `/dev/net/tun` with a NIC) are shared with the host. Running it as a separate uid would need `/etc/subuid` entries, a one-time root step.
 - **The daemon is one process that holds the secrets and runs the proxy.** It parses HTTP, TLS, JSON and frames from the guest with memory-safe libraries, and a bug in that code would be a bug in the boundary.
 - **Rate and volume limits** for network traffic are the next item: see [the README](../README.md#next).
 - **Sessions end when the daemon restarts.** Their audit logs stay on disk.
@@ -88,4 +100,4 @@ Network-specific limitations are on the [network](network.md#limitations) page.
 
 - Firecracker design and threat model: https://github.com/firecracker-microvm/firecracker/blob/main/docs/design.md
 - seccomp user notification and its TOCTOU caveat: `man 2 seccomp_unotify`
-- Sources: `crates/zapper/src/netns.rs`, `crates/zapper/src/daemon/{proxy,dns,nic,addr,session,tls}.rs`, `crates/zapper-agent/src/{shell,sys,init}.rs`
+- Sources: `crates/zapper/src/vmm.rs`, `crates/zapper/src/netns.rs`, `crates/zapper/src/daemon/{proxy,dns,nic,addr,session,tls}.rs`, `crates/zapper-agent/src/{shell,sys,init}.rs`

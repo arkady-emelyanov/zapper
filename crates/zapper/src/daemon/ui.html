@@ -28,8 +28,16 @@
   .allow, .running { color:var(--ok); } .deny, .failed { color:var(--bad); } .ask, .starting { color:var(--warn); } .stopped { color:var(--dim); }
   .dim { color:var(--dim); }
   .bar { display:flex; gap:10px; align-items:center; margin-bottom:10px; }
+  button.act { font:inherit; border:1px solid var(--line); border-radius:6px; padding:3px 10px; cursor:pointer; background:var(--panel); color:var(--text); }
+  button.act.allow { border-color:var(--ok); color:var(--ok); } button.act.deny { border-color:var(--bad); color:var(--bad); }
+  button.act:disabled { opacity:.5; cursor:default; }
+  td select { background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:2px 6px; font:inherit; }
   .bar select, .bar input { background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:4px 8px; font:inherit; }
   h2 { font-size:13px; color:var(--dim); font-weight:500; margin:18px 0 8px; text-transform:uppercase; letter-spacing:.6px; }
+  .cols { display:grid; grid-template-columns: 1fr 1fr; gap:24px; }
+  @media (max-width: 900px) { .cols { grid-template-columns: 1fr; } }
+  ul.kv { list-style: disc; margin:0; padding-left:20px; line-height:1.9; }
+  ul.kv .k { color:var(--dim); }
   .grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap:8px; margin-bottom:12px; }
   .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:8px 10px; }
   .card .k { color:var(--dim); font-size:11px; } .card .v { font-size:15px; }
@@ -39,13 +47,13 @@
 </head>
 <body>
 <header>
-  <h1>⚡ zapper</h1><span class="ro">read-only</span>
+  <h1>⚡ zapper</h1>
   <nav id="nav"></nav>
   <div class="stat" id="stat"></div>
 </header>
 <main>
   <section id="sessions"></section>
-  <section id="session"></section>
+  <section id="session"><div id="session-info"></div></section>
   <section id="events">
     <div class="bar">
       <select id="ev-session"><option value="">all sessions</option></select>
@@ -75,7 +83,9 @@ function el(tag, props = {}, ...kids) {
   for (const k of kids.flat()) e.append(k instanceof Node ? k : document.createTextNode(k == null ? '' : String(k)));
   return e;
 }
-const api = (p) => fetch('/api' + p).then(r => { if (!r.ok) throw new Error(r.status); return (r.headers.get('content-type') || '').includes('json') ? r.json() : r.text(); });
+// JSON responses are parsed; everything else, the ndjson audit log included,
+// comes back as text.
+const api = (p) => fetch('/api' + p).then(r => { if (!r.ok) throw new Error(r.status); return (r.headers.get('content-type') || '').startsWith('application/json') ? r.json() : r.text(); });
 const time = (t) => new Date(t * 1000).toLocaleTimeString();
 const ago = (t) => { const s = Math.round(Date.now() / 1000 - t); return s < 90 ? s + 's' : s < 5400 ? Math.round(s / 60) + 'm' : Math.round(s / 3600) + 'h'; };
 const pill = (cls, text) => el('span', { class: 'pill ' + cls }, text ?? cls);
@@ -89,10 +99,16 @@ function show(t, arg) {
   refresh();
 }
 for (const t of tabs) { const b = el('button', { on: () => show(t) }, t); b.dataset.t = t; $('nav').append(b); }
+function markPending(n) {
+  const b = [...$('nav').children].find(b => b.dataset.t === 'approvals');
+  b.textContent = n ? 'approvals (' + n + ')' : 'approvals';
+  b.classList.toggle('ask', n > 0);
+}
 
 async function refresh() {
   try {
     const st = await api('/status');
+    markPending(st.pending_approvals);
     $('stat').replaceChildren(
       el('span', {}, el('b', {}, st.running), ' running'),
       el('span', {}, el('b', {}, st.pending_approvals), ' pending'),
@@ -102,7 +118,11 @@ async function refresh() {
     if (tab === 'approvals') await renderApprovals();
     if (tab === 'rules') await renderRules();
     if (tab === 'config') await renderConfig();
-  } catch (e) { $('stat').replaceChildren(el('span', { class: 'deny' }, 'daemon unreachable')); }
+  } catch (e) {
+    // Tell a page error apart from the daemon being down.
+    const up = await fetch('/api/status').then(r => r.ok, () => false);
+    $('stat').replaceChildren(el('span', { class: 'deny' }, up ? 'page error: ' + e.message : 'daemon unreachable'));
+  }
 }
 
 async function renderSessions() {
@@ -129,19 +149,33 @@ async function renderSessions() {
 async function renderSession(id) {
   const [s, audit] = await Promise.all([api('/sessions/' + id), api('/sessions/' + id + '/audit')]);
   const events = audit.split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
-  const card = (k, v) => el('div', { class: 'card' }, el('div', { class: 'k' }, k), el('div', { class: 'v' }, v));
+  const item = (k, ...v) => el('li', {}, el('span', { class: 'k' }, k + ': '), ...v);
   const c = s.counters;
   const top = {};
   for (const e of events) if (e.type === 'net') { const k = e.host + ':' + e.port; top[k] = top[k] || { allow: 0, deny: 0 }; top[k][e.action]++; }
   const hosts = Object.entries(top).sort((a, b) => (b[1].allow + b[1].deny) - (a[1].allow + a[1].deny)).slice(0, 15);
   const execs = events.filter(e => e.type === 'exec').slice(-200).reverse();
   const exits = events.filter(e => e.type === 'guest' && e.event.event === 'exit').slice(-200).reverse();
-  $('session').replaceChildren(
+  const terms = await api('/sessions/' + id + '/terminals');
+  $('session-info').replaceChildren(
     el('div', { class: 'bar' }, el('button', { on: () => show('sessions') }, '← sessions'), el('b', { class: 'mono' }, s.id), pill(s.state), el('span', { class: 'dim' }, s.detail || '')),
-    el('div', { class: 'grid' }, card('profile', s.profile), card('image', s.image), card('user', s.root ? 'root' : s.user), card('workdir', s.workdir),
-      card('net allowed / denied', c.net_allowed + ' / ' + c.net_denied), card('exec allowed / denied', c.exec_allowed + ' / ' + c.exec_denied),
-      card('process exits', c.exits), card('shells', c.shells), card('session rules', s.rules),
-      card('expires', s.expires ? new Date(s.expires * 1000).toLocaleString() : 'never')),
+    el('div', { class: 'cols' },
+      el('div', {}, el('h2', {}, 'details'), el('ul', { class: 'kv' },
+        item('profile', s.profile),
+        item('image', s.image, el('span', { class: 'dim' }, ' · ' + s.vcpus + ' vCPU · ' + s.memory_mib + ' MiB')),
+        item('user', s.root ? pill('ask', 'root') : s.user),
+        item('workdir', el('span', { class: 'mono' }, s.workdir)),
+        item('started', new Date(s.created * 1000).toLocaleString()),
+        item('expires', s.expires ? new Date(s.expires * 1000).toLocaleString() : 'never'),
+        item('network', el('span', { class: 'allow' }, c.net_allowed + ' allowed'), ' · ', el('span', { class: 'deny' }, c.net_denied + ' denied')),
+        item('programs', el('span', { class: 'allow' }, c.exec_allowed + ' allowed'), ' · ', el('span', { class: 'deny' }, c.exec_denied + ' denied')),
+        item('process exits', c.exits),
+        item('session rules', s.rules))),
+      el('div', {}, el('h2', {}, 'terminals'), terms.length ? el('ul', { class: 'kv' }, terms.map(t => el('li', {},
+          el('span', { class: 'k' }, t.id + ': '), el('span', { class: 'mono' }, t.argv.join(' ')), ' ',
+          pill(t.open ? 'running' : 'stopped', t.open ? 'open' : 'closed'), el('span', { class: 'dim' }, ' ' + t.cols + '×' + t.rows + ' '),
+          el('button', { class: 'act', on: () => watchTerminal(id, t) }, 'Watch ↗'))))
+        : el('div', { class: 'empty' }, 'no terminals'))),
     el('h2', {}, 'destinations'),
     hosts.length ? el('table', {}, el('thead', {}, el('tr', {}, el('th', {}, 'host'), el('th', {}, 'allowed'), el('th', {}, 'denied'))),
       el('tbody', {}, hosts.map(([h, n]) => el('tr', {}, el('td', { class: 'mono' }, h), el('td', { class: 'allow' }, n.allow), el('td', { class: 'deny' }, n.deny))))) : el('div', { class: 'empty' }, 'no network activity'),
@@ -156,13 +190,52 @@ async function renderSession(id) {
         el('td', {}, x.elapsed_ms + ' ms'), el('td', {}, x.user_ms + ' / ' + x.sys_ms + ' ms'), el('td', {}, x.mem_kib + ' KiB'), el('td', {}, x.io_bytes + ' B'))))) : el('div', { class: 'empty' }, 'no exits yet'));
 }
 
+// How each pending approval should be remembered, kept across refreshes.
+const rememberChoice = {};
+let answerError = '';
+
+async function answer(id, allow) {
+  const remember = rememberChoice[id] || null;
+  const r = await fetch('/api/approvals/' + encodeURIComponent(id), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-zapper-ui': '1' },
+    body: JSON.stringify({ allow, remember }),
+  });
+  answerError = r.ok ? '' : 'Could not answer ' + id + ': ' + (await r.text());
+  delete rememberChoice[id];
+  await refresh();
+}
+
+let shownApprovals = '';
+// Each terminal opens in its own window; a second click focuses it.
+function watchTerminal(sessionId, t) {
+  const url = '/terminal?session=' + encodeURIComponent(sessionId) + '&n=' + encodeURIComponent(t.id);
+  const width = Math.min(screen.availWidth, t.cols * 8 + 60), height = Math.min(screen.availHeight, t.rows * 17 + 90);
+  const w = window.open(url, 'zapper-' + sessionId + '-' + t.id, 'width=' + width + ',height=' + height);
+  if (w) w.focus();
+}
+
 async function renderApprovals() {
   const list = await api('/approvals');
-  if (!list.length) return $('approvals').replaceChildren(el('div', { class: 'empty' }, 'Nothing is waiting for a decision.'));
-  $('approvals').replaceChildren(
-    el('p', { class: 'dim' }, 'This UI is read-only. Answer with `zapper approve ID` or `zapper deny ID` (add --remember session|profile).'),
-    el('table', {}, el('thead', {}, el('tr', {}, ['id', 'session', 'kind', 'request', 'waiting'].map(h => el('th', {}, h)))),
-      el('tbody', {}, list.map(p => el('tr', {}, el('td', { class: 'mono' }, p.id), el('td', { class: 'mono' }, p.session), el('td', {}, p.kind), el('td', { class: 'mono' }, p.subject), el('td', {}, ago(p.created)))))));
+  // Rebuild only when the list changes, so a choice being made isn't reset.
+  const key = JSON.stringify(list.map(p => p.id)) + answerError;
+  if (key === shownApprovals) return;
+  shownApprovals = key;
+  const error = answerError ? [el('p', { class: 'deny' }, answerError)] : [];
+  if (!list.length) return $('approvals').replaceChildren(...error, el('div', { class: 'empty' }, 'Nothing is waiting for a decision.'));
+  const row = (p) => {
+    const select = el('select', {}, el('option', { value: '' }, 'this request'), el('option', { value: 'session' }, 'the rest of the session'));
+    select.value = rememberChoice[p.id] || '';
+    select.addEventListener('change', () => { rememberChoice[p.id] = select.value || null; });
+    const allow = el('button', { class: 'act allow', on: () => { allow.disabled = deny.disabled = true; answer(p.id, true); } }, 'Allow');
+    const deny = el('button', { class: 'act deny', on: () => { allow.disabled = deny.disabled = true; answer(p.id, false); } }, 'Deny');
+    return el('tr', {}, el('td', { class: 'mono' }, p.id), el('td', { class: 'mono' }, p.session), el('td', {}, p.kind),
+      el('td', { class: 'mono' }, p.subject), el('td', {}, ago(p.created)), el('td', {}, select), el('td', {}, allow, ' ', deny));
+  };
+  $('approvals').replaceChildren(...error,
+    el('p', { class: 'dim' }, 'An answer for the rest of the session adds an allow or deny rule to the session. It is kept in memory and ends with the session; the config is never changed.'),
+    el('table', {}, el('thead', {}, el('tr', {}, ['id', 'session', 'kind', 'request', 'waiting', 'applies to', ''].map(h => el('th', {}, h)))),
+      el('tbody', {}, list.map(row))));
 }
 
 function ruleText(r) {

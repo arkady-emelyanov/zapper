@@ -94,8 +94,10 @@ Values are read each time they're used, so a rotated file or variable takes effe
 zapper approvals                                # pending
 zapper approve 3sicfmqu                         # allow this request
 zapper approve 3sicfmqu --remember session      # and add an allow rule to the session
-zapper deny 3sicfmqu --remember profile         # and add a deny rule to the profile in the running config
+zapper deny 3sicfmqu --remember session         # and add a deny rule to the session
 ```
+
+An answer is kept in memory. Without `--remember` it applies to the one request; with `--remember session` it adds an allow or deny rule to the session's own layer, which ends with the session. Answers never change the running or startup config; to keep a decision, add a rule to a profile with `zapper rule add`.
 
 A session can have up to 32 pending approvals; further requests are denied until some are answered.
 

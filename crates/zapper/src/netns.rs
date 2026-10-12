@@ -1,22 +1,17 @@
-//! `zapper __netns`: runs a session's VMM in its own user and network
-//! namespace, whose only way out is the daemon.
+//! The guest's network, inside the VMM's network namespace (`crate::vmm`).
 //!
-//! Inside the namespace there is loopback and `tap0`, the guest's NIC, and
-//! nothing else: no route, no other interface. nftables there redirects every
-//! TCP connection from the guest to a local listener and every DNS query to
-//! another; everything else from the guest is dropped. Both listeners hand
-//! their traffic to the daemon over unix sockets in the session directory,
-//! where policy applies. Because the capture is outside the VM, root in the
-//! guest cannot get around it. No host privileges are needed: an unprivileged
-//! user namespace owns the network namespace.
-//!
-//! Runs before any other thread exists, as `unshare(CLONE_NEWUSER)` requires.
+//! The namespace has two interfaces, loopback and `tap0`, the guest's NIC,
+//! and no routes to the host's network. nftables there redirects each TCP
+//! connection from the guest to a local listener and each DNS query to
+//! another, and drops the rest of the guest's traffic. Both listeners hand
+//! their traffic to the daemon over `nic.sock` in the VMM's directory,
+//! where policy applies. The capture runs outside the VM, so root in the
+//! guest can't get around it.
 
 use std::io::{self, Read, Write};
 use std::net::{Ipv4Addr, SocketAddrV4, TcpListener, TcpStream, UdpSocket};
 use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixStream;
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
@@ -30,7 +25,7 @@ pub const GUEST_MAC: &str = "06:00:0a:00:02:02";
 pub const TAP: &str = "tap0";
 const TCP_PORT: u16 = 15001;
 const DNS_PORT: u16 = 15053;
-/// Daemon socket in the session directory.
+/// Daemon socket in the VMM's directory.
 pub const SOCKET: &str = "nic.sock";
 
 /// Kernel command line that configures the guest's `eth0`.
@@ -88,17 +83,9 @@ fn run(name: &str, args: &[&str], stdin: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-/// Enters a new user and network namespace, as root of both, and builds the
-/// guest's network.
-fn enter() -> Result<()> {
-    let (uid, gid) = unsafe { (libc::getuid(), libc::getgid()) };
-    if unsafe { libc::unshare(libc::CLONE_NEWUSER | libc::CLONE_NEWNET) } != 0 {
-        let e = io::Error::last_os_error();
-        bail!("unshare(user, net): {e} (unprivileged user namespaces disabled? see docs/security.md)");
-    }
-    std::fs::write("/proc/self/setgroups", "deny")?;
-    std::fs::write("/proc/self/uid_map", format!("0 {uid} 1"))?;
-    std::fs::write("/proc/self/gid_map", format!("0 {gid} 1"))?;
+/// Builds the guest's network inside the current network namespace, which
+/// must be new and owned by the current user namespace.
+pub fn setup() -> Result<()> {
     run("ip", &["link", "set", "lo", "up"], None)?;
     run("ip", &["tuntap", "add", TAP, "mode", "tap"], None)?;
     run("ip", &["addr", "add", &format!("{GATEWAY}/30"), "dev", TAP], None)?;
@@ -107,60 +94,9 @@ fn enter() -> Result<()> {
     Ok(())
 }
 
-/// `zapper __netns --probe`: can this host build the namespace?
-pub fn probe() -> i32 {
-    match enter() {
-        Ok(()) => 0,
-        Err(e) => {
-            eprintln!("{e:#}");
-            1
-        }
-    }
-}
-
-/// `zapper __netns DIR FIRECRACKER CONFIG ID`
-pub fn main(args: &[String]) -> i32 {
-    let [dir, firecracker, config, id] = args else {
-        eprintln!("usage: zapper __netns DIR FIRECRACKER CONFIG ID");
-        return 2;
-    };
-    let dir = PathBuf::from(dir);
-    // Entering the user namespace changes credentials, which clears the
-    // parent-death signal the daemon set: set it again.
-    let parent = unsafe { libc::getppid() };
-    if let Err(e) = enter() {
-        eprintln!("zapper netns: {e:#}");
-        return 1;
-    }
-    unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) };
-    if unsafe { libc::getppid() } != parent {
-        return 1;
-    }
-    if let Err(e) = serve(&dir) {
-        eprintln!("zapper netns: {e:#}");
-        return 1;
-    }
-    let status = unsafe {
-        Command::new(firecracker)
-            .args(["--no-api", "--config-file", config, "--level", "Warn", "--id", id])
-            .current_dir(&dir)
-            .stdin(Stdio::null())
-            .pre_exec(|| {
-                libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
-                Ok(())
-            })
-            .status()
-    };
-    match status {
-        Ok(s) => s.code().unwrap_or(1),
-        Err(e) => {
-            eprintln!("zapper netns: starting {firecracker}: {e}");
-            1
-        }
-    }
-}
-
-fn serve(dir: &Path) -> Result<()> {
+/// Starts the capture listeners; they hand traffic to the daemon over the
+/// session's `nic.sock`.
+pub fn serve(dir: &Path) -> Result<()> {
     let socket = dir.join(SOCKET);
     let tcp = TcpListener::bind(SocketAddrV4::new(GATEWAY, TCP_PORT))?;
     let udp = UdpSocket::bind(SocketAddrV4::new(GATEWAY, DNS_PORT))?;

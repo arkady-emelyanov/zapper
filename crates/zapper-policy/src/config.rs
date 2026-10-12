@@ -381,7 +381,7 @@ pub enum NetworkMode {
     #[default]
     Nic,
     /// Loopback and `HTTP(S)_PROXY` pointing at a vsock forwarder, for programs
-    /// that use proxy variables. Works without user namespaces on the host.
+    /// that use proxy variables. The VMM's network namespace stays empty.
     Vsock,
 }
 

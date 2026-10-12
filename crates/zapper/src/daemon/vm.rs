@@ -128,13 +128,22 @@ pub struct VmSpec<'a> {
     /// Extra disks, attached as `/dev/vdb`, `/dev/vdc`, …
     pub disks: Vec<(PathBuf, bool)>,
     pub engine: &'a Engine,
+    /// The session directory; the VMM gets its `vm` subdirectory.
     pub dir: &'a Path,
-    /// Give the guest a NIC, captured by a namespace shim (`crate::netns`).
+    pub id: &'a str,
+    /// Give the guest a NIC, captured in the VMM's network namespace
+    /// (`crate::netns`).
     pub nic: bool,
 }
 
-pub fn vsock_path(dir: &Path) -> PathBuf {
-    dir.join("v.sock")
+/// The part of a session directory the VMM sees: disks, its config,
+/// metrics and sockets. Logs, recordings and the audit log stay outside it.
+pub fn vm_dir(session_dir: &Path) -> PathBuf {
+    session_dir.join("vm")
+}
+
+pub fn vsock_path(session_dir: &Path) -> PathBuf {
+    vm_dir(session_dir).join("v.sock")
 }
 
 /// Starts the VMM. Its serial console goes to `console.log`, capped.
@@ -152,7 +161,7 @@ pub async fn start(spec: VmSpec<'_>) -> Result<Child> {
         "drives": drives,
         "machine-config": { "vcpu_count": spec.engine.vcpus, "mem_size_mib": spec.engine.memory_mib, "smt": false },
         "vsock": { "guest_cid": GUEST_CID, "uds_path": vsock_path(spec.dir) },
-        "metrics": { "metrics_path": spec.dir.join("metrics.json") },
+        "metrics": { "metrics_path": vm_dir(spec.dir).join("metrics.json") },
         "entropy": {},
     });
     if spec.nic {
@@ -161,20 +170,23 @@ pub async fn start(spec: VmSpec<'_>) -> Result<Child> {
     if !spec.kernel.exists() {
         bail!("kernel {} not found", spec.kernel.display());
     }
-    let config_path = spec.dir.join("vm.json");
+    let vmdir = vm_dir(spec.dir);
+    let config_path = vmdir.join("vm.json");
     tokio::fs::write(&config_path, serde_json::to_vec_pretty(&config)?).await?;
-    tokio::fs::write(spec.dir.join("metrics.json"), b"").await?;
-    // With a NIC, the VMM runs inside its own network namespace, set up by
-    // this binary's `__netns` mode.
-    let mut cmd = if spec.nic {
-        let mut c = Command::new(std::env::current_exe()?);
-        c.arg("__netns").arg(spec.dir).arg(spec.firecracker).arg(&config_path).arg(spec.dir.file_name().unwrap_or_default());
-        c
-    } else {
-        let mut c = Command::new(spec.firecracker);
-        c.arg("--no-api").arg("--config-file").arg(&config_path).args(["--level", "Warn", "--id"]).arg(spec.dir.file_name().unwrap_or_default());
-        c
+    tokio::fs::write(vmdir.join("metrics.json"), b"").await?;
+    // The VMM runs confined in its own namespaces, set up by this binary's
+    // `__vmm` mode (`crate::vmm`).
+    let shim = crate::vmm::Args {
+        dir: vmdir.clone(),
+        firecracker: spec.firecracker.to_path_buf(),
+        config: config_path.clone(),
+        id: spec.id.to_string(),
+        kernel: spec.kernel.clone(),
+        initrd: spec.initrd.to_path_buf(),
+        nic: spec.nic,
     };
+    let mut cmd = Command::new(std::env::current_exe()?);
+    cmd.args(shim.to_args());
     // The VMM dies with the daemon, even if the daemon crashes.
     unsafe {
         cmd.pre_exec(|| {
@@ -183,7 +195,7 @@ pub async fn start(spec: VmSpec<'_>) -> Result<Child> {
         });
     }
     let mut child = cmd
-        .current_dir(spec.dir)
+        .current_dir(&vmdir)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

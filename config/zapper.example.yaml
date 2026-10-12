@@ -2,7 +2,7 @@
 # (mode 0600) once and never overwrites it.
 #
 # The daemon loads this file at start as the running config. API changes
-# (`zapper rule add`, `zapper config edit`, approvals remembered in a profile)
+# (`zapper rule add`, `zapper config edit`, `zapper profile set`)
 # change the running config only: `zapper config diff` shows them,
 # `zapper config save` writes them here, `zapper config reload` drops them.
 #
@@ -30,12 +30,33 @@ daemon:
 # itself, such as S3 keys and client certificates; issue those scoped and
 # short-lived.
 secrets:
-  anthropic:
-    env: ANTHROPIC_API_KEY
-    hosts: [api.anthropic.com]
-  # A long-lived Claude token from `claude setup-token`, in a 0600 file.
+  # Claude subscription or Claude API: which one pays for Claude Code.
+  #
+  # `claude` is a token from `claude setup-token`, kept in a 0600 file. It uses
+  # your Pro/Max/Team/Enterprise subscription: usage counts against the plan's
+  # limits and isn't billed as API usage. Claude Code shows "Claude API" in its
+  # banner with this token because the token can only make model requests and
+  # can't read your plan; `/status` shows "Auth token: CLAUDE_CODE_OAUTH_TOKEN".
+  # The token is for your own use. Other people need their own credentials or
+  # an API key.
+  # https://code.claude.com/docs/en/authentication#generate-a-long-lived-token
+  # https://code.claude.com/docs/en/legal-and-compliance#authentication-and-credential-use
+  #
+  # `anthropic` is a Claude Console API key, billed per token to the Console
+  # organization. Claude Code prefers ANTHROPIC_API_KEY over the subscription
+  # token, so a profile that sets ANTHROPIC_API_KEY bills the API even when
+  # CLAUDE_CODE_OAUTH_TOKEN is set too. Use one or the other per profile.
+  # https://code.claude.com/docs/en/authentication#authentication-precedence
+  #
+  # To check: `/usage` in Claude Code, or claude.ai Settings → Usage for the
+  # subscription; platform.claude.com for API usage and spend limits. With
+  # extra usage turned off on the plan, requests past the limits are refused
+  # rather than charged.
   claude:
     file: ~/.config/zapper/claude-token
+    hosts: [api.anthropic.com]
+  anthropic:
+    env: ANTHROPIC_API_KEY
     hosts: [api.anthropic.com]
   # s3:
   #   file: ~/.config/zapper/s3-session.env
@@ -75,11 +96,14 @@ profiles:
         - { path: "/work/**/.env", access: hidden }
         - { path: "/work/.git/config", access: ro }
 
-  # Claude Code with its credentials injected by the proxy.
+  # Claude Code on your subscription, with the token added by the proxy.
   # Image: make image IMAGE=claude (see the Makefile).
+  # For API billing instead, replace CLAUDE_CODE_OAUTH_TOKEN with
+  # ANTHROPIC_API_KEY: "{{secret:anthropic}}" and `claude` with `anthropic`
+  # in the rule below. Don't set both.
   claude:
     extends: default
-    description: Claude Code, API access only
+    description: Claude Code on your subscription
     engine: { image: claude, memory_mib: 4096 }
     agent:
       kind: claude-code
@@ -94,7 +118,7 @@ profiles:
         a 403 from the proxy means a rule denied the request.
     policy:
       net:
-        - { action: allow, host: api.anthropic.com, ports: [443], secrets: [claude, anthropic] }
+        - { action: allow, host: api.anthropic.com, ports: [443], secrets: [claude] }
         - { action: allow, host: "github.com", ports: [443], methods: [GET], comment: read-only GitHub }
         - { action: allow, host: "*.githubusercontent.com", ports: [443], methods: [GET] }
       defaults: { net: ask }

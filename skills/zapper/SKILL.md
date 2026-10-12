@@ -56,7 +56,7 @@ zapper audit ID | jq -r 'select(.type=="exec") | .argv | join(" ")'
 ls ~/.local/state/zapper/sessions/ID/    # audit.jsonl, shell-N.cast (asciinema play), console.log
 ```
 
-The read-only UI URL is in `~/.local/state/zapper/ui-url`.
+The UI URL is in `~/.local/state/zapper/ui-url`; the user can answer approvals there too.
 
 ## Config
 

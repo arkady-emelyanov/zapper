@@ -102,6 +102,19 @@ code=$?
 expect "a denied first command says so" "$out" "perl: exec denied by policy"
 [ "$code" = 126 ] && pass "a denied first command exits 126" || fail "a denied first command exits 126" "got $code"
 
+echo "== the VMM sees its own files only"
+"$Z" run --keep -C "$T/work" -- true > "$T/keep.log" 2>&1
+id=$(grep -o 'session [a-z0-9]* kept' "$T/keep.log" | cut -d' ' -f2)
+pid=$(pgrep -f "firecracker.*--id $id" | head -1)
+r=/proc/$pid/root
+[ -n "$pid" ] && [ -e "$r/dev/kvm" ] && pass "the VMM runs in its own root" || fail "the VMM runs in its own root" "no firecracker process for $id"
+[ ! -e "$r$ZAPPER_CONFIG" ] && pass "the config file is absent from the VMM's view" || fail "the config file is absent from the VMM's view" "$r$ZAPPER_CONFIG exists"
+[ ! -e "$r$T/state/sessions/$id/audit.jsonl" ] && pass "the audit log is absent from the VMM's view" || fail "the audit log is absent from the VMM's view" "visible"
+[ -z "$(ls -A "$r$HOME" 2>/dev/null | grep -v '^\.local$')" ] && pass "the home directory holds only zapper's files" || fail "the home directory holds only zapper's files" "$(ls -A "$r$HOME")"
+touch "$r/probe" 2>/dev/null && fail "the VMM's root is read-only" "created $r/probe" || pass "the VMM's root is read-only"
+"$Z" rm "$id" > /dev/null
+[ -e "$T/state/sessions/$id/vm.json" ] && [ ! -e "$T/state/sessions/$id/vm" ] && pass "teardown keeps vm.json and removes the VMM directory" || fail "teardown keeps vm.json and removes the VMM directory" "$(ls -A "$T/state/sessions/$id")"
+
 echo "== root in the guest cannot get around the NIC capture"
 out=$("$Z" run -p root -C "$T/work" -- bash -c '
 code() { curl -sS -m 5 -o /dev/null -w "%{http_code}" "$@" 2>/dev/null; }
@@ -136,10 +149,48 @@ for _ in 1 2 3 4 5 6 7 8 9 10; do
     sleep 0.5
 done
 [ -n "$pending" ] && pass "request waits for approval" || fail "request waits for approval" "no pending approval"
+code=$(curl -s -o /dev/null -w '%{http_code}' --unix-socket "$ZAPPER_SOCKET" -X POST -d '{"allow":true,"remember":"profile"}' "http://zapper/v1/approvals/$pending")
+[ "$code" = 400 ] && pass "an answer can't be remembered in a profile" || fail "an answer can't be remembered in a profile" "got $code"
 "$Z" approve "$pending" --remember session > /dev/null
 wait "$asker"
 expect "approved request goes through" "$(cat "$T/ask.out")" "301"
 expect "approval remembered as a session rule" "$("$Z" rules --scope "session:$id")" "en.wikipedia.org:443"
+expect "answers leave the config unchanged" "$("$Z" config diff)" "no unsaved changes"
+"$Z" rm "$id" > /dev/null
+
+echo "== UI: answering approvals"
+url=$(cat "$T/state/ui-url"); base=${url%%/\?*}; token=${url##*token=}
+"$Z" run --keep -C "$T/work" -- true > "$T/keep.log" 2>&1
+id=$(grep -o 'session [a-z0-9]* kept' "$T/keep.log" | cut -d' ' -f2)
+"$Z" exec "$id" -- curl -sS -o /dev/null -w '%{http_code}' https://en.wikipedia.org/ > "$T/ask.out" 2>&1 &
+asker=$!
+pending=""
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+    pending=$("$Z" --json approvals | grep -o '"id": "[^"]*"' | head -1 | cut -d'"' -f4)
+    [ -n "$pending" ] && break
+    sleep 0.5
+done
+post() { curl -s -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' -d '{"allow":true}' "$@" "$base/api/approvals/$pending"; }
+[ "$(post -H 'x-zapper-ui: 1' -H "Origin: $base")" = 401 ] && pass "UI write without the token cookie is refused" || fail "UI write without the token cookie is refused" "not 401"
+[ "$(post -b "zapper_token=$token" -H "Origin: $base")" = 403 ] && pass "UI write without X-Zapper-UI is refused" || fail "UI write without X-Zapper-UI is refused" "not 403"
+[ "$(post -b "zapper_token=$token" -H 'x-zapper-ui: 1' -H 'Origin: http://evil.example')" = 403 ] && pass "UI write from another origin is refused" || fail "UI write from another origin is refused" "not 403"
+[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST -b "zapper_token=$token" -H 'x-zapper-ui: 1' -H "Origin: $base" "$base/api/config/save")" = 404 ] && pass "the UI has no other writes" || fail "the UI has no other writes" "config/save reachable"
+[ "$(post -b "zapper_token=$token" -H 'x-zapper-ui: 1' -H "Origin: $base")" = 200 ] && pass "the UI answers an approval" || fail "the UI answers an approval" "not 200"
+wait "$asker"
+expect "the request approved in the UI goes through" "$(cat "$T/ask.out")" "301"
+terms=$(curl -s -b "zapper_token=$token" "$base/api/sessions/$id/terminals")
+expect "the UI lists the session's terminals" "$terms" '"id":2'
+stream=$(curl -s -N -m 5 -b "zapper_token=$token" "$base/api/sessions/$id/terminals/2/stream" | python3 -c '
+import sys, json, base64
+out = ""
+for l in sys.stdin:
+    if l.startswith("data:"):
+        c = json.loads(l[5:])
+        out += base64.b64decode(c["o"]).decode() if "o" in c else json.dumps(c)
+print(out)')
+expect "the UI replays a terminal's output" "$stream" "301"
+expect "the replay ends with the exit code" "$stream" '{"end": 0}'
+[ "$(curl -s -o /dev/null -w '%{http_code}' "$base/api/sessions/$id/terminals/2/stream")" = 401 ] && pass "watching a terminal needs the token" || fail "watching a terminal needs the token" "not 401"
 "$Z" rm "$id" > /dev/null
 
 echo "== running and startup config"
