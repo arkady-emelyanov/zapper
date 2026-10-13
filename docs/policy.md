@@ -117,7 +117,7 @@ A rule gets its id when it's added, such as `net-4`, or `s-net-1` for a session 
 
 ## Verification
 
-`zapper eval` shows which rule decides and in which layer. `make test` covers layering, final rules, defaults, inspection and DNS answers. `make test-e2e` covers allow, deny, ask, method rules, secret injection and exec rules with real VMs.
+`zapper eval` shows which rule decides and in which layer. `make test` covers layering, final rules, defaults, inspection, DNS validation and when names are looked up. `make test-e2e` covers allow, deny, ask, method rules, secret injection and exec rules with real VMs.
 
 ## Limitations
 

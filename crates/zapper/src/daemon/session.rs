@@ -52,6 +52,11 @@ pub struct Session {
     pub usage: Mutex<Option<zapper_policy::proto::GuestEvent>>,
     /// Names given out by the session's DNS, by synthetic address.
     pub dns: Mutex<super::dns::FakeDns>,
+    pub dns_rate: Mutex<super::dns::RateLimit>,
+    /// Bounds the session's concurrent lookups on the host.
+    pub dns_lookups: Arc<Semaphore>,
+    /// The session's HTTP traffic, for inspecting it from the UI.
+    pub requests: Arc<Mutex<super::httplog::RequestLog>>,
     /// The session's terminals, for watching them from the UI.
     pub terminals: Mutex<std::collections::BTreeMap<u64, Arc<Terminal>>>,
     guest: Mutex<Option<mpsc::Sender<HostMsg>>>,
@@ -223,7 +228,10 @@ pub async fn create(daemon: Arc<Daemon>, new: NewSession) -> Result<Arc<Session>
         counters: Counters::default(),
         usage: Mutex::new(None),
         dns: Mutex::new(Default::default()),
+        dns_rate: Mutex::new(Default::default()),
+        dns_lookups: Arc::new(Semaphore::new(8)),
         terminals: Mutex::new(Default::default()),
+        requests: Default::default(),
         guest: Mutex::new(None),
         vm: tokio::sync::Mutex::new(None),
         audit: Mutex::new(Some(audit)),

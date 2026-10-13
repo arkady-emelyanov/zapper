@@ -62,6 +62,7 @@ crates/zapper/           CLI, daemon, proxy, Firecracker launcher, REST API, web
   src/daemon/proxy.rs      egress proxy: tunnels, TLS inspection, secret injection
   src/daemon/addr.rs       which destination addresses are reachable at all
   src/daemon/dns.rs        the guest's resolver: synthetic addresses for allowed names
+  src/daemon/httplog.rs    per-session request log for the UI's network view
   src/daemon/vm.rs         disks, initramfs, the Firecracker process
   src/daemon/ui.html       the web UI: state, terminal viewer, answering approvals (textContent only)
   src/daemon/assets/       xterm.js 6.0.0 (MIT) for the terminal viewer; see its README
@@ -85,7 +86,7 @@ Invariants (each has a test in `tests/e2e.sh` or a unit test; a change that brea
 
 - The VMM runs in its own user, network and mount namespaces; its root holds the session's `vm/` directory, the kernel, initramfs, its binary and its devices.
 - Guest traffic goes through zapper, also with root in the guest. With a NIC, the VMM's network namespace has loopback and the tap as its interfaces and sends all TCP and DNS to the daemon; in vsock mode, vsock is the guest's only channel to the host.
-- DNS answers names that some rule could allow, and answers without contacting a DNS server.
+- DNS queries and host names from the guest are validated before policy sees them. DNS looks a name up on the host only when a connection to it would be allowed, and never makes up an answer: allowed names get a real existence check, asked-about names wait for approval, others are refused.
 - `proxy` secret values stay on the host. The proxy adds a value to a request when a rule listing the secret allows it, the destination matches the secret's `hosts`, and the connection uses TLS or the secret sets `plaintext: true`. A `guest` secret goes to sessions whose profile uses it.
 - The proxy connects to the address it checked. Loopback, link-local and host addresses are unreachable, and private ranges need `daemon.private_networks`.
 - Passthrough connections are bound to the TLS server name; inspected ones present a per-session CA and override `Host`.

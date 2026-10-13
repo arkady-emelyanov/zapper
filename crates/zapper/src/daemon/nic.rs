@@ -7,6 +7,8 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{UnixListener, UnixStream};
 
+use zapper_policy::{lookup_allowed, resolvable, Action, AnyRule, Kind, NetRule};
+
 use super::session::Session;
 use super::{dns, proxy, spec, Daemon, EventBody};
 
@@ -46,21 +48,138 @@ async fn handle(d: Arc<Daemon>, s: Arc<Session>, mut stream: UnixStream) -> std:
             }
             let mut query = vec![0u8; len];
             stream.read_exact(&mut query).await?;
-            let result = {
-                let c = d.config.read().unwrap();
-                let layers = s.layers(&c);
-                let mut fake = s.dns.lock().unwrap();
-                dns::answer(&spec::layers_of(&layers), &mut fake, &query)
-            };
-            let Some((resp, q, allowed)) = result else { return Ok(()) };
-            if q.qtype == dns::TYPE_A || !allowed {
-                let answer = (allowed && q.qtype == dns::TYPE_A).then(|| resp[resp.len() - 4..].iter().map(u8::to_string).collect::<Vec<_>>().join("."));
-                d.emit(Some(&s), EventBody::Dns { name: q.name, qtype: q.qtype, allowed, answer });
-            }
+            let Some(resp) = query_dns(&d, &s, &query).await else { return Ok(()) };
             stream.write_all(&(resp.len() as u16).to_be_bytes()).await?;
             stream.write_all(&resp).await?;
         }
         _ => {}
     }
     Ok(())
+}
+
+fn rcode_name(rcode: u8) -> &'static str {
+    match rcode {
+        dns::NOERROR => "noerror",
+        dns::FORMERR => "formerr",
+        dns::SERVFAIL => "servfail",
+        dns::NXDOMAIN => "nxdomain",
+        dns::NOTIMP => "notimp",
+        _ => "refused",
+    }
+}
+
+/// Answers one DNS query from the guest; `None` if it's too short to answer.
+async fn query_dns(d: &Arc<Daemon>, s: &Arc<Session>, query: &[u8]) -> Option<Vec<u8>> {
+    let event = |name: &str, qtype: u16, rcode: u8, answer: Option<Ipv4Addr>, reason: Option<&str>| {
+        d.emit(
+            Some(s),
+            EventBody::Dns {
+                name: name.to_string(),
+                qtype,
+                allowed: rcode == dns::NOERROR || rcode == dns::NXDOMAIN,
+                rcode: rcode_name(rcode).into(),
+                answer: answer.map(|a| a.to_string()),
+                reason: reason.map(str::to_string),
+            },
+        )
+    };
+    let q = match dns::parse(query)? {
+        Ok(q) => q,
+        Err(rej) => {
+            event("", 0, rej.rcode, None, Some(rej.reason));
+            return Some(dns::respond(query, None, rej.rcode, None));
+        }
+    };
+    if !s.dns_rate.lock().unwrap().take() {
+        return Some(dns::respond(query, Some(&q), dns::SERVFAIL, None));
+    }
+    let (lookup, could_ask) = {
+        let c = d.config.read().unwrap();
+        let layers = s.layers(&c);
+        let layers = spec::layers_of(&layers);
+        (lookup_allowed(&layers, &q.name), resolvable(&layers, &q.name))
+    };
+    // A name that would only be asked about waits for an operator, once
+    // however often the guest retries; the decision is kept for a minute.
+    let allowed = if lookup {
+        true
+    } else if could_ask {
+        let decided = s.dns.lock().unwrap().decided(&q.name);
+        match decided {
+            Some(answer) => answer,
+            None => {
+                if !s.dns.lock().unwrap().start_asking(&q.name) {
+                    // Already waiting for an answer: the guest will retry.
+                    return Some(dns::respond(query, Some(&q), dns::SERVFAIL, None));
+                }
+                let suggestion = AnyRule::Net(NetRule {
+                    id: None,
+                    action: Action::Allow,
+                    host: q.name.clone(),
+                    ports: vec![],
+                    methods: vec![],
+                    path: None,
+                    secrets: vec![],
+                    set_headers: Default::default(),
+                    final_: false,
+                    comment: Some("approved".into()),
+                });
+                let answer = d.ask(s, Kind::Net, format!("resolve {}", q.name), suggestion).await;
+                s.dns.lock().unwrap().decide(&q.name, answer);
+                answer
+            }
+        }
+    } else {
+        false
+    };
+    if !allowed {
+        let reason = if could_ask { "not approved" } else { "no rule allows this name" };
+        event(&q.name, q.qtype, dns::REFUSED, None, Some(reason));
+        return Some(dns::respond(query, Some(&q), dns::REFUSED, None));
+    }
+    // Allowed: say whether the name exists, from a real lookup on the host.
+    let cached = s.dns.lock().unwrap().cached(&q.name);
+    let exists = match cached {
+        Some(e) => e,
+        None => match look_up(s, &q.name).await {
+            Ok(e) => {
+                s.dns.lock().unwrap().remember(&q.name, e);
+                e
+            }
+            Err(why) => {
+                event(&q.name, q.qtype, dns::SERVFAIL, None, Some(&why));
+                return Some(dns::respond(query, Some(&q), dns::SERVFAIL, None));
+            }
+        },
+    };
+    if !exists {
+        event(&q.name, q.qtype, dns::NXDOMAIN, None, Some("no such name"));
+        return Some(dns::respond(query, Some(&q), dns::NXDOMAIN, None));
+    }
+    let answer = if q.qtype == dns::TYPE_A { s.dns.lock().unwrap().address(&q.name) } else { None };
+    if q.qtype == dns::TYPE_A {
+        event(&q.name, q.qtype, dns::NOERROR, answer, None);
+    }
+    Some(dns::respond(query, Some(&q), dns::NOERROR, answer))
+}
+
+/// Whether `name` exists, from the host's resolver. `Err` for failures that
+/// say nothing about the name, which aren't cached.
+async fn look_up(s: &Session, name: &str) -> Result<bool, String> {
+    let Ok(_permit) = s.dns_lookups.clone().try_acquire_owned() else {
+        return Err("too many lookups at once".into());
+    };
+    match tokio::time::timeout(std::time::Duration::from_secs(5), tokio::net::lookup_host((name, 0))).await {
+        Ok(Ok(mut addrs)) => Ok(addrs.next().is_some()),
+        Ok(Err(e)) => {
+            let msg = e.to_string();
+            // getaddrinfo's "no such name" answers, as opposed to failures.
+            if msg.contains("not known") || msg.contains("No address associated") || msg.contains("Name has no usable address") {
+                Ok(false)
+            } else {
+                Err(format!("lookup failed: {msg}"))
+            }
+        }
+        Err(_) => Err("lookup timed out".into()),
+    }
 }

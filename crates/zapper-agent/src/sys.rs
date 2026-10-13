@@ -314,10 +314,13 @@ pub fn acct(path: &str) -> io::Result<()> {
     check(unsafe { libc::acct(p.as_ptr()) }).map(drop)
 }
 
+/// Ends the VM. Firecracker has no power-off device: a powered-off guest
+/// just halts and the VMM keeps running. A reboot with `reboot=k` on the
+/// kernel command line makes Firecracker exit at once.
 pub fn power_off() -> ! {
     unsafe {
         libc::sync();
-        libc::reboot(libc::RB_POWER_OFF);
+        libc::reboot(libc::RB_AUTOBOOT);
     }
     std::process::exit(0)
 }

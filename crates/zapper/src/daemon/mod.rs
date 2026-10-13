@@ -8,6 +8,7 @@
 pub mod addr;
 pub mod api;
 mod dns;
+pub mod httplog;
 mod nic;
 mod proxy;
 pub mod session;
@@ -99,12 +100,18 @@ pub enum EventBody {
         remember: Option<String>,
     },
     Dns {
+        /// Empty when the query was rejected before its name was read.
         name: String,
         qtype: u16,
         allowed: bool,
+        /// The response code: `noerror`, `nxdomain`, `refused`, `formerr`,
+        /// `notimp` or `servfail`.
+        rcode: String,
         /// Synthetic address given out.
         #[serde(skip_serializing_if = "Option::is_none")]
         answer: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
     },
     Guest {
         event: GuestEvent,
@@ -170,11 +177,17 @@ pub struct Daemon {
     pub ui_token: String,
 }
 
+const ID_CHARS: &[u8] = b"abcdefghijkmnpqrstuvwxyz23456789";
+
+/// Whether `s` has the form of a session id, as `random_id(6)` makes them.
+pub fn is_session_id(s: &str) -> bool {
+    s.len() == 6 && s.bytes().all(|b| ID_CHARS.contains(&b))
+}
+
 pub fn random_id(len: usize) -> String {
     use rand::Rng;
-    const CHARS: &[u8] = b"abcdefghijkmnpqrstuvwxyz23456789";
     let mut rng = rand::thread_rng();
-    (0..len).map(|_| CHARS[rng.gen_range(0..CHARS.len())] as char).collect()
+    (0..len).map(|_| ID_CHARS[rng.gen_range(0..ID_CHARS.len())] as char).collect()
 }
 
 /// Finds the guest agent binary.

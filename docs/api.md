@@ -32,6 +32,8 @@ curl --unix-socket $XDG_RUNTIME_DIR/zapper/api.sock http://zapper/v1/status
 | `POST /v1/sessions/{id}/stop` | | Stop, keep listed |
 | `DELETE /v1/sessions/{id}` | | Stop and forget |
 | `GET /v1/sessions/{id}/audit` | ✓ | Audit log (`application/x-ndjson`) |
+| `GET /v1/sessions/{id}/requests` | ✓ | The session's requests and connections: `id`, `method`, `url`, `status`, `action`, `rule`, `type`, `req_size`, `resp_size`, `ttfb_ms`, `total_ms`, `inspected` |
+| `GET /v1/sessions/{id}/requests/{n}` | ✓ | One request with `request_headers`, `response_headers`, `request_body` and `response_body` (`text` or `base64`, `total`, `kept`, `truncated`, `encoding`); added secret values appear as `***` |
 | `GET /v1/sessions/{id}/terminals` | ✓ | The session's terminals: `id`, `argv`, `rows`, `cols`, `open` |
 | `GET /v1/sessions/{id}/terminals/{n}/stream` | ✓ | Server-sent events, read-only: the terminal's kept output, then live output. Each `data:` is `{"r": [rows, cols]}`, `{"o": "<base64 bytes>"}`, or `{"end": exit_code}` |
 | `GET /v1/sessions/{id}/attach?tty=RxC&argv=JSON&system=bool` | | Upgrade (`Upgrade: zapper-shell`) to a terminal; frames below |

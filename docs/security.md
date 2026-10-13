@@ -21,7 +21,8 @@ zapper assumes that whatever runs in a session may be hostile, up to a person wi
 |---|---|---|
 | The VMM runs in its own user, network and mount namespaces, in a read-only root holding its own files: the session's `vm/` directory, the kernel, the initramfs, its binary and four devices ([the VMM](#the-vmm)) | `zapper __vmm` on the host | Yes |
 | Guest traffic goes through zapper. With a NIC, the VMM runs in a network namespace whose only interfaces are loopback and the guest's tap, and nftables there sends TCP to the daemon and DNS to its resolver and drops the rest. In vsock mode the guest has loopback only ([network](network.md)) | Network namespace and nftables outside the VM; Firecracker's device model | Yes |
-| DNS answers names that some rule could allow, with per-session synthetic addresses, without contacting any DNS server | Host resolver | Yes |
+| DNS queries are validated (standard query, one question, class IN, a well-formed name) and rate-limited. Names are looked up on the host only when a connection to them would be allowed, so queries can't carry data out; asked-about names wait for approval, others are refused. Answers are never made up ([network: DNS](network.md#dns)) | Host resolver | Yes |
+| Host names from the guest (`CONNECT` targets, `Host` headers, TLS server names) are validated before any rule sees them | Host proxy | Yes |
 | Policy for each connection and, when inspected, each request | Host proxy | Yes |
 | Address checks: loopback, link-local, metadata and host addresses are unreachable, private ranges only if listed. The host resolves names and connects to the address it checked | Host proxy | Yes |
 | A TLS client's server name must equal the name the connection was decided on | Host proxy | Yes |

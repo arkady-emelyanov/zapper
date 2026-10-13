@@ -198,19 +198,66 @@ pub fn needs_inspection(layers: &Layers<'_>, host: &str, port: u16) -> bool {
     layers.iter().any(|(_, p)| p.net.iter().any(|r| r.needs_inspection() && r.matches_endpoint(host, port)))
 }
 
-/// Whether DNS should answer for `name`: some request to it could be allowed.
-/// No if a final deny for every port and request matches it; yes if any allow
-/// or ask rule matches it; otherwise the default action decides.
-pub fn resolvable(layers: &Layers<'_>, name: &str) -> bool {
+/// What a session can do with a name, over every port and request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reach {
+    /// Some request to it would be allowed outright.
+    Allow,
+    /// Requests to it can only be asked about.
+    Ask,
+    /// No request to it could be allowed.
+    Never,
+}
+
+/// What a session can do with `name`, over every port, method and path: the
+/// rules in evaluation order (final rules from the global layer down, then
+/// the layers, then the default). A matching rule without `ports`, `methods`
+/// or `path` decides every request still undecided; a narrower one decides
+/// only some, so the search goes on past it.
+pub fn reach(layers: &Layers<'_>, name: &str) -> Reach {
     let unconditional = |r: &NetRule| r.ports.is_empty() && r.methods.is_empty() && r.path.is_none();
-    let rules = || layers.iter().flat_map(|(_, p)| p.net.iter());
-    if rules().any(|r| r.final_ && r.action == Action::Deny && unconditional(r) && host_matches(&r.host, name)) {
-        return false;
+    let finals = layers.iter().rev().flat_map(|(_, p)| p.net.iter().filter(|r| r.final_));
+    let others = layers.iter().flat_map(|(_, p)| p.net.iter().filter(|r| !r.final_));
+    let (mut allow, mut ask) = (false, false);
+    let mut settled = None;
+    for r in finals.chain(others).filter(|r| host_matches(&r.host, name)) {
+        match r.action {
+            Action::Allow => allow = true,
+            Action::Ask => ask = true,
+            Action::Deny => {}
+        }
+        if unconditional(r) {
+            settled = Some(r.action);
+            break;
+        }
     }
-    if rules().any(|r| r.action != Action::Deny && host_matches(&r.host, name)) {
-        return true;
+    if settled.is_none() {
+        match layers.iter().find_map(|(_, p)| p.defaults.net) {
+            Some(Action::Allow) => allow = true,
+            Some(Action::Ask) => ask = true,
+            _ => {}
+        }
     }
-    layers.iter().find_map(|(_, p)| p.defaults.net).is_some_and(|a| a != Action::Deny)
+    if allow {
+        Reach::Allow
+    } else if ask {
+        Reach::Ask
+    } else {
+        Reach::Never
+    }
+}
+
+/// Whether the DNS server may answer for `name` at all.
+pub fn resolvable(layers: &Layers<'_>, name: &str) -> bool {
+    reach(layers, name) != Reach::Never
+}
+
+/// Whether the DNS server may look `name` up on the host without asking: a
+/// request to it would be allowed outright. Names that are only asked about
+/// aren't looked up before an approval, so queries can't carry data out
+/// through the host's resolver.
+pub fn lookup_allowed(layers: &Layers<'_>, name: &str) -> bool {
+    reach(layers, name) == Reach::Allow
 }
 
 pub fn evaluate_exec(layers: &Layers<'_>, req: &ExecRequest) -> Decision {
@@ -311,6 +358,47 @@ profiles:
         let dev = &c.profiles["dev"].policy;
         let layers = [(Scope::Profile("dev".into()), dev), (Scope::Global, &c.policy)];
         assert!(resolvable(&layers, "example.com"), "dev defaults to ask");
+    }
+
+    #[test]
+    fn dns_lookup_allowed() {
+        let c = Config::from_yaml(CONFIG).unwrap();
+        let base = &c.profiles["base"].policy;
+        let layers = [(Scope::Profile("base".into()), base), (Scope::Global, &c.policy)];
+        assert!(lookup_allowed(&layers, "api.github.com"), "allow rule");
+        assert!(!lookup_allowed(&layers, "gist.github.com"), "ask rule: no lookup before approval");
+        assert!(!lookup_allowed(&layers, "example.com"), "default deny");
+        let dev = &c.profiles["dev"].policy;
+        let layers = [(Scope::Profile("dev".into()), dev), (Scope::Global, &c.policy)];
+        assert!(!lookup_allowed(&layers, "example.com"), "default ask: no lookup");
+    }
+
+    #[test]
+    fn reach_over_all_requests() {
+        let reach_of = |yaml: &str, name: &str| {
+            let c = Config::from_yaml(yaml).unwrap();
+            reach(&[(Scope::Global, &c.policy)], name)
+        };
+        // A narrower deny first doesn't hide a broader allow.
+        let narrow_deny = "policy:\n  net:\n    - { action: deny, host: a.example, path: '/admin/**' }\n    - { action: allow, host: a.example }\n";
+        assert_eq!(reach_of(narrow_deny, "a.example"), Reach::Allow);
+        // An unconditional deny first does.
+        let deny_all = "policy:\n  net:\n    - { action: deny, host: a.example }\n    - { action: allow, host: a.example }\n";
+        assert_eq!(reach_of(deny_all, "a.example"), Reach::Never);
+        // A port-limited allow makes the name reachable.
+        let port = "policy:\n  net:\n    - { action: allow, host: a.example, ports: [22] }\n";
+        assert_eq!(reach_of(port, "a.example"), Reach::Allow);
+        // A final deny wins over a profile allow; a narrower final deny doesn't.
+        let fin = "policy:\n  net:\n    - { action: deny, host: a.example, final: true }\n    - { action: allow, host: a.example }\n";
+        assert_eq!(reach_of(fin, "a.example"), Reach::Never);
+        let fin_narrow = "policy:\n  net:\n    - { action: deny, host: a.example, ports: [80], final: true }\n    - { action: allow, host: a.example }\n";
+        assert_eq!(reach_of(fin_narrow, "a.example"), Reach::Allow);
+        // Ask only, and the defaults.
+        let ask = "policy:\n  net:\n    - { action: ask, host: a.example }\n";
+        assert_eq!(reach_of(ask, "a.example"), Reach::Ask);
+        assert_eq!(reach_of("policy: { defaults: { net: ask } }\n", "b.example"), Reach::Ask);
+        assert_eq!(reach_of("policy: { defaults: { net: allow } }\n", "b.example"), Reach::Allow);
+        assert_eq!(reach_of("policy: {}\n", "b.example"), Reach::Never);
     }
 
     #[test]

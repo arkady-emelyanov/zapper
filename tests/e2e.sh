@@ -48,6 +48,7 @@ profiles:
       fs: [{ path: "/work/**/.env", access: hidden }]
       net:
         - { action: allow, host: example.com, ports: [443] }
+        - { action: allow, host: "*.invalid", ports: [443], comment: "reserved, never exists" }
         - { action: allow, host: postman-echo.com, ports: [443], methods: [GET], secrets: [test] }
         - { action: ask, host: "*.wikipedia.org" }
       exec: [{ action: deny, path: perl }]
@@ -115,6 +116,13 @@ touch "$r/probe" 2>/dev/null && fail "the VMM's root is read-only" "created $r/p
 "$Z" rm "$id" > /dev/null
 [ -e "$T/state/sessions/$id/vm.json" ] && [ ! -e "$T/state/sessions/$id/vm" ] && pass "teardown keeps vm.json and removes the VMM directory" || fail "teardown keeps vm.json and removes the VMM directory" "$(ls -A "$T/state/sessions/$id")"
 
+out=$("$Z" run -C "$T/work" -- bash -c 'echo "nx=[$(getent hosts nothing.invalid)]"; echo "refused=[$(getent hosts github.com)]"' 2>&1)
+expect "an allowed name that doesn't exist gets no address" "$out" "nx=[]"
+id=$(ls -t "$T/state/sessions" | head -1)
+log=$("$Z" audit "$id")
+expect "an allowed name is looked up, and a missing one gets NXDOMAIN" "$log" '"name":"nothing.invalid","qtype":1,"allowed":true,"rcode":"nxdomain"'
+expect "a name with no allowing rule is refused, not made up" "$log" '"name":"github.com","qtype":1,"allowed":false,"rcode":"refused"'
+
 echo "== root in the guest cannot get around the NIC capture"
 out=$("$Z" run -p root -C "$T/work" -- bash -c '
 code() { curl -sS -m 5 -o /dev/null -w "%{http_code}" "$@" 2>/dev/null; }
@@ -154,7 +162,7 @@ code=$(curl -s -o /dev/null -w '%{http_code}' --unix-socket "$ZAPPER_SOCKET" -X 
 "$Z" approve "$pending" --remember session > /dev/null
 wait "$asker"
 expect "approved request goes through" "$(cat "$T/ask.out")" "301"
-expect "approval remembered as a session rule" "$("$Z" rules --scope "session:$id")" "en.wikipedia.org:443"
+expect "approval remembered as a session rule" "$("$Z" rules --scope "session:$id")" "en.wikipedia.org"
 expect "answers leave the config unchanged" "$("$Z" config diff)" "no unsaved changes"
 "$Z" rm "$id" > /dev/null
 
@@ -176,6 +184,13 @@ post() { curl -s -o /dev/null -w '%{http_code}' -X POST -H 'content-type: applic
 [ "$(post -b "zapper_token=$token" -H 'x-zapper-ui: 1' -H 'Origin: http://evil.example')" = 403 ] && pass "UI write from another origin is refused" || fail "UI write from another origin is refused" "not 403"
 [ "$(curl -s -o /dev/null -w '%{http_code}' -X POST -b "zapper_token=$token" -H 'x-zapper-ui: 1' -H "Origin: $base" "$base/api/config/save")" = 404 ] && pass "the UI has no other writes" || fail "the UI has no other writes" "config/save reachable"
 [ "$(post -b "zapper_token=$token" -H 'x-zapper-ui: 1' -H "Origin: $base")" = 200 ] && pass "the UI answers an approval" || fail "the UI answers an approval" "not 200"
+# The first approval was for resolving the name; the connection asks again.
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+    pending=$("$Z" --json approvals | grep -o '"id": "[^"]*"' | head -1 | cut -d'"' -f4)
+    [ -n "$pending" ] && break
+    sleep 0.5
+done
+[ -n "$pending" ] && post -b "zapper_token=$token" -H 'x-zapper-ui: 1' -H "Origin: $base" > /dev/null
 wait "$asker"
 expect "the request approved in the UI goes through" "$(cat "$T/ask.out")" "301"
 terms=$(curl -s -b "zapper_token=$token" "$base/api/sessions/$id/terminals")
@@ -192,6 +207,19 @@ expect "the UI replays a terminal's output" "$stream" "301"
 expect "the replay ends with the exit code" "$stream" '{"end": 0}'
 [ "$(curl -s -o /dev/null -w '%{http_code}' "$base/api/sessions/$id/terminals/2/stream")" = 401 ] && pass "watching a terminal needs the token" || fail "watching a terminal needs the token" "not 401"
 "$Z" rm "$id" > /dev/null
+
+echo "== request log"
+"$Z" run --keep -C "$T/work" -- bash -c 'curl -sS -o /dev/null -H "X-Token: $TOKEN" https://postman-echo.com/get; curl -sS -o /dev/null https://example.com' > "$T/keep.log" 2>&1
+id=$(grep -o 'session [a-z0-9]* kept' "$T/keep.log" | cut -d' ' -f2)
+reqs=$(curl -s --unix-socket "$ZAPPER_SOCKET" "http://zapper/v1/sessions/$id/requests")
+expect "inspected requests are listed with method and URL" "$reqs" '"method":"GET"'
+expect "passed-through connections are listed" "$reqs" '"url":"example.com:443"'
+one=$(curl -s --unix-socket "$ZAPPER_SOCKET" "http://zapper/v1/sessions/$id/requests/1")
+expect "request headers are recorded as the guest sent them" "$one" "zapper-secret-test"
+case "$one" in *s3cr3t-test*) fail "an added secret echoed back is redacted" "the value appears in the record" ;; *) pass "an added secret echoed back is redacted" ;; esac
+"$Z" rm "$id" > /dev/null
+expect "the audit log of a removed session is still readable" "$("$Z" audit "$id")" '"type":"session"'
+expect "a malformed session id is refused" "$("$Z" audit 'not-an-id' 2>&1)" "not a session id"
 
 echo "== running and startup config"
 "$Z" rule add global '{kind: net, action: deny, host: "*.evil.example", final: true}' > /dev/null

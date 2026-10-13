@@ -30,7 +30,7 @@ use tokio_rustls::{TlsAcceptor, TlsConnector};
 use zapper_policy::{evaluate_net, needs_inspection, placeholder, render, Action, AnyRule, Decision, Kind, NetEffects, NetRequest, NetRule};
 
 use super::session::Session;
-use super::{spec, tls, Daemon, EventBody};
+use super::{httplog, spec, tls, Daemon, EventBody};
 
 type Body = BoxBody<Bytes, hyper::Error>;
 
@@ -78,10 +78,9 @@ fn split_authority(a: &str, default_port: u16) -> Option<(String, u16)> {
         Some(p) => p.parse().ok()?,
         None => default_port,
     };
-    if host.is_empty() {
-        return None;
-    }
-    Some((host.trim_end_matches('.').to_ascii_lowercase(), port))
+    // Untrusted input: only a valid host name or IP address passes.
+    let host = zapper_policy::names::host(host).ok()?;
+    Some((host, port))
 }
 
 struct Verdict {
@@ -120,6 +119,41 @@ async fn decide(d: &Daemon, s: &Session, req: &NetRequest) -> Verdict {
         }
     };
     Verdict { decision, effects, allowed }
+}
+
+/// Copies a verdict into a request record.
+fn note_verdict(rec: &httplog::Shared, v: &Verdict) {
+    let mut r = rec.lock().unwrap();
+    r.action = if v.allowed { Action::Allow } else { Action::Deny };
+    r.rule = v.decision.rule.clone();
+    r.scope = v.decision.scope.as_ref().map(|s| s.to_string());
+}
+
+/// Ends a record that got no upstream response.
+fn note_failure(s: &Session, rec: &httplog::Shared, status: u16, error: Option<String>) {
+    {
+        let mut r = rec.lock().unwrap();
+        r.status = Some(status);
+        if status == 403 && error.is_none() {
+            r.action = Action::Deny;
+        }
+        r.error = error;
+    }
+    httplog::finish(&s.requests, rec);
+}
+
+/// Records the upstream response and wraps both bodies to capture them.
+fn note_response(s: &Session, rec: &httplog::Shared, resp: Response<Incoming>, used: Vec<String>, values: Vec<String>) -> Response<Body> {
+    httplog::mark_ttfb(rec);
+    {
+        let mut r = rec.lock().unwrap();
+        r.status = Some(resp.status().as_u16());
+        r.resp_headers = httplog::headers(resp.headers());
+        r.secrets = used;
+        r.redact = values;
+    }
+    let (rec, log) = (rec.clone(), s.requests.clone());
+    resp.map(|b| httplog::Tee::wrap(b.boxed(), rec, log, httplog::Side::Response))
 }
 
 struct NetLog<'a> {
@@ -285,10 +319,20 @@ async fn peek<S: AsyncRead + Unpin>(io: &mut S) -> Option<Vec<u8>> {
 /// Passes a stream through. A TLS ClientHello must name the checked host, so
 /// an allowed host cannot front for another.
 async fn tunnel<S: AsyncRead + AsyncWrite + Unpin>(d: &Daemon, s: &Session, mut io: S, first: Vec<u8>, endpoint: &NetRequest, addr: SocketAddr, v: Verdict) {
+    let scheme = if first.first() == Some(&0x16) { "tls" } else { "tcp" };
+    let rec = s.requests.lock().unwrap().start(scheme, "CONNECT", &endpoint.host, endpoint.port, None, vec![]);
+    note_verdict(&rec, &v);
     if let Ok(Some(sni)) = tls::client_hello_sni(&first) {
-        if sni != endpoint.host {
-            let error = Some(format!("TLS server name {sni} does not match the checked host"));
-            log(d, s, NetLog { req: endpoint, verdict: Some(&v), inspected: false, status: None, secrets: vec![], error });
+        let sni = zapper_policy::names::hostname(&sni).map_err(|_| sni.clone());
+        if sni.as_deref() != Ok(endpoint.host.as_str()) {
+            let shown = match &sni {
+                Ok(n) => n.clone(),
+                Err(_) => "(invalid)".into(),
+            };
+            let error = format!("TLS server name {shown} does not match the checked host");
+            log(d, s, NetLog { req: endpoint, verdict: Some(&v), inspected: false, status: None, secrets: vec![], error: Some(error.clone()) });
+            rec.lock().unwrap().action = Action::Deny;
+            note_failure(s, &rec, 403, Some(error));
             return;
         }
     }
@@ -296,13 +340,20 @@ async fn tunnel<S: AsyncRead + AsyncWrite + Unpin>(d: &Daemon, s: &Session, mut 
         Ok(u) => u,
         Err(e) => {
             log(d, s, NetLog { req: endpoint, verdict: Some(&v), inspected: false, status: None, secrets: vec![], error: Some(e.to_string()) });
+            note_failure(s, &rec, 502, Some(e.to_string()));
             return;
         }
     };
     log(d, s, NetLog { req: endpoint, verdict: Some(&v), inspected: false, status: None, secrets: vec![], error: None });
+    httplog::mark_ttfb(&rec);
     if upstream.write_all(&first).await.is_ok() {
-        let _ = tokio::io::copy_bidirectional(&mut io, &mut upstream).await;
+        if let Ok((up, down)) = tokio::io::copy_bidirectional(&mut io, &mut upstream).await {
+            let mut r = rec.lock().unwrap();
+            r.req_body.total = first.len() as u64 + up;
+            r.resp_body.total = down;
+        }
     }
+    httplog::finish(&s.requests, &rec);
 }
 
 /// A stream that first replays bytes already read from it.
@@ -382,9 +433,17 @@ where
 
 /// Replaces secret placeholders in headers and applies `set_headers`, for
 /// the secrets this host may receive. Returns the secrets used.
-fn inject(d: &Daemon, host: &str, plaintext: bool, effects: &NetEffects, headers: &mut hyper::HeaderMap) -> Result<Vec<String>, String> {
+/// Secrets added to a request: their names, and their values, which the
+/// request log replaces with `***` wherever they show up.
+struct Injected {
+    names: Vec<String>,
+    values: Vec<String>,
+}
+
+fn inject(d: &Daemon, host: &str, plaintext: bool, effects: &NetEffects, headers: &mut hyper::HeaderMap) -> Result<Injected, String> {
     let config = d.config.read().unwrap();
     let mut used = Vec::new();
+    let mut values = Vec::new();
     let value_of = |name: &str| -> Result<String, String> {
         let secret = config.secrets.get(name).ok_or_else(|| format!("unknown secret {name}"))?;
         if !secret.allows_host(host) {
@@ -402,6 +461,7 @@ fn inject(d: &Daemon, host: &str, plaintext: bool, effects: &NetEffects, headers
             continue;
         }
         let value = value_of(name)?;
+        values.push(value.clone());
         for v in headers.values_mut() {
             if let Ok(s) = v.to_str() {
                 if s.contains(&ph) {
@@ -416,6 +476,7 @@ fn inject(d: &Daemon, host: &str, plaintext: bool, effects: &NetEffects, headers
         let value = render(template, |name| match value_of(name) {
             Ok(v) => {
                 used.push(name.to_string());
+                values.push(v.clone());
                 v
             }
             Err(e) => {
@@ -431,7 +492,7 @@ fn inject(d: &Daemon, host: &str, plaintext: bool, effects: &NetEffects, headers
     }
     used.sort();
     used.dedup();
-    Ok(used)
+    Ok(Injected { names: used, values })
 }
 
 fn clean_headers(headers: &mut hyper::HeaderMap, host: &str, port: u16, default_port: u16) {
@@ -446,23 +507,29 @@ fn clean_headers(headers: &mut hyper::HeaderMap, host: &str, port: u16, default_
 async fn inspected(d: Arc<Daemon>, s: Arc<Session>, req: Request<Incoming>, host: String, port: u16, addr: SocketAddr, upstream: Upstream) -> Response<Body> {
     let path = req.uri().path_and_query().map(|p| p.as_str().to_string()).unwrap_or_else(|| "/".into());
     let net = NetRequest { host: host.clone(), port, method: Some(req.method().to_string()), path: Some(path.clone()) };
+    // Headers as the guest sent them: before secrets are added.
+    let rec = s.requests.lock().unwrap().start("https", req.method().as_str(), &host, port, Some(&path), httplog::headers(req.headers()));
     let v = decide(&d, &s, &net).await;
+    note_verdict(&rec, &v);
     if !v.allowed {
         log(&d, &s, NetLog { req: &net, verdict: Some(&v), inspected: true, status: None, secrets: vec![], error: None });
+        note_failure(&s, &rec, 403, None);
         return text(StatusCode::FORBIDDEN, format!("{} {host}{path} denied by {}", net.method.as_deref().unwrap_or(""), v.decision.rule.as_deref().unwrap_or("default")));
     }
     let (mut parts, body) = req.into_parts();
     clean_headers(&mut parts.headers, &host, port, 443);
-    let used = match inject(&d, &host, false, &v.effects, &mut parts.headers) {
-        Ok(u) => u,
+    let (used, values) = match inject(&d, &host, false, &v.effects, &mut parts.headers) {
+        Ok(i) => (i.names, i.values),
         Err(e) => {
             log(&d, &s, NetLog { req: &net, verdict: Some(&v), inspected: true, status: None, secrets: vec![], error: Some(e.clone()) });
+            note_failure(&s, &rec, 403, Some(e.clone()));
             return text(StatusCode::FORBIDDEN, e);
         }
     };
     parts.uri = path.parse().unwrap_or_default();
     parts.version = hyper::Version::HTTP_11;
-    let out = Request::from_parts(parts, body.boxed());
+    let body = httplog::Tee::wrap(body.boxed(), rec.clone(), s.requests.clone(), httplog::Side::Request);
+    let out = Request::from_parts(parts, body);
 
     let mut guard = upstream.lock().await;
     let ready = match guard.as_mut() {
@@ -474,6 +541,7 @@ async fn inspected(d: Arc<Daemon>, s: Arc<Session>, req: Request<Incoming>, host
             Ok(sender) => *guard = Some(sender),
             Err(e) => {
                 log(&d, &s, NetLog { req: &net, verdict: Some(&v), inspected: true, status: None, secrets: used, error: Some(e.clone()) });
+                note_failure(&s, &rec, 502, Some(e.clone()));
                 return text(StatusCode::BAD_GATEWAY, e);
             }
         }
@@ -482,11 +550,12 @@ async fn inspected(d: Arc<Daemon>, s: Arc<Session>, req: Request<Incoming>, host
     drop(guard);
     match result {
         Ok(resp) => {
-            log(&d, &s, NetLog { req: &net, verdict: Some(&v), inspected: true, status: Some(resp.status().as_u16()), secrets: used, error: None });
-            resp.map(|b| b.boxed())
+            log(&d, &s, NetLog { req: &net, verdict: Some(&v), inspected: true, status: Some(resp.status().as_u16()), secrets: used.clone(), error: None });
+            note_response(&s, &rec, resp, used, values)
         }
         Err(e) => {
             log(&d, &s, NetLog { req: &net, verdict: Some(&v), inspected: true, status: None, secrets: used, error: Some(e.to_string()) });
+            note_failure(&s, &rec, 502, Some(e.to_string()));
             text(StatusCode::BAD_GATEWAY, e.to_string())
         }
     }
@@ -528,29 +597,35 @@ where
 async fn forward_plain(d: Arc<Daemon>, s: Arc<Session>, req: Request<Incoming>, host: String, port: u16) -> Response<Body> {
     let path = req.uri().path_and_query().map(|p| p.as_str().to_string()).unwrap_or_else(|| "/".into());
     let net = NetRequest { host: host.clone(), port, method: Some(req.method().to_string()), path: Some(path.clone()) };
+    let rec = s.requests.lock().unwrap().start("http", req.method().as_str(), &host, port, Some(&path), httplog::headers(req.headers()));
     let v = decide(&d, &s, &net).await;
+    note_verdict(&rec, &v);
     if !v.allowed {
         log(&d, &s, NetLog { req: &net, verdict: Some(&v), inspected: true, status: None, secrets: vec![], error: None });
+        note_failure(&s, &rec, 403, None);
         return text(StatusCode::FORBIDDEN, format!("{} http://{host}{path} denied", req.method()));
     }
     let addr = match resolve(&d, &host, port).await {
         Ok(a) => a,
         Err(e) => {
             log(&d, &s, NetLog { req: &net, verdict: Some(&v), inspected: true, status: None, secrets: vec![], error: Some(e.clone()) });
+            note_failure(&s, &rec, 403, Some(e.clone()));
             return text(StatusCode::FORBIDDEN, e);
         }
     };
     let (mut parts, body) = req.into_parts();
     clean_headers(&mut parts.headers, &host, port, 80);
-    let used = match inject(&d, &host, true, &v.effects, &mut parts.headers) {
-        Ok(u) => u,
+    let (used, values) = match inject(&d, &host, true, &v.effects, &mut parts.headers) {
+        Ok(i) => (i.names, i.values),
         Err(e) => {
             log(&d, &s, NetLog { req: &net, verdict: Some(&v), inspected: true, status: None, secrets: vec![], error: Some(e.clone()) });
+            note_failure(&s, &rec, 403, Some(e.clone()));
             return text(StatusCode::FORBIDDEN, e);
         }
     };
     parts.uri = path.parse().unwrap_or_default();
-    let out = Request::from_parts(parts, body.boxed());
+    let body = httplog::Tee::wrap(body.boxed(), rec.clone(), s.requests.clone(), httplog::Side::Request);
+    let out = Request::from_parts(parts, body);
     let result = async {
         let tcp = dial(addr).await.map_err(|e| e.to_string())?;
         let (mut sender, conn) = hyper::client::conn::http1::handshake::<_, Body>(TokioIo::new(tcp)).await.map_err(|e| e.to_string())?;
@@ -560,11 +635,12 @@ async fn forward_plain(d: Arc<Daemon>, s: Arc<Session>, req: Request<Incoming>, 
     .await;
     match result {
         Ok(resp) => {
-            log(&d, &s, NetLog { req: &net, verdict: Some(&v), inspected: true, status: Some(resp.status().as_u16()), secrets: used, error: None });
-            resp.map(|b| b.boxed())
+            log(&d, &s, NetLog { req: &net, verdict: Some(&v), inspected: true, status: Some(resp.status().as_u16()), secrets: used.clone(), error: None });
+            note_response(&s, &rec, resp, used, values)
         }
         Err(e) => {
             log(&d, &s, NetLog { req: &net, verdict: Some(&v), inspected: true, status: None, secrets: used, error: Some(e.clone()) });
+            note_failure(&s, &rec, 502, Some(e.clone()));
             text(StatusCode::BAD_GATEWAY, e)
         }
     }
@@ -580,5 +656,8 @@ mod tests {
         assert_eq!(split_authority("example.com", 443), Some(("example.com".into(), 443)));
         assert_eq!(split_authority("[::1]:22", 443), Some(("::1".into(), 22)));
         assert_eq!(split_authority(":80", 443), None);
+        assert_eq!(split_authority("evil host:443", 443), None);
+        assert_eq!(split_authority("a..b:443", 443), None);
+        assert_eq!(split_authority("example.com.:443", 443), Some(("example.com".into(), 443)));
     }
 }

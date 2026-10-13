@@ -15,11 +15,12 @@
 
 | Group | Checks |
 |---|---|
-| NIC session | Runs as uid 1000 with `eth0` and without proxy variables. The workdir is copied in, and `fs: hidden` hides `.env`. A `proxy` secret appears as its placeholder and a `guest` secret as its value. DNS answers an allowed name with a synthetic address and refuses others. An allowed TLS connection succeeds, and an allowed request gets its secret. POST to a GET-only host, a port without a rule, a raw IP, and a TLS name that differs from the dialled name are denied. An exec rule denies `perl`, and a denied first command prints the reason and exits 126. The exit code reaches the CLI. |
+| NIC session | Runs as uid 1000 with `eth0` and without proxy variables. The workdir is copied in, and `fs: hidden` hides `.env`. A `proxy` secret appears as its placeholder and a `guest` secret as its value. DNS answers an allowed name with a synthetic address, gives NXDOMAIN for an allowed name that doesn't exist, and refuses names no rule allows. An allowed TLS connection succeeds, and an allowed request gets its secret. POST to a GET-only host, a port without a rule, a raw IP, and a TLS name that differs from the dialled name are denied. An exec rule denies `perl`, and a denied first command prints the reason and exits 126. The exit code reaches the CLI. |
 | Root in the guest | With another DNS server configured, names are still answered by policy. A connection to a real address is denied, and other ports on the gateway are closed. |
 | VMM confinement | A running VMM has its own root. The config file, the audit log and the daemon user's home directory (apart from zapper's own files) are absent from its view, and its root is read-only. Teardown keeps `vm.json` and removes `vm/`. |
 | vsock session | Loopback only, with proxy variables. An allowed connection succeeds through the proxy, and a direct connection fails. |
-| Approvals | A request waits for approval, goes through once approved, and `--remember session` adds a rule. |
+| Approvals | A request waits for approval, goes through once approved, and `--remember session` adds a rule. Answering for a profile is rejected, and answers leave the config unchanged. |
+| Request log | Inspected requests and passed-through connections are listed; headers are recorded as the guest sent them; an added secret echoed back by the destination is redacted. A removed session's audit log stays readable, and a malformed session id is refused. |
 | Config | A rule change shows in the diff, a global final rule wins, an invalid change is rejected, and reload discards changes. |
 | Attacks (`tests/attack.c` as the workload) | Impersonating the agent on the control port, opening a shell over vsock loopback or the guest's own CID, and exec through the 32-bit or x32 tables all fail; the last two are killed with SIGSYS. A denied exec fails. |
 

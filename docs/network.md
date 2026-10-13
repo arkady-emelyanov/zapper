@@ -31,13 +31,28 @@ The guest kernel configures `eth0` as `10.0.2.2/30`, with gateway and DNS server
 
 ### DNS
 
-The daemon answers the guest's DNS queries. For each name it decides whether some request to it could be allowed:
+The daemon answers the guest's DNS queries. A query comes from the guest, so it's validated first. It must be a standard query (opcode 0, class IN) with exactly one question. Each label must be 1–63 letters, digits, `-` or `_`, not starting or ending with `-`, and the name at most 253 bytes. Compressed names, empty labels and other characters are rejected:
 
-- A `final` deny that has no `ports`, `methods` or `path` and matches the name means no.
-- Any `allow` or `ask` rule whose `host` matches the name means yes.
-- Otherwise the default `net` action decides.
+| Query | Answer |
+|---|---|
+| Malformed (a response, several questions, a compressed name, truncated) | FORMERR |
+| An opcode other than a standard query | NOTIMP |
+| A class other than IN, or an invalid name | REFUSED |
+| More than 50 a second from the session (bursts of 100) | SERVFAIL |
 
-An allowed name gets an address from `198.18.0.0/15`, unique to that name within the session. Other names get NXDOMAIN. AAAA queries for allowed names get an empty answer, so clients use IPv4. The daemon doesn't contact any DNS server while answering, so the guest can't use queries to send data out. Each A query and each refusal is a `dns` event.
+A valid name is then answered by policy. Answers are never made up:
+
+| The policy for the name | Answer |
+|---|---|
+| Some request to it would be allowed | The host looks the name up. If it doesn't exist: NXDOMAIN. If it does: an address from `198.18.0.0/15` that stands for the name within the session |
+| Requests to it can only be asked about | The query waits for an approval ("resolve NAME"); then as allowed, or REFUSED. Retries while waiting get SERVFAIL; the answer is kept for a minute |
+| Nothing could allow it | REFUSED |
+
+"Some request" counts every port, method and path. The rules are taken in evaluation order: final rules from the global layer down, then the layers, then the default. A matching `allow` rule makes the name reachable, even if it only covers some ports or requests. A matching rule that covers all requests (no `ports`, `methods` or `path`) settles the rest, so `deny host: x` stops the search, while `deny host: x, path: /admin/**` doesn't. In short: if a session can reach a name in any way, the name resolves.
+
+Names are only looked up on the host once a connection to them would be allowed, so queries can't carry data out through the host's resolver before anyone approves them. Lookups are cached for a minute, with at most 8 at once per session. AAAA and other query types for existing names get an empty answer, so clients use IPv4. Each A query, refusal and rejection is a `dns` event with its response code and reason.
+
+Approving "resolve NAME" allows the lookup only; the connection that follows is decided, and asked about, on its own. Answering "the rest of the session" adds a rule that covers both.
 
 ### Connections
 
@@ -86,7 +101,7 @@ zapper events -s ID                          # dns and net events, with the deci
 zapper eval -s ID net github.com:22          # which rule would decide, before changing anything
 ```
 
-From inside a guest, a denied name fails to resolve (`getent hosts` prints nothing), and a denied connection is closed as soon as it's made. An inspected HTTP request that is denied gets a `403` with the rule's id.
+From inside a guest, a refused name fails to resolve (`getent hosts` prints nothing; curl says "Could not resolve host"), and `zapper events` shows `refused NAME (no rule allows this name)`. A denied connection is closed as soon as it's made. An inspected HTTP request that is denied gets a `403` with the rule's id.
 
 ## Configuration
 

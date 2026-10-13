@@ -78,6 +78,8 @@ fn read_routes() -> Router<Arc<Daemon>> {
         .route("/sessions/{id}", get(get_session))
         .route("/sessions/{id}/audit", get(get_audit))
         .route("/sessions/{id}/terminals", get(list_terminals))
+        .route("/sessions/{id}/requests", get(list_requests))
+        .route("/sessions/{id}/requests/{n}", get(get_request))
         .route("/sessions/{id}/terminals/{n}/stream", get(terminal_stream))
         .route("/events", get(events))
         .route("/approvals", get(list_approvals))
@@ -362,10 +364,34 @@ async fn get_session(State(d): D, Path(id): Path<String>) -> R<Json<session::Ses
     Ok(Json(d.session(&id)?.info()))
 }
 
+/// The session's audit log; for a session that has ended, from its directory.
 async fn get_audit(State(d): D, Path(id): Path<String>) -> R<Response> {
-    let s = d.session(&id)?;
-    let text = tokio::fs::read_to_string(s.audit_path()).await.unwrap_or_default();
+    let path = match d.session(&id) {
+        Ok(s) => s.audit_path(),
+        Err(_) => {
+            // The id goes into a path: accept only the form session ids have.
+            if !super::is_session_id(&id) {
+                return Err(ApiError(StatusCode::BAD_REQUEST, format!("{id:?} is not a session id")));
+            }
+            d.paths.state.join("sessions").join(&id).join("audit.jsonl")
+        }
+    };
+    let text = tokio::fs::read_to_string(&path).await.map_err(|_| ApiError(StatusCode::NOT_FOUND, format!("no audit log for session {id}")))?;
     Ok(([(header::CONTENT_TYPE, "application/x-ndjson")], text).into_response())
+}
+
+/// The session's HTTP requests and connections, oldest first.
+async fn list_requests(State(d): D, Path(id): Path<String>) -> R<Json<Vec<Value>>> {
+    let s = d.session(&id)?;
+    let list = s.requests.lock().unwrap().list();
+    Ok(Json(list))
+}
+
+/// One request with its headers and bodies.
+async fn get_request(State(d): D, Path((id, n)): Path<(String, u64)>) -> R<Json<Value>> {
+    let s = d.session(&id)?;
+    let r = s.requests.lock().unwrap().get(n).ok_or_else(|| anyhow::anyhow!("no request {n}"))?;
+    Ok(Json(r))
 }
 
 async fn list_terminals(State(d): D, Path(id): Path<String>) -> R<Json<Vec<session::TerminalInfo>>> {

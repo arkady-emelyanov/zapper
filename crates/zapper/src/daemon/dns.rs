@@ -1,24 +1,50 @@
 //! The guest's DNS server.
 //!
-//! Names the policy could allow get a synthetic address from 198.18.0.0/15,
-//! unique to the name within the session; other names get NXDOMAIN. Nothing
-//! is resolved upstream at query time, so queries cannot carry data out. When
-//! the guest connects to a synthetic address, the proxy knows the name it
-//! stands for and applies name rules to any TCP protocol; it resolves the real
-//! address on the host only then, for allowed connections.
+//! Queries come from the guest and are validated before anything else: one
+//! standard query, class IN, a well-formed host name. Answers are never made
+//! up, in either direction:
+//!
+//! - a name the policy allows is looked up on the host; a name that doesn't
+//!   exist gets NXDOMAIN, one that does gets a synthetic address from
+//!   198.18.0.0/15 standing for it, so connections are still decided by name;
+//! - a name the policy asks about waits for an operator's answer, then is
+//!   treated as allowed or refused;
+//! - any other name gets REFUSED.
+//!
+//! Names are only looked up once a connection to them would be allowed, so
+//! queries can't carry data out through the host's resolver.
 
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
+use std::time::{Duration, Instant};
 
-use zapper_policy::{resolvable, Layers};
+use zapper_policy::names;
 
 const BASE: u32 = u32::from_be_bytes([198, 18, 0, 0]);
 const SIZE: u32 = 1 << 17;
+/// How long a lookup's outcome is reused.
+const CACHE_TTL: Duration = Duration::from_secs(60);
+
+pub const NOERROR: u8 = 0;
+pub const FORMERR: u8 = 1;
+pub const SERVFAIL: u8 = 2;
+pub const NXDOMAIN: u8 = 3;
+pub const NOTIMP: u8 = 4;
+pub const REFUSED: u8 = 5;
+
+pub const TYPE_A: u16 = 1;
+const CLASS_IN: u16 = 1;
 
 #[derive(Default)]
 pub struct FakeDns {
     by_name: HashMap<String, Ipv4Addr>,
     by_ip: HashMap<Ipv4Addr, String>,
+    /// Whether looked-up names exist, and when that was found out.
+    exists: HashMap<String, (bool, Instant)>,
+    /// Operators' answers about resolving names, and when they were given.
+    decisions: HashMap<String, (bool, Instant)>,
+    /// Names waiting for an operator's answer.
+    asking: std::collections::HashSet<String>,
 }
 
 impl FakeDns {
@@ -39,122 +65,226 @@ impl FakeDns {
     pub fn name(&self, ip: Ipv4Addr) -> Option<&str> {
         self.by_ip.get(&ip).map(String::as_str)
     }
+
+    pub fn cached(&self, name: &str) -> Option<bool> {
+        self.exists.get(name).filter(|(_, at)| at.elapsed() < CACHE_TTL).map(|(e, _)| *e)
+    }
+
+    pub fn decided(&self, name: &str) -> Option<bool> {
+        self.decisions.get(name).filter(|(_, at)| at.elapsed() < CACHE_TTL).map(|(a, _)| *a)
+    }
+
+    /// Marks `name` as waiting for an answer; false if it already was.
+    pub fn start_asking(&mut self, name: &str) -> bool {
+        self.asking.insert(name.to_string())
+    }
+
+    pub fn decide(&mut self, name: &str, answer: bool) {
+        self.asking.remove(name);
+        self.decisions.insert(name.to_string(), (answer, Instant::now()));
+    }
+
+    pub fn remember(&mut self, name: &str, exists: bool) {
+        if self.exists.len() > 10_000 {
+            self.exists.retain(|_, (_, at)| at.elapsed() < CACHE_TTL);
+        }
+        self.exists.insert(name.to_string(), (exists, Instant::now()));
+    }
 }
 
+#[derive(Debug)]
 pub struct Question {
     pub name: String,
     pub qtype: u16,
+    /// End of the question section in the query.
+    end: usize,
 }
 
-pub const TYPE_A: u16 = 1;
+/// A query rejected before policy, with the code to answer and why.
+#[derive(Debug, PartialEq)]
+pub struct Rejected {
+    pub rcode: u8,
+    pub reason: &'static str,
+}
 
-/// Parses the first question of a query.
-pub fn parse(q: &[u8]) -> Option<Question> {
-    if q.len() < 12 || q[2] & 0x80 != 0 || u16::from_be_bytes([q[4], q[5]]) == 0 {
+fn reject(rcode: u8, reason: &'static str) -> Rejected {
+    Rejected { rcode, reason }
+}
+
+/// Validates a query and reads its question. `None`: too short to answer.
+pub fn parse(q: &[u8]) -> Option<Result<Question, Rejected>> {
+    if q.len() < 12 {
         return None;
     }
-    let mut i = 12;
-    let mut labels = Vec::new();
-    loop {
-        let len = *q.get(i)? as usize;
-        i += 1;
-        if len == 0 {
-            break;
+    let count = |i: usize| u16::from_be_bytes([q[i], q[i + 1]]);
+    Some((|| {
+        if q[2] & 0x80 != 0 {
+            return Err(reject(FORMERR, "a response, not a query"));
         }
-        if len > 63 {
-            return None;
+        if (q[2] >> 3) & 0x0f != 0 {
+            return Err(reject(NOTIMP, "not a standard query"));
         }
-        labels.push(std::str::from_utf8(q.get(i..i + len)?).ok()?.to_ascii_lowercase());
-        i += len;
-    }
-    let qtype = u16::from_be_bytes([*q.get(i)?, *q.get(i + 1)?]);
-    q.get(i + 2..i + 4)?;
-    let name = labels.join(".");
-    if name.len() > 253 {
-        return None;
-    }
-    Some(Question { name, qtype })
+        if count(4) != 1 {
+            return Err(reject(FORMERR, "not exactly one question"));
+        }
+        if count(6) != 0 || count(8) != 0 {
+            return Err(reject(FORMERR, "answer or authority records in a query"));
+        }
+        let mut i = 12;
+        let mut labels = Vec::new();
+        loop {
+            let len = *q.get(i).ok_or(reject(FORMERR, "truncated name"))? as usize;
+            i += 1;
+            if len == 0 {
+                break;
+            }
+            // The top two bits mark compression pointers and extended labels,
+            // which have no place in a question.
+            if len & 0xc0 != 0 {
+                return Err(reject(FORMERR, "compressed or extended label"));
+            }
+            let l = q.get(i..i + len).ok_or(reject(FORMERR, "truncated name"))?;
+            names::label(l).map_err(|r| reject(REFUSED, r))?;
+            labels.push(std::str::from_utf8(l).expect("validated ASCII"));
+            i += len;
+        }
+        let tail = q.get(i..i + 4).ok_or(reject(FORMERR, "truncated question"))?;
+        let qtype = u16::from_be_bytes([tail[0], tail[1]]);
+        let qclass = u16::from_be_bytes([tail[2], tail[3]]);
+        if qclass != CLASS_IN {
+            return Err(reject(REFUSED, "class other than IN"));
+        }
+        let name = names::hostname(&labels.join(".")).map_err(|r| reject(REFUSED, r))?;
+        Ok(Question { name, qtype, end: i + 4 })
+    })())
 }
 
-/// End of the first question, where answers go.
-fn question_end(q: &[u8]) -> usize {
-    let mut i = 12;
-    while i < q.len() && q[i] != 0 {
-        i += q[i] as usize + 1;
-    }
-    i + 5
-}
-
-/// A response to `query`: NXDOMAIN, or NOERROR with `answer` (if any).
-pub fn respond(query: &[u8], answer: Option<Ipv4Addr>, nxdomain: bool) -> Vec<u8> {
-    let end = question_end(query).min(query.len());
-    let mut r = query[..end].to_vec();
-    let rd = query[2] & 0x01;
-    r[2] = 0x80 | (query[2] & 0x78) | 0x04 | rd; // QR, opcode, AA, RD
-    r[3] = 0x80 | if nxdomain { 3 } else { 0 }; // RA, rcode
-    r[4..6].copy_from_slice(&1u16.to_be_bytes());
-    r[6..8].copy_from_slice(&(answer.is_some() as u16).to_be_bytes());
-    r[8..12].fill(0);
-    if let Some(ip) = answer {
-        r.extend_from_slice(&[0xc0, 0x0c]); // name: pointer to the question
-        r.extend_from_slice(&TYPE_A.to_be_bytes());
-        r.extend_from_slice(&1u16.to_be_bytes()); // IN
-        r.extend_from_slice(&60u32.to_be_bytes()); // TTL
-        r.extend_from_slice(&4u16.to_be_bytes());
-        r.extend_from_slice(&ip.octets());
+/// A response to `query` with `rcode`, echoing the question if there is a
+/// valid one, and an A record if `answer` is set.
+pub fn respond(query: &[u8], question: Option<&Question>, rcode: u8, answer: Option<Ipv4Addr>) -> Vec<u8> {
+    let mut r = query[..12].to_vec();
+    r[2] = 0x80 | (query[2] & 0x79); // QR, opcode, RD
+    r[3] = 0x80 | (rcode & 0x0f); // RA, rcode
+    r[4..12].fill(0);
+    if let Some(q) = question {
+        r[5] = 1;
+        r.extend_from_slice(&query[12..q.end]);
+        if let Some(ip) = answer {
+            r[7] = 1;
+            r.extend_from_slice(&[0xc0, 0x0c]); // name: pointer to the question
+            r.extend_from_slice(&TYPE_A.to_be_bytes());
+            r.extend_from_slice(&CLASS_IN.to_be_bytes());
+            r.extend_from_slice(&60u32.to_be_bytes()); // TTL
+            r.extend_from_slice(&4u16.to_be_bytes());
+            r.extend_from_slice(&ip.octets());
+        }
     }
     r
 }
 
-/// Answers a query against the session's policy. Returns the response and
-/// whether the name was allowed.
-pub fn answer(layers: &Layers<'_>, fake: &mut FakeDns, query: &[u8]) -> Option<(Vec<u8>, Question, bool)> {
-    let q = parse(query)?;
-    let allowed = resolvable(layers, &q.name);
-    let resp = match (allowed, q.qtype) {
-        (false, _) => respond(query, None, true),
-        (true, TYPE_A) => respond(query, fake.address(&q.name), false),
-        // AAAA and the rest: the name exists, without records of that type.
-        (true, _) => respond(query, None, false),
-    };
-    Some((resp, q, allowed))
+/// Per-session query budget: `RATE` per second, bursts of `BURST`.
+pub struct RateLimit {
+    tokens: f64,
+    at: Instant,
+}
+
+const RATE: f64 = 50.0;
+const BURST: f64 = 100.0;
+
+impl Default for RateLimit {
+    fn default() -> Self {
+        RateLimit { tokens: BURST, at: Instant::now() }
+    }
+}
+
+impl RateLimit {
+    pub fn take(&mut self) -> bool {
+        let now = Instant::now();
+        self.tokens = (self.tokens + now.duration_since(self.at).as_secs_f64() * RATE).min(BURST);
+        self.at = now;
+        if self.tokens >= 1.0 {
+            self.tokens -= 1.0;
+            true
+        } else {
+            false
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn query(name: &str, qtype: u16) -> Vec<u8> {
+    fn query(labels: &[&[u8]], qtype: u16, qclass: u16) -> Vec<u8> {
         let mut q = vec![0x12, 0x34, 0x01, 0x00, 0, 1, 0, 0, 0, 0, 0, 0];
-        for l in name.split('.') {
+        for l in labels {
             q.push(l.len() as u8);
-            q.extend_from_slice(l.as_bytes());
+            q.extend_from_slice(l);
         }
         q.push(0);
         q.extend_from_slice(&qtype.to_be_bytes());
-        q.extend_from_slice(&1u16.to_be_bytes());
+        q.extend_from_slice(&qclass.to_be_bytes());
         q
     }
 
+    fn rejected(q: &[u8]) -> Rejected {
+        parse(q).unwrap().unwrap_err()
+    }
+
     #[test]
-    fn answers() {
-        let config = zapper_policy::Config::from_yaml("policy:\n  net: [{ action: allow, host: '*.example.com' }]\n").unwrap();
-        let layers = [(zapper_policy::Scope::Global, &config.policy)];
-        let mut fake = FakeDns::default();
-        let (r, q, ok) = answer(&layers, &mut fake, &query("API.example.com", TYPE_A)).unwrap();
-        assert!(ok && q.name == "api.example.com");
+    fn parses_valid() {
+        let q = query(&[b"API", b"Example", b"com"], TYPE_A, 1);
+        let p = parse(&q).unwrap().unwrap();
+        assert_eq!((p.name.as_str(), p.qtype), ("api.example.com", TYPE_A));
+        let r = respond(&q, Some(&p), NOERROR, Some(Ipv4Addr::new(198, 18, 0, 1)));
         assert_eq!(&r[..2], &[0x12, 0x34]);
-        assert_eq!(r[3] & 0x0f, 0);
+        assert_eq!((r[3] & 0x0f, r[5], r[7]), (0, 1, 1));
         assert_eq!(&r[r.len() - 4..], &[198, 18, 0, 1]);
-        assert_eq!(fake.name(Ipv4Addr::new(198, 18, 0, 1)), Some("api.example.com"));
-        // Same name, same address.
-        let (r2, _, _) = answer(&layers, &mut fake, &query("api.example.com", TYPE_A)).unwrap();
-        assert_eq!(&r2[r2.len() - 4..], &[198, 18, 0, 1]);
-        let (r, _, ok) = answer(&layers, &mut fake, &query("evil.org", TYPE_A)).unwrap();
-        assert!(!ok);
-        assert_eq!(r[3] & 0x0f, 3);
-        let (r, _, _) = answer(&layers, &mut fake, &query("api.example.com", 28)).unwrap();
-        assert_eq!((r[3] & 0x0f, r[7]), (0, 0));
+    }
+
+    #[test]
+    fn rejects_bad_queries() {
         assert!(parse(&[0; 5]).is_none());
+        let mut resp = query(&[b"a", b"com"], 1, 1);
+        resp[2] |= 0x80;
+        assert_eq!(rejected(&resp).rcode, FORMERR);
+        let mut update = query(&[b"a", b"com"], 1, 1);
+        update[2] = 5 << 3;
+        assert_eq!(rejected(&update).rcode, NOTIMP);
+        let mut two = query(&[b"a", b"com"], 1, 1);
+        two[5] = 2;
+        assert_eq!(rejected(&two).rcode, FORMERR);
+        assert_eq!(rejected(&query(&[b"a.b", b"com"], 1, 1)).rcode, REFUSED, "dot inside a label");
+        assert_eq!(rejected(&query(&[b"a b", b"com"], 1, 1)).rcode, REFUSED, "space");
+        assert_eq!(rejected(&query(&[b"a\0", b"com"], 1, 1)).rcode, REFUSED, "NUL");
+        assert_eq!(rejected(&query(&[b"-a", b"com"], 1, 1)).rcode, REFUSED);
+        assert_eq!(rejected(&query(&[], 1, 1)).rcode, REFUSED, "root");
+        assert_eq!(rejected(&query(&[b"a", b"com"], 1, 3)).rcode, REFUSED, "class CHAOS");
+        let mut ptr = query(&[b"a"], 1, 1);
+        ptr[12] = 0xc0;
+        assert_eq!(rejected(&ptr).rcode, FORMERR, "compression pointer");
+        let truncated = &query(&[b"abc", b"com"], 1, 1)[..15];
+        assert_eq!(rejected(truncated).rcode, FORMERR);
+        // A refusal for a malformed query carries no question.
+        let r = respond(&ptr, None, FORMERR, None);
+        assert_eq!((r.len(), r[3] & 0x0f, r[5]), (12, FORMERR, 0));
+    }
+
+    #[test]
+    fn synthetic_addresses_and_cache() {
+        let mut f = FakeDns::default();
+        let ip = f.address("a.example").unwrap();
+        assert_eq!(f.address("a.example"), Some(ip));
+        assert_eq!(f.name(ip), Some("a.example"));
+        assert_eq!(f.cached("a.example"), None);
+        f.remember("a.example", false);
+        assert_eq!(f.cached("a.example"), Some(false));
+    }
+
+    #[test]
+    fn rate_limit() {
+        let mut r = RateLimit::default();
+        assert!((0..100).all(|_| r.take()));
+        assert!(!r.take());
     }
 }

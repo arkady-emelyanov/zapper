@@ -34,6 +34,14 @@
   td select { background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:2px 6px; font:inherit; }
   .bar select, .bar input { background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:4px 8px; font:inherit; }
   h2 { font-size:13px; color:var(--dim); font-weight:500; margin:18px 0 8px; text-transform:uppercase; letter-spacing:.6px; }
+  .link { color:var(--accent); cursor:pointer; text-decoration:underline; text-decoration-style:dotted; }
+  table.net tr.click.sel td { background:var(--line); }
+  table.net td { white-space:nowrap; } table.net td.url { white-space:normal; word-break:break-all; }
+  #session-req .tabs button { background:none; border:0; border-bottom:2px solid transparent; color:var(--dim); font:inherit; padding:6px 10px; cursor:pointer; }
+  #session-req .tabs button.on { color:var(--text); border-bottom-color:var(--accent); }
+  #session-req .panel { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px 14px; margin-top:6px; }
+  #session-req dl { display:grid; grid-template-columns: max-content 1fr; gap:2px 14px; margin:4px 0 12px; }
+  #session-req dt { color:var(--dim); } #session-req dd { margin:0; word-break:break-all; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12px; }
   .cols { display:grid; grid-template-columns: 1fr 1fr; gap:24px; }
   @media (max-width: 900px) { .cols { grid-template-columns: 1fr; } }
   ul.kv { list-style: disc; margin:0; padding-left:20px; line-height:1.9; }
@@ -53,7 +61,16 @@
 </header>
 <main>
   <section id="sessions"></section>
-  <section id="session"><div id="session-info"></div></section>
+  <section id="session">
+    <div id="session-info"></div>
+    <div id="session-net">
+      <h2>network</h2>
+      <div class="bar"><input id="net-q" placeholder="filter: method, host, path, status"><span class="dim" id="net-count"></span></div>
+      <table class="net"><thead><tr><th>#</th><th>method</th><th>url</th><th>status</th><th>type</th><th>size</th><th>time</th><th>rule</th></tr></thead><tbody id="net-body"></tbody></table>
+    </div>
+    <div id="session-req"></div>
+    <div id="session-more"></div>
+  </section>
   <section id="events">
     <div class="bar">
       <select id="ev-session"><option value="">all sessions</option></select>
@@ -89,10 +106,12 @@ const api = (p) => fetch('/api' + p).then(r => { if (!r.ok) throw new Error(r.st
 const time = (t) => new Date(t * 1000).toLocaleTimeString();
 const ago = (t) => { const s = Math.round(Date.now() / 1000 - t); return s < 90 ? s + 's' : s < 5400 ? Math.round(s / 60) + 'm' : Math.round(s / 3600) + 'h'; };
 const pill = (cls, text) => el('span', { class: 'pill ' + cls }, text ?? cls);
+const sessionLink = (id) => id ? el('span', { class: 'link', title: 'open session ' + id, on: () => show('session', id) }, id) : '';
 
 const tabs = ['sessions', 'events', 'approvals', 'rules', 'config'];
 let tab = 'sessions', current = null;
 function show(t, arg) {
+  if (t !== 'session' || arg !== current) { selectedReq = null; $('session-req').replaceChildren(); $('net-q').value = ''; }
   tab = t; current = arg ?? null;
   for (const s of document.querySelectorAll('section')) s.classList.toggle('on', s.id === t);
   for (const b of $('nav').children) b.classList.toggle('on', b.dataset.t === t || (t === 'session' && b.dataset.t === 'sessions'));
@@ -115,6 +134,7 @@ async function refresh() {
       st.unsaved_changes ? el('span', { class: 'ask' }, 'unsaved config') : el('span', {}, 'config saved'));
     if (tab === 'sessions') await renderSessions();
     if (tab === 'session') await renderSession(current);
+    if (tab === 'events') renderEvents();
     if (tab === 'approvals') await renderApprovals();
     if (tab === 'rules') await renderRules();
     if (tab === 'config') await renderConfig();
@@ -147,13 +167,20 @@ async function renderSessions() {
 }
 
 async function renderSession(id) {
-  const [s, audit] = await Promise.all([api('/sessions/' + id), api('/sessions/' + id + '/audit')]);
+  let s, audit;
+  try {
+    [s, audit] = await Promise.all([api('/sessions/' + id), api('/sessions/' + id + '/audit')]);
+  } catch (e) {
+    if (e.message !== '404') throw e;
+    $('session-info').replaceChildren(el('div', { class: 'bar' }, el('button', { on: () => show('sessions') }, '← sessions')),
+      el('div', { class: 'empty' }, 'Session ' + id + ' has ended. Its audit log stays in the daemon\'s state directory.'));
+    for (const part of ['session-req', 'session-more']) $(part).replaceChildren();
+    $('net-body').replaceChildren();
+    return;
+  }
   const events = audit.split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
   const item = (k, ...v) => el('li', {}, el('span', { class: 'k' }, k + ': '), ...v);
   const c = s.counters;
-  const top = {};
-  for (const e of events) if (e.type === 'net') { const k = e.host + ':' + e.port; top[k] = top[k] || { allow: 0, deny: 0 }; top[k][e.action]++; }
-  const hosts = Object.entries(top).sort((a, b) => (b[1].allow + b[1].deny) - (a[1].allow + a[1].deny)).slice(0, 15);
   const execs = events.filter(e => e.type === 'exec').slice(-200).reverse();
   const exits = events.filter(e => e.type === 'guest' && e.event.event === 'exit').slice(-200).reverse();
   const terms = await api('/sessions/' + id + '/terminals');
@@ -176,9 +203,9 @@ async function renderSession(id) {
           pill(t.open ? 'running' : 'stopped', t.open ? 'open' : 'closed'), el('span', { class: 'dim' }, ' ' + t.cols + '×' + t.rows + ' '),
           el('button', { class: 'act', on: () => watchTerminal(id, t) }, 'Watch ↗'))))
         : el('div', { class: 'empty' }, 'no terminals'))),
-    el('h2', {}, 'destinations'),
-    hosts.length ? el('table', {}, el('thead', {}, el('tr', {}, el('th', {}, 'host'), el('th', {}, 'allowed'), el('th', {}, 'denied'))),
-      el('tbody', {}, hosts.map(([h, n]) => el('tr', {}, el('td', { class: 'mono' }, h), el('td', { class: 'allow' }, n.allow), el('td', { class: 'deny' }, n.deny))))) : el('div', { class: 'empty' }, 'no network activity'),
+  );
+  renderNetwork(id);
+  $('session-more').replaceChildren(
     el('h2', {}, 'exec (latest first)'),
     execs.length ? el('table', {}, el('thead', {}, el('tr', {}, ['time', 'action', 'pid', 'command', 'cwd', 'rule', 'wait'].map(h => el('th', {}, h)))),
       el('tbody', {}, execs.map(e => el('tr', {}, el('td', {}, time(e.ts)), el('td', {}, pill(e.action)), el('td', { class: 'mono' }, e.pid),
@@ -207,6 +234,62 @@ async function answer(id, allow) {
 }
 
 let shownApprovals = '';
+// Network: requests and connections, like a browser's developer tools.
+let selectedReq = null;
+const size = (n) => n == null ? '' : n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(1) + ' kB' : (n / 1048576).toFixed(1) + ' MB';
+const ms = (v) => v == null ? '' : v < 1000 ? Math.round(v) + ' ms' : (v / 1000).toFixed(2) + ' s';
+async function renderNetwork(sessionId) {
+  const list = await api('/sessions/' + sessionId + '/requests');
+  const q = $('net-q').value.toLowerCase();
+  const shown = list.filter(r => !q || (r.method + ' ' + r.url + ' ' + (r.status ?? '') + ' ' + (r.rule ?? '')).toLowerCase().includes(q)).reverse();
+  $('net-count').textContent = shown.length + ' of ' + list.length;
+  $('net-body').replaceChildren(...shown.map(r => {
+    const status = r.method === 'CONNECT' && !r.error && r.action !== 'deny' ? pill(r.done ? 'stopped' : 'running', r.done ? 'closed' : 'open')
+      : r.status == null ? (r.done ? pill('deny', 'failed') : el('span', { class: 'dim' }, 'pending'))
+      : pill(r.action === 'deny' || r.status >= 400 ? 'deny' : 'allow', r.status);
+    const url = el('span', {}, r.url, r.inspected ? '' : el('span', { class: 'dim' }, ' (' + r.scheme + ', not inspected)'));
+    const tr = el('tr', { class: 'click' + (selectedReq === r.id ? ' sel' : ''), on: () => { selectedReq = r.id; showRequest(sessionId, r.id); renderNetwork(sessionId); } },
+      el('td', { class: 'mono dim' }, r.id), el('td', { class: 'mono' }, r.method), el('td', { class: 'mono url' }, url), el('td', {}, status),
+      el('td', { class: 'dim' }, (r.type || '').split(';')[0]), el('td', {}, size(r.resp_size)), el('td', {}, ms(r.total_ms)),
+      el('td', { class: 'mono dim' }, r.rule || (r.action === 'deny' ? 'default' : '')));
+    return tr;
+  }));
+  if (!list.length) $('net-body').replaceChildren(el('tr', {}, el('td', { colspan: '8', class: 'empty' }, 'no network activity')));
+}
+$('net-q').addEventListener('input', () => { if (tab === 'session') renderNetwork(current); });
+
+let reqTab = 'headers';
+async function showRequest(sessionId, n) {
+  const r = await api('/sessions/' + sessionId + '/requests/' + n);
+  const close = el('button', { class: 'act', on: () => { selectedReq = null; $('session-req').replaceChildren(); renderNetwork(sessionId); } }, 'Close');
+  const dl = (pairs) => el('dl', {}, pairs.flatMap(([k, v]) => [el('dt', {}, k), el('dd', {}, v == null ? '' : String(v))]));
+  const bodyView = (b) => {
+    if (!b || !b.total) return el('div', { class: 'dim' }, 'no body');
+    const note = el('div', { class: 'dim' }, size(b.total) + (b.encoding ? ', ' + b.encoding + ' (decoded)' : '') + (b.truncated ? ', first ' + size(b.kept) + ' kept' : ''));
+    if (b.withheld) return el('div', {}, note, el('div', { class: 'deny' }, 'not shown: ' + b.withheld));
+    if (b.text == null) return el('div', {}, note, el('div', { class: 'dim' }, 'binary, ' + size(b.kept) + ' kept'));
+    let text = b.text;
+    try { text = JSON.stringify(JSON.parse(b.text), null, 2); } catch {}
+    return el('div', {}, note, el('pre', {}, text));
+  };
+  const panels = {
+    headers: () => el('div', {},
+      el('h2', {}, 'general'), dl([['request', r.method + ' ' + r.scheme + '://' + r.host + ':' + r.port + (r.path || '')], ['status', r.status],
+        ['decision', r.action + (r.rule ? ' by ' + r.rule : ' by default') + (r.scope ? ' (' + r.scope + ')' : '')],
+        ['secrets added', (r.secrets || []).join(', ') || 'none'], ['error', r.error]]),
+      el('h2', {}, 'request headers (as the guest sent them)'), r.request_headers.length ? dl(r.request_headers) : el('div', { class: 'dim' }, r.inspected ? 'none' : 'not inspected: the connection was passed through encrypted'),
+      el('h2', {}, 'response headers'), r.response_headers.length ? dl(r.response_headers) : el('div', { class: 'dim' }, 'none')),
+    request: () => bodyView(r.request_body),
+    response: () => bodyView(r.response_body),
+    timing: () => dl([['started', new Date(r.ts * 1000).toLocaleTimeString()], ['first byte', ms(r.ttfb_ms)], ['total', ms(r.total_ms)],
+      ['sent', size(r.req_size)], ['received', size(r.resp_size)]]),
+  };
+  const tabs = el('div', { class: 'tabs' }, Object.keys(panels).map(t => el('button', { class: t === reqTab ? 'on' : '', on: () => { reqTab = t; showRequest(sessionId, n); } }, t)));
+  $('session-req').replaceChildren(
+    el('div', { class: 'bar' }, el('h2', { style: 'margin:0' }, '#' + r.id + ' ' + r.method + ' ' + r.url), close),
+    tabs, el('div', { class: 'panel' }, panels[reqTab]()));
+}
+
 // Each terminal opens in its own window; a second click focuses it.
 function watchTerminal(sessionId, t) {
   const url = '/terminal?session=' + encodeURIComponent(sessionId) + '&n=' + encodeURIComponent(t.id);
@@ -229,7 +312,7 @@ async function renderApprovals() {
     select.addEventListener('change', () => { rememberChoice[p.id] = select.value || null; });
     const allow = el('button', { class: 'act allow', on: () => { allow.disabled = deny.disabled = true; answer(p.id, true); } }, 'Allow');
     const deny = el('button', { class: 'act deny', on: () => { allow.disabled = deny.disabled = true; answer(p.id, false); } }, 'Deny');
-    return el('tr', {}, el('td', { class: 'mono' }, p.id), el('td', { class: 'mono' }, p.session), el('td', {}, p.kind),
+    return el('tr', {}, el('td', { class: 'mono' }, p.id), el('td', { class: 'mono' }, sessionLink(p.session)), el('td', {}, p.kind),
       el('td', { class: 'mono' }, p.subject), el('td', {}, ago(p.created)), el('td', {}, select), el('td', {}, allow, ' ', deny));
   };
   $('approvals').replaceChildren(...error,
@@ -278,7 +361,7 @@ function eventRow(e) {
     case 'answer': action = e.allow ? 'allow' : 'deny'; detail = e.id + (e.remember ? ' · ' + e.remember : ''); break;
     case 'guest': { const x = e.event; detail = x.event === 'exit' ? x.comm + ' pid ' + x.pid + ' exit ' + (x.signal ? 'signal ' + x.signal : x.exit_code) + ' · ' + x.elapsed_ms + ' ms' : x.event === 'setup' ? (x.ok ? 'ok: ' : 'FAILED: ') + x.step : JSON.stringify(x); break; }
     case 'shell': detail = 'shell ' + e.id + ' ' + e.state + (e.argv ? ': ' + e.argv.join(' ') : '') + (e.exit_code != null ? ' exit ' + e.exit_code : ''); break;
-    case 'dns': action = e.allowed ? 'allow' : 'deny'; detail = 'resolve ' + e.name + (e.answer ? ' → ' + e.answer : ''); break;
+    case 'dns': action = e.allowed ? 'allow' : 'deny'; detail = e.rcode + ' ' + (e.name || '(invalid query)') + (e.answer ? ' → ' + e.answer : '') + (e.reason ? '  (' + e.reason + ')' : ''); break;
     case 'session': detail = e.state + (e.detail ? ': ' + e.detail : ''); break;
     case 'config': detail = e.change; break;
   }
@@ -288,7 +371,7 @@ function renderEvents() {
   const s = $('ev-session').value, t = $('ev-type').value, a = $('ev-action').value, q = $('ev-q').value.toLowerCase();
   const rows = events.filter(r => (!s || r.e.session === s) && (!t || r.e.type === t) && (!a || r.action === a) && (!q || r.detail.toLowerCase().includes(q))).slice(-500).reverse();
   $('ev-count').textContent = rows.length + ' shown';
-  $('ev-body').replaceChildren(...rows.map(r => el('tr', {}, el('td', {}, time(r.e.ts)), el('td', { class: 'mono' }, r.e.session || ''), el('td', {}, r.e.type),
+  $('ev-body').replaceChildren(...rows.map(r => el('tr', {}, el('td', {}, time(r.e.ts)), el('td', { class: 'mono' }, sessionLink(r.e.session)), el('td', {}, r.e.type),
     el('td', {}, r.action ? pill(r.action) : ''), el('td', { class: 'mono' }, r.detail), el('td', { class: 'mono dim' }, r.rule))));
 }
 for (const id of ['ev-session', 'ev-type', 'ev-action']) $(id).addEventListener('change', renderEvents);

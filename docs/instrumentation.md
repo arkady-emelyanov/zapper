@@ -13,7 +13,7 @@ Each event has `seq`, `ts` (Unix seconds), `session` and `type`:
 | `type` | Fields | Source |
 |---|---|---|
 | `net` | `host`, `port`, `method`, `path`, `action`, `rule`, `scope`, `inspected`, `status`, `secrets` (names injected), `error` | Host proxy: one per passed-through connection, or one per request when inspected |
-| `dns` | `name`, `qtype`, `allowed`, `answer` (the synthetic address) | Host resolver, for A queries and refusals |
+| `dns` | `name` (empty for an invalid query), `qtype`, `allowed`, `rcode` (`noerror`, `nxdomain`, `refused`, `formerr`, `notimp`, `servfail`), `answer` (the synthetic address), `reason` | Host resolver: A queries, refusals and rejected queries |
 | `exec` | `pid`, `uid`, `path`, `argv`, `cwd`, `action`, `rule`, `scope`, `wait_ms` | Host decision on a guest exec |
 | `guest` / `exit` | `pid`, `ppid`, `uid`, `comm`, `exit_code`, `signal`, `elapsed_ms`, `user_ms`, `sys_ms`, `mem_kib`, `io_bytes` | Guest kernel process accounting |
 | `guest` / `setup` | `step`, `ok`, `output` (last 8 KiB) | Profile setup commands |
@@ -43,12 +43,15 @@ These files stay after the session ends. The `vm/` directory, with the disks and
 `zapper serve` prints `http://127.0.0.1:7878/?token=…` and writes the URL to `state/ui-url` (0600). The UI shows the daemon's state, and its one action is answering approvals. Its views:
 
 - **sessions**, with counters
-- **session detail**: the session's terminals, top destinations, exec history with decisions and wait times, process exits with CPU and memory
+- **session detail**: the session's details and terminals, its network traffic, exec history with decisions and wait times, process exits with CPU and memory
+- **network**: every request and connection of the session, newest first, like a browser's developer tools: `POST api.github.com:443/repos/acme/x/pulls`, its status, type, size, time and deciding rule, with a filter box. Clicking one shows its headers, request and response bodies, and timing. Requests are listed in detail when the connection is inspected (a rule with `methods`, `path` or `secrets`, or plain HTTP). Passed-through connections show as one `CONNECT host:port` row with bytes and duration, since they're encrypted end to end
 - **terminal viewer**: "Watch" on a terminal opens it in its own browser window (`/terminal?session=ID&n=N`), as you'd see it, through xterm.js: what it has printed so far, then live output, until it closes. Clicking "Watch" again brings that window forward. It's read-only: keystrokes in the viewer go nowhere. The daemon keeps up to 2 MiB of output per terminal for this; the full recording stays in `shell-<n>.cast`
 - **events**: the live stream, filtered by session, type, action and text
 - **approvals**: pending requests, each with Allow and Deny buttons and a choice of answering this request only, or the rest of the session. The tab shows how many are waiting
 - **rules**, grouped by layer
 - **config**: running, startup and the diff between them
+
+The network view keeps up to 1000 requests per session in memory, with the first 64 KiB of each body and up to 16 MiB of bodies in total; gzip, deflate and brotli bodies are decoded for display. Request headers are recorded as the guest sent them, before the proxy adds secrets, and secret values the proxy added are shown as `***` wherever they appear, including in a response that echoes them back. `guest`-mode secret values aren't masked yet. None of it is written to disk.
 
 The UI exchanges the token for a strict cookie and requires a local `Host` header, which defeats DNS rebinding. Answering an approval also needs an `X-Zapper-UI` header and an `Origin` naming the UI. A page on another site can't send that header without a CORS preflight, which the UI never grants, so it can't answer approvals through your browser. Rules, profiles, sessions and the config are changed with the CLI or the API on the unix socket. The UI renders session data as text.
 

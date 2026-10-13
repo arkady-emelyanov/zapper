@@ -299,7 +299,7 @@ async fn run(cli: Cli) -> Result<i32> {
                 eprintln!("zapper: session {id} kept; `zapper attach {id}`, `zapper rm {id}`");
             } else {
                 c.json(Method::DELETE, &format!("/v1/sessions/{id}"), None).await?;
-                eprintln!("zapper: session {id} removed; audit: `zapper audit {id}` until the daemon restarts");
+                eprintln!("zapper: session {id} removed; its log: `zapper audit {id}`");
             }
             return code;
         }
@@ -600,7 +600,13 @@ fn event_line(e: &Value) -> String {
             }
         }
         "session" => format!("session {} {}", s(&e["state"]), s(&e["detail"])),
-        "dns" => format!("{} {}{}", if e["allowed"] == json!(true) { "allow" } else { "deny" }, s(&e["name"]), e["answer"].as_str().map(|a| format!(" → {a}")).unwrap_or_default()),
+        "dns" => format!(
+            "{} {}{}{}",
+            s(&e["rcode"]),
+            if e["name"] == json!("") { "(invalid query)".to_string() } else { s(&e["name"]) },
+            e["answer"].as_str().map(|a| format!(" → {a}")).unwrap_or_default(),
+            e["reason"].as_str().map(|r| format!(" ({r})")).unwrap_or_default()
+        ),
         "shell" => format!("shell {} {}", e["id"], s(&e["state"])),
         "config" => format!("config {}", s(&e["change"])),
         other => format!("{other} {e}"),
