@@ -15,7 +15,9 @@ global       `policy:` at the top of the config
 defaults     `defaults.net` / `defaults.exec` from the most specific layer that sets them, else deny
 ```
 
-Within a layer, the first matching rule decides, as in an ACL. Evaluation uses the running config, so a rule change applies to running sessions at once.
+Within a layer, the first matching rule decides, as in an ACL. Evaluation uses the running config, so a rule change applies to running sessions, and so to a running firm's workers, at once.
+
+An office engineer in the example firm, for instance, is evaluated against its session's rules, then its role's layer (`role:acme/engineer`), then the `office-engineer` profile, then `office` and `base`, which it extends, then the global layer. Security officers' decisions land in the first two: `once` and `worker` approvals in the worker's session layer, `role` approvals in the role layer, which the run keeps for all workers of that role. They are never global and never past a `final` rule ([office](office.md#limits-that-hold-whatever-an-officer-decides)).
 
 ## Rules
 
@@ -27,7 +29,7 @@ Within a layer, the first matching rule decides, as in an ACL. Evaluation uses t
 
 | Field | Meaning |
 |---|---|
-| `action` | `allow`, `deny`, or `ask`, which waits for an operator and denies after `daemon.ask_timeout_secs` |
+| `action` | `allow`, `deny`, or `ask`, which waits for an operator and denies after `daemon.ask_timeout_secs`; in a firm, `ask` refuses at once and becomes an access request for the officers |
 | `host` | Case-insensitive glob. `*` also matches dots, so `*.github.com` matches `api.github.com` but `github.com` needs its own rule. An IP address matches as text. |
 | `ports` | Ports the rule applies to; empty means all. |
 | `methods`, `path` | Match the HTTP request. `path` is a glob over the path without the query, where `*` stays within one segment and `**` spans segments. Either field makes connections to matching hosts inspected. |
@@ -64,7 +66,7 @@ secrets:
   gh:      { env: GITHUB_TOKEN, hosts: [api.github.com] }
   claude:  { file: ~/.config/zapper/claude-token, hosts: [api.anthropic.com] }
   oauth:   { file: ~/.claude/.credentials.json, json: /claudeAiOauth/accessToken, hosts: [api.anthropic.com] }
-  slurm:   { file: ~/.config/zapper/slurm.jwt, hosts: [slurmrestd.lab], plaintext: true }
+  ci:      { file: ~/.config/zapper/ci.token, hosts: [ci.internal.example], plaintext: true }
   s3:      { file: ~/.config/zapper/s3-session-key, mode: guest }
   tls_key: { file: ~/.config/zapper/client.key, mode: guest }
 ```
@@ -74,7 +76,7 @@ secrets:
 | Mode | The guest sees | Use for |
 |---|---|---|
 | `proxy` (default) | a placeholder | bearer tokens and API keys, which travel in headers |
-| `guest` | the value | credentials the client holds itself: S3 signing keys, client certificates and keys, kubeconfigs |
+| `guest` | the value | credentials the client holds itself: S3 signing keys, client certificates and keys, kubeconfigs (as the firm's engineers get for its cluster) |
 
 Profiles refer to secrets as `{{secret:<name>}}` in `agent.env` or `agent.files`. The workload can read and use a `guest` secret once it's delivered, so issue those scoped and short-lived.
 
@@ -88,7 +90,7 @@ Values are read each time they're used, so a rotated file or variable takes effe
 
 ## Approvals
 
-`ask` holds the connection, request or exec and emits an `ask` event:
+Outside a firm, `ask` holds the connection, request or exec and emits an `ask` event, for the operator to answer. In a firm, a network `ask` is refused at once and decided by the security officers or the board ([office: deciding requests](office.md#deciding-requests)), and firm profiles can't have `exec` rules with `ask`.
 
 ```
 zapper approvals                                # pending
@@ -106,10 +108,10 @@ A session can have up to 32 pending approvals; further requests are denied until
 ```
 zapper rules                                    # all layers, each in evaluation order
 zapper rule add global '{kind: net, action: deny, host: "*.evil.example", final: true}'
-zapper rule add profile:claude '{kind: exec, action: ask, path: "/usr/bin/ssh"}' --at 0
+zapper rule add profile:office '{kind: exec, action: deny, path: "/usr/bin/ssh"}' --at 0
 zapper rule add session:tusn49 '{kind: net, action: allow, host: pypi.org}'
 zapper rule rm net-4
-zapper eval -p claude net api.github.com:443 GET /user     # the decision, its rule and layer
+zapper eval -p office-engineer net git.acme.internal:443   # the decision, its rule and layer
 zapper eval -s tusn49 exec /usr/bin/perl perl -e 1
 ```
 

@@ -1,0 +1,298 @@
+#!/bin/sh
+# End-to-end tests of the office: a small firm of real VMs whose workers run
+# the fake Claude (`zapper-agent fake-claude`), so runs are deterministic and
+# cost no tokens.
+#
+#   tests/e2e-office.sh [path/to/zapper]
+#
+# Needs what tests/e2e.sh needs (KVM, the ubuntu-24.04 image, network). Runs
+# its own daemon under a temporary directory. ZAPPER_E2E_KEEP=1 keeps it.
+set -u
+
+Z=${1:-target/release/zapper}
+Z=$(cd "$(dirname "$Z")" && pwd)/$(basename "$Z")
+T=$(mktemp -d /tmp/zapper-office.XXXXXX)
+export ZAPPER_SOCKET=$T/api.sock ZAPPER_CONFIG=$T/zapper.yaml
+fails=0
+
+pass() { echo "ok    $1"; }
+fail() { echo "FAIL  $1"; echo "      $2"; fails=$((fails + 1)); }
+expect() { case "$2" in *"$3"*) pass "$1" ;; *) fail "$1" "expected '$3' in: $(echo "$2" | tail -c 400)" ;; esac; }
+refute() { case "$2" in *"$3"*) fail "$1" "did not expect '$3'" ;; *) pass "$1" ;; esac; }
+journal() { "$Z" firm journal acme; }
+# Waits up to $2 seconds for the journal to contain $1.
+wait_for() {
+    i=0
+    while [ $i -lt "$2" ]; do
+        journal 2>/dev/null | grep -q -- "$1" && return 0
+        sleep 1; i=$((i + 1))
+    done
+    return 1
+}
+
+cleanup() {
+    [ -n "${DAEMON:-}" ] && kill "$DAEMON" 2>/dev/null && wait "$DAEMON" 2>/dev/null
+    [ -n "${ZAPPER_E2E_KEEP:-}" ] && echo "kept $T" || rm -rf "$T"
+}
+trap cleanup EXIT
+
+mkdir -p "$T/work" "$T/fake"
+PORT=$((20000 + $$ % 20000))
+DATA=$HOME/.local/share/zapper
+cat > "$T/fake/ceo.yaml" <<'EOF'
+rules:
+  - when: { from: board, kind: assignment }
+    do:
+      - mail_send: { to: [ada], subject: "Write hello", body: "Write /work/hello.md and publish it.", kind: assignment, due: "1h" }
+      - mail_reply: { message: $message, body: "Delegated to ada.", kind: reply }
+  - when: { from: ada, kind: report }
+    do:
+      - mail_send: { to: [board], subject: "Done", body: "ada published $subject", kind: report }
+EOF
+cat > "$T/fake/eng.yaml" <<'EOF'
+rules:
+  - when: { from: ceo, kind: assignment }
+    do:
+      - shell: "office mail_send --to ceo --subject up --body 'do this' --kind assignment > /work/authority.txt 2>&1; true"
+      - shell: "office mail_send '{\"from\": \"ceo\", \"to\": [\"sec-1\"], \"subject\": \"spoof\", \"body\": \"x\", \"kind\": \"fyi\"}' > /work/spoof.txt 2>&1; true"
+      - shell: "office mail_read --message m-1 > /work/peek.txt 2>&1; office access_requests > /work/officer-only.txt 2>&1; true"
+      - shell: "curl -s -m 5 -o /dev/null -w '%{http_code}' https://example.com > /work/before.txt 2>&1; true"
+      - shell: "echo hello from ada > /work/hello.md; mkdir -p /work/site; echo '# Site' > /work/site/index.md; ln -sf /etc/shadow /work/site/shadow"
+      - drive_publish: { paths: [/work/hello.md, /work/site], title: "Hello", kind: document, summary: "A greeting" }
+      - mail_reply: { message: $message, body: "Done, see $artifact", kind: report, close: true, attachments: [$artifact] }
+  - when: { contains: "was allowed" }
+    do:
+      - shell: "curl -s -m 10 -o /dev/null -w '%{http_code}' https://example.com > /work/after.txt 2>&1; true"
+EOF
+cat > "$T/fake/sec.yaml" <<'EOF'
+rules:
+  - when: { contains: "Access request r-" }
+    do:
+      - access_decide: { request: $request, allow: true, scope: worker, reason: "example.com is needed for the task", methods: [] }
+EOF
+cat > "$T/zapper.yaml" <<EOF
+daemon: { state: $T/state, ui: "127.0.0.1:0" }
+policy:
+  defaults: { net: deny, exec: allow }
+profiles:
+  worker:
+    engine: { image: ubuntu-24.04, vcpus: 1, memory_mib: 512, disk: 2GiB }
+    agent: { kind: claude-code, command: [bash], user: agent, workdir: /work }
+    mounts: [{ host: "{workdir}", guest: /work, mode: rw, extra: 256MiB }]
+    policy:
+      net:
+        - { action: ask, host: example.com, ports: [443] }
+        - { action: allow, host: apps.lab.internal, ports: [80] }
+  engineer:
+    extends: worker
+    policy:
+      net:
+        - { action: allow, host: git.lab.internal, ports: [443] }
+        - { action: allow, host: cluster.lab.internal, ports: [6443] }
+  k3s:
+    engine: { image: k3s, kernel: vmlinux-6.1-k8s, vcpus: 4, memory_mib: 4096, disk: 12GiB }
+    agent: { kind: generic, command: [bash], user: user, workdir: / }
+  plain:
+    engine: { image: ubuntu-24.04, vcpus: 1, memory_mib: 512, disk: 2GiB }
+    agent: { kind: generic, command: [bash], user: user, workdir: /work }
+firms:
+  acme:
+    budget: { max_concurrent: 2 }
+    roles:
+      ceo: { profile: worker, skills: { work: ceo }, fake: $T/fake/ceo.yaml, avatar: { figure: ceo } }
+      engineer: { profile: worker, skills: { work: software-engineer }, fake: $T/fake/eng.yaml, avatar: { figure: engineer, color: "#6A9BCC" } }
+      security: { profile: worker, skills: { work: security-review }, fake: $T/fake/sec.yaml, avatar: { figure: shield } }
+    workers:
+      - { name: ceo, role: ceo }
+      - { name: ada, role: engineer, reports_to: ceo }
+      - { name: sec-1, role: security, reports_to: ceo }
+    security: { officers: [sec-1], digest_every: { minutes: 60, requests: 0 } }
+  lab:
+    git: {}
+    product_port: 127.0.0.1:$PORT
+    dashboard_port: 127.0.0.1:$((PORT + 1))
+    facilities: { cluster: { kind: k3s, profile: k3s } }
+    landing: { name: "Lab <Inc.>", motto: "Building digital worlds!" }
+    credentials: { kubeconfig: [engineer], git: [engineer] }
+    roles:
+      engineer: { profile: engineer, skills: { work: software-engineer }, fake: $T/fake/none.yaml }
+      analyst: { profile: worker, skills: { work: analyst }, fake: $T/fake/none.yaml }
+    workers:
+      - { name: ada, role: engineer }
+      - { name: ken, role: analyst, reports_to: ada }
+EOF
+echo "rules: []" > "$T/fake/none.yaml"
+chmod 600 "$T/zapper.yaml"
+
+"$Z" serve > "$T/daemon.log" 2>&1 &
+DAEMON=$!
+for _ in 1 2 3 4 5 6 7 8 9 10; do [ -S "$ZAPPER_SOCKET" ] && break; sleep 0.3; done
+
+echo "== firm up"
+out=$("$Z" firm up acme 2>&1)
+expect "firm boots" "$out" "is running"
+st=$("$Z" firm status acme)
+expect "every worker has a session" "$st" "sec-1"
+refute "no worker failed" "$st" "error"
+ada=$("$Z" --json firm status acme | python3 -c 'import sys,json; print([w["session"] for w in json.load(sys.stdin)["run"]["workers"] if w["name"]=="ada"][0])')
+out=$("$Z" exec "$ada" -- sh -c 'ls ~/.claude/skills; cat ~/.claude/CLAUDE.md | head -3; touch ~/.claude/skills/x 2>&1; ls -ld ~/.claude | cut -d" " -f3' 2>&1)
+expect "skills are attached" "$out" "software-engineer"
+expect "the preamble names the worker" "$out" "You are ada"
+expect "skills are read-only" "$out" "Read-only file system"
+expect "~/.claude belongs to the worker" "$out" "agent"
+
+echo "== delegation and reports"
+"$Z" mail send acme --to ceo --subject "Build hello" --kind assignment --due 1h --body "Please get ada to write hello." > /dev/null
+wait_for "Delegated to ada" 0 >/dev/null 2>&1
+wait_for '"Done"' 90 && pass "the board's assignment comes back as a report" || fail "the board's assignment comes back as a report" "$(journal | tail -20)"
+j=$(journal)
+expect "the CEO delegated to ada" "$j" "mail m-2 ceo → ada [assignment] \"Write hello\""
+expect "ada reported back, closing the assignment" "$j" "ada → ceo [report]"
+expect "ada published to the shared drive" "$j" "published a-1@v1 \"Hello\" by ada"
+board=$("$Z" mail ls acme)
+expect "the board's inbox has the CEO's report" "$board" "Done"
+
+echo "== authority and identity"
+out=$("$Z" exec "$ada" -- cat /work/authority.txt /work/spoof.txt /work/peek.txt /work/officer-only.txt 2>&1)
+expect "a report can't give its manager an assignment" "$out" "can't give ceo an assignment"
+expect "reading someone else's mail fails" "$out" "no message m-1"
+expect "officer tools are for officers" "$out" "access_requests is for security officers"
+expect "the sender is the VM, not what it claims" "$(journal | grep spoof)" "ada → sec-1"
+
+echo "== access requests"
+before=$("$Z" exec "$ada" -- cat /work/before.txt 2>&1)
+expect "an ask is refused at once, not held" "$before" "000"
+wait_for "access decided" 60 && pass "the officer decided the request" || fail "the officer decided the request" "$(journal | grep access)"
+wait_for "was allowed" 1 >/dev/null 2>&1
+sec=$("$Z" firm security acme)
+expect "the approval is standing, for the worker" "$sec" "worker:ada"
+i=0; after=""; while [ $i -lt 40 ]; do after=$("$Z" exec "$ada" -- cat /work/after.txt 2>/dev/null); [ -n "$after" ] && break; sleep 1; i=$((i + 1)); done
+expect "the worker retries after the decision mail" "$after" "200"
+
+echo "== shared drive"
+"$Z" drive get acme a-1 "$T/got" > /dev/null 2>&1
+[ "$(cat "$T/got/hello.md" 2>/dev/null)" = "hello from ada" ] && pass "the board downloads a published file" || fail "the board downloads a published file" "$(ls -R "$T/got" 2>&1)"
+[ -f "$T/got/site/index.md" ] && pass "directories are published" || fail "directories are published" "no site/index.md"
+[ ! -e "$T/got/site/shadow" ] && pass "symlinks are not published" || fail "symlinks are not published" "site/shadow exists"
+
+echo "== follow-ups"
+"$Z" mail send acme --to ceo --kind question --subject "Status?" --due 2s --body "How is it going?" > /dev/null
+wait_for "\[follow-up\]" 30 && pass "an overdue question gets an automatic follow-up" || fail "an overdue question gets an automatic follow-up" "$(journal | tail -5)"
+expect "the follow-up is from the author, marked automatic" "$(journal | grep 'follow-up')" "board → ceo [follow-up] \"Status?\" (automatic)"
+
+echo "== the UI"
+url=$(cat "$T/state/ui-url"); base=${url%%/\?*}; token=${url##*token=}
+post() { body=$1; shift; curl -s -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' -d "$body" "$@" "$base/api/firms/acme/mail"; }
+mail='{"to":["ceo"],"subject":"From the UI","body":"hello","kind":"fyi"}'
+[ "$(post "$mail" -H 'x-zapper-ui: 1' -H "Origin: $base")" = 401 ] && pass "the board's mail needs the token cookie" || fail "the board's mail needs the token cookie" "not 401"
+[ "$(post "$mail" -b "zapper_token=$token" -H "Origin: $base")" = 403 ] && pass "the board's mail needs X-Zapper-UI" || fail "the board's mail needs X-Zapper-UI" "not 403"
+[ "$(post "$mail" -b "zapper_token=$token" -H 'x-zapper-ui: 1' -H 'Origin: http://evil.example')" = 403 ] && pass "the board's mail needs a local Origin" || fail "the board's mail needs a local Origin" "not 403"
+[ "$(post "$mail" -b "zapper_token=$token" -H 'x-zapper-ui: 1' -H "Origin: $base")" = 200 ] && pass "the board writes to a worker from the UI" || fail "the board writes to a worker from the UI" "not 200"
+expect "the UI's mail is the board's" "$(journal | grep 'From the UI')" "board → ceo [fyi]"
+[ "$(curl -s -o /dev/null -w '%{http_code}' -X DELETE -b "zapper_token=$token" -H 'x-zapper-ui: 1' -H "Origin: $base" "$base/api/firms/acme/runs/current")" = 405 ] || [ "$(curl -s -o /dev/null -w '%{http_code}' -X DELETE -b "zapper_token=$token" -H 'x-zapper-ui: 1' -H "Origin: $base" "$base/api/firms/acme/runs/current")" = 404 ] && pass "the UI can't delete runs" || fail "the UI can't delete runs" "reachable"
+page=$(curl -s -b "zapper_token=$token" "$base/")
+expect "the UI serves the office page" "$page" "<title>"
+expect "the sessions page moved" "$(curl -s -b "zapper_token=$token" "$base/sessions")" "zapper"
+
+echo "== the office port"
+out=$("$Z" run -p plain -C "$T/work" -- sh -c '/usr/local/bin/office desk 2>&1; true' 2>&1)
+expect "a session outside a firm has no post office" "$out" "connecting to the post office"
+
+echo "== firm down and runs"
+"$Z" firm down acme > /dev/null
+expect "the run ended" "$(journal | tail -1)" "run ended"
+expect "no worker session is left" "$("$Z" ps)" "ID"
+refute "workers are removed" "$("$Z" ps)" "worker"
+runs=$("$Z" firm runs acme)
+expect "the run is listed" "$runs" "ended"
+run=$(echo "$runs" | sed -n 2p | cut -d' ' -f1)
+expect "a past run's journal is readable" "$("$Z" firm journal acme --run "$run" | head -3)" "run starting"
+expect "transcripts are kept" "$("$Z" firm transcript acme ada --run "$run")" "mail_send"
+expect "the UI reads a finished run for replay" "$(curl -s -b "zapper_token=$token" "$base/api/firms/acme/runs/$run/journal" | tail -1)" '"state":"ended"'
+expect "a published file is served sandboxed" "$(curl -s -D - -o /dev/null -b "zapper_token=$token" "$base/api/firms/acme/runs/$run/drive/a-1/1/hello.md" | tr 'A-Z' 'a-z')" "content-security-policy: sandbox"
+[ "$(curl -s -o /dev/null -w '%{http_code}' -b "zapper_token=$token" "$base/api/firms/acme/runs/..%2F..%2Fetc/journal")" != 200 ] && pass "run ids are checked" || fail "run ids are checked" "200"
+"$Z" firm up acme > /dev/null 2>&1
+expect "a new run starts fresh" "$("$Z" mail ls acme)" "ID"
+refute "with an empty inbox" "$("$Z" mail ls acme)" "Done"
+"$Z" firm down acme > /dev/null
+
+if [ -f "$DATA/images/k3s.ext4" ] && [ -f "$DATA/kernels/vmlinux-6.1-k8s" ]; then
+    echo "== the cluster, git and the product port"
+    out=$("$Z" firm up lab 2>&1)
+    expect "the firm boots with its cluster" "$out" "is running"
+    lj=$("$Z" firm journal lab)
+    expect "the cluster is ready before the workers boot" "$(echo "$lj" | grep -n 'cluster.*ready\|ada is booting' | head -1)" "ready"
+    sess() { "$Z" --json firm status lab | python3 -c "import sys,json; print([w['session'] for w in json.load(sys.stdin)['run']['workers'] if w['name']=='$1'][0])"; }
+    ada=$(sess ada); ken=$(sess ken)
+    cl=$("$Z" ps | awk '/ k3s /{print $1}')
+    cat > "$T/web.yaml" <<'YAML'
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: page }
+data: { index.html: "hello from the cluster" }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: web }
+spec:
+  selector: { matchLabels: { app: web } }
+  template:
+    metadata: { labels: { app: web } }
+    spec:
+      containers:
+        - { name: web, image: "rancher/mirrored-library-busybox:1.37.0", command: [httpd, -f, -p, "8080", -h, /www], volumeMounts: [{ name: page, mountPath: /www }] }
+      volumes: [{ name: page, configMap: { name: page } }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: web }
+spec: { selector: { app: web }, ports: [{ port: 80, targetPort: 8080 }] }
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata: { name: web }
+spec:
+  rules: [{ http: { paths: [{ path: /, pathType: Prefix, backend: { service: { name: web, port: { number: 80 } } } }] } }]
+YAML
+    # The operator deploys a test app as root on the cluster VM.
+    landing=""; for i in $(seq 60); do landing=$(curl -s -m 3 http://127.0.0.1:$PORT/); case "$landing" in *"digital worlds"*) break ;; esac; sleep 3; done
+    expect "the cluster starts with the firm's landing page" "$landing" "Building digital worlds!"
+    expect "the landing page escapes the firm's name" "$landing" "Lab &lt;Inc.&gt;"
+    # Traefik is installed by a Helm job after the API is up.
+    "$Z" exec --system "$cl" -- sh -c 'cat > /tmp/web.yaml
+for i in $(seq 90); do k3s kubectl -n kube-system get deploy/traefik >/dev/null 2>&1 && break; sleep 2; done
+k3s kubectl -n kube-system rollout status deploy/traefik --timeout=180s && k3s kubectl apply -f /tmp/web.yaml && k3s kubectl rollout status deploy/web --timeout=120s' < "$T/web.yaml" > "$T/deploy.log" 2>&1
+    expect "the operator deploys a test app" "$(cat "$T/deploy.log")" 'deployment "web" successfully rolled out'
+    out=$("$Z" exec "$ada" -- sh -c '
+k=~/.kube/config; cd /tmp
+for f in certificate-authority-data:ca client-certificate-data:c client-key-data:k; do grep "${f%%:*}" $k | awk "{print \$2}" | base64 -d > ${f##*:}.pem; done
+echo "api=$(curl -s -o /dev/null -w %{http_code} --cacert ca.pem --cert c.pem --key k.pem https://cluster.lab.internal:6443/api/v1/nodes)"
+git clone -q https://git.lab.internal/product.git p 2>/dev/null; cd p && echo hi > README.md && git add . && git commit -qm first && git push -q origin main 2>&1; echo "push=$?"
+for i in $(seq 30); do r=$(curl -s -m 3 http://apps.lab.internal/); [ "$r" = "hello from the cluster" ] && break; sleep 2; done; echo "apps=$r"' 2>&1)
+    expect "an engineer reaches the Kubernetes API with its kubeconfig" "$out" "api=200"
+    expect "an engineer pushes to the firm's repository" "$out" "push=0"
+    expect "the ingress serves the product to the engineer" "$out" "apps=hello from the cluster"
+    out=$("$Z" exec "$ken" -- sh -c '
+echo "kube=$(ls ~/.kube/config 2>&1 | grep -c "No such")"
+echo "git=$(curl -s -m 5 -o /dev/null -w %{http_code} https://git.lab.internal/product.git/info/refs)"
+echo "api=$(curl -sk -m 5 -o /dev/null -w %{http_code} https://cluster.lab.internal:6443/)"
+echo "apps=$(curl -s -m 5 http://apps.lab.internal/)"' 2>&1)
+    expect "a non-engineer gets no kubeconfig" "$out" "kube=1"
+    expect "a non-engineer can't reach git" "$out" "git=000"
+    expect "a non-engineer can't reach the API" "$out" "api=000"
+    expect "a non-engineer reaches the product" "$out" "apps=hello from the cluster"
+    expect "the board reaches the product on its port" "$(curl -s -m 5 --retry 5 --retry-all-errors http://127.0.0.1:$PORT/)" "hello from the cluster"
+    tok=""; for i in $(seq 40); do tok=$(curl -s --unix-socket "$ZAPPER_SOCKET" http://zapper/v1/firms/lab | python3 -c 'import sys,json; print(json.load(sys.stdin)["run"]["facilities"].get("dashboard_token") or "")'); [ -n "$tok" ] && break; sleep 3; done
+    [ -n "$tok" ] && pass "the dashboard's sign-in token is ready" || fail "the dashboard's sign-in token is ready" "none"
+    expect "the board reaches the dashboard on its port" "$(curl -s -m 5 --retry 10 --retry-all-errors http://127.0.0.1:$((PORT + 1))/)" "Headlamp"
+    expect "the push is in the run's commit log" "$(curl -s --unix-socket "$ZAPPER_SOCKET" http://zapper/v1/firms/lab/runs/current/git)" '"subject":"first"'
+    "$Z" firm down lab > /dev/null
+    refute "firm down stops the cluster" "$("$Z" ps)" " k3s "
+    [ "$(curl -s -m 3 -o /dev/null -w %{http_code} http://127.0.0.1:$PORT/)" = 000 ] && pass "firm down closes the product port" || fail "firm down closes the product port" "still open"
+else
+    echo "skip  the cluster checks (make kernel KERNEL=k8s && make image IMAGE=k3s)"
+fi
+
+echo
+if [ "$fails" -eq 0 ]; then echo "all office e2e checks passed"; else echo "$fails office e2e checks failed; daemon log: $T/daemon.log"; ZAPPER_E2E_KEEP=1; fi
+[ "$fails" -eq 0 ]

@@ -4,7 +4,9 @@
 
 ## Overview
 
-zapper reads one YAML file, by default `~/.config/zapper/zapper.yaml`; `--config` or `$ZAPPER_CONFIG` selects another. `zapper init` copies the commented [example](../config/zapper.example.yaml) there with mode 0600, and leaves an existing file as it is.
+The Office and the zapper daemon under it read one YAML file: `--config` or `$ZAPPER_CONFIG` if given; else `config/zapper.yaml` when run from a checkout's root (the [repository's config](../config/zapper.yaml), tracked); else `~/.config/zapper/zapper.yaml`, which `zapper init` creates from the same file and never overwrites.
+
+Relative paths in the config (`skills_dir`, secret files, mount hosts, daemon paths) resolve against the config file's directory, and `~/` against your home, so the config needs no absolute path and runs from a fresh clone. Generated files stay outside the repository: Firecracker, kernels, images and state under `~/.local`, the Claude token under `~/.config/zapper/`. The file is written back by `zapper config save`; a config holding secret values inline (`value:`) must be readable only by you.
 
 ## Running and startup config
 
@@ -25,10 +27,11 @@ Each change is validated as a whole before it applies. A change with an unknown 
 ## The file
 
 ```
-daemon:     paths, UI address, limits, private networks          (below)
-secrets:    name → source, mode and hosts                         (policy.md: Secrets)
-policy:     the global layer                                     (policy.md)
-profiles:   name → profile
+daemon:     paths, UI address, limits, private networks               (below)
+secrets:    name → source, mode and hosts                             (policy.md: Secrets)
+policy:     the global layer                                          (policy.md)
+profiles:   name → profile: the VM of a worker, facility or session   (below)
+firms:      name → org chart, budgets, officers, the firm's services  (office.md)
 ```
 
 ### daemon
@@ -49,12 +52,12 @@ profiles:   name → profile
 
 ```
 profiles:
-  claude:
-    extends: default          # engine and agent merge key by key; mounts and setup add up
+  office:
+    extends: base             # engine and agent merge key by key; mounts and setup add up
     description: …
-    engine: { image: claude, kernel: vmlinux-6.1, vcpus: 2, memory_mib: 4096, disk: 4GiB, ttl_secs: 0, network: nic, boot_args: "" }
+    engine: { image: office, kernel: vmlinux-6.1, vcpus: 2, memory_mib: 4096, disk: 16GiB, ttl_secs: 0, network: nic, boot_args: "" }
     agent:  { … }             # below
-    mounts: [{ host: "{workdir}", guest: /work, mode: rw, extra: 1GiB }]
+    mounts: [{ host: "{workdir}", guest: /work, mode: rw, extra: 8GiB }]
     setup:  ["apt-get install -y jq"]    # run as root at boot, under this profile's policy
     policy: { net: […], exec: […], fs: […], defaults: { net: ask } }
 ```
@@ -88,11 +91,15 @@ Every session's environment also has:
 
 For `claude-code`, zapper also sets `DISABLE_AUTOUPDATER=1` and `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`, and marks onboarding, the folder trust dialog and the bypass-permissions prompt as accepted.
 
+### firms
+
+The office's org charts: roles, workers, budgets, security officers and the firm's services. They are described on the [office](office.md#configuration) page. Each role names a profile; the office adds the worker's preamble, skills, the `office` MCP server, the model and credentials to it at boot, and the profile decides the image, the VM's size, the network rules and the secrets.
+
 ## Verification
 
 ```
 zapper check                     # loads and validates the file
-zapper profile show claude       # the profile and its resolved form
+zapper profile show office-engineer   # the profile and its resolved form
 ```
 
 ## Limitations

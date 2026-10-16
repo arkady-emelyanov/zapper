@@ -32,7 +32,7 @@ async function start() {
   const info = list.find(t => String(t.id) === n);
   if (!info) { $('state').textContent = 'no such terminal'; return; }
   $('cmd').textContent = info.argv.join(' ');
-  const term = new Terminal({ disableStdin: true, cursorBlink: false, rows: info.rows, cols: info.cols, fontSize: 13, scrollback: 5000,
+  const term = new Terminal({ disableStdin: true, convertEol: true, cursorBlink: false, rows: info.rows, cols: info.cols, fontSize: 13, scrollback: 5000,
     fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' });
   term.open($('term'));
   const source = new EventSource('/api/sessions/' + encodeURIComponent(session) + '/terminals/' + encodeURIComponent(n) + '/stream');

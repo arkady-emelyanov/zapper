@@ -27,6 +27,13 @@ pub const CONTROL_PORT: u32 = 1000;
 pub const PROXY_PORT: u32 = 3128;
 /// Host → guest terminals.
 pub const SHELL_PORT: u32 = 1024;
+/// Guest → host office requests of a firm's worker: one JSON request and one
+/// JSON response per connection.
+pub const OFFICE_PORT: u32 = 1100;
+/// The guest's address on its NIC (`crate::netns` on the host sets it).
+pub const GUEST_NIC_ADDR: &str = "10.0.2.2";
+/// Longest office request.
+pub const MAX_OFFICE_LINE: usize = 128 * 1024;
 
 /// Longest JSON line either side accepts.
 pub const MAX_LINE: usize = 256 * 1024;
@@ -56,6 +63,20 @@ pub struct GuestSpec {
     pub ca_pem: String,
     /// Ask the host before every exec of the workload.
     pub supervise_exec: bool,
+    /// Host → guest vsock ports forwarded to local TCP ports, for a firm's
+    /// facilities. Only the host may connect.
+    #[serde(default)]
+    pub forwards: Vec<Forward>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct Forward {
+    pub vsock_port: u32,
+    pub tcp_port: u16,
+    /// Connect to the guest's own NIC address instead of loopback: services
+    /// such as a Kubernetes load balancer only answer there.
+    #[serde(default)]
+    pub nic: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1591,6 +1591,7 @@ dependencies = [
  "libc",
  "rand",
  "rcgen",
+ "ring",
  "rustls",
  "serde",
  "serde_json",
@@ -1615,6 +1616,7 @@ dependencies = [
  "libc",
  "serde",
  "serde_json",
+ "serde_yaml",
  "ureq",
  "zapper-policy",
 ]

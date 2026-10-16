@@ -4,15 +4,14 @@
 //! standard query, class IN, a well-formed host name. Answers are never made
 //! up, in either direction:
 //!
-//! - a name the policy allows is looked up on the host; a name that doesn't
-//!   exist gets NXDOMAIN, one that does gets a synthetic address from
-//!   198.18.0.0/15 standing for it, so connections are still decided by name;
-//! - a name the policy asks about waits for an operator's answer, then is
-//!   treated as allowed or refused;
+//! - a name some request could reach, allowed outright or after an `ask`, is
+//!   looked up on the host; a name that doesn't exist gets NXDOMAIN, one
+//!   that does gets a synthetic address from 198.18.0.0/15 standing for it,
+//!   so connections are still decided by name;
 //! - any other name gets REFUSED.
 //!
-//! Names are only looked up once a connection to them would be allowed, so
-//! queries can't carry data out through the host's resolver.
+//! `ask` decides access, not resolution. A broad `ask` (`*`, or an ask
+//! default) therefore lets queries for any name reach the host's resolver.
 
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
@@ -41,10 +40,6 @@ pub struct FakeDns {
     by_ip: HashMap<Ipv4Addr, String>,
     /// Whether looked-up names exist, and when that was found out.
     exists: HashMap<String, (bool, Instant)>,
-    /// Operators' answers about resolving names, and when they were given.
-    decisions: HashMap<String, (bool, Instant)>,
-    /// Names waiting for an operator's answer.
-    asking: std::collections::HashSet<String>,
 }
 
 impl FakeDns {
@@ -68,20 +63,6 @@ impl FakeDns {
 
     pub fn cached(&self, name: &str) -> Option<bool> {
         self.exists.get(name).filter(|(_, at)| at.elapsed() < CACHE_TTL).map(|(e, _)| *e)
-    }
-
-    pub fn decided(&self, name: &str) -> Option<bool> {
-        self.decisions.get(name).filter(|(_, at)| at.elapsed() < CACHE_TTL).map(|(a, _)| *a)
-    }
-
-    /// Marks `name` as waiting for an answer; false if it already was.
-    pub fn start_asking(&mut self, name: &str) -> bool {
-        self.asking.insert(name.to_string())
-    }
-
-    pub fn decide(&mut self, name: &str, answer: bool) {
-        self.asking.remove(name);
-        self.decisions.insert(name.to_string(), (answer, Instant::now()));
     }
 
     pub fn remember(&mut self, name: &str, exists: bool) {

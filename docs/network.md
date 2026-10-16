@@ -4,7 +4,7 @@
 
 ## Overview
 
-A session reaches the network in one of two modes, set per profile with `engine.network`:
+A session (an office worker, a firm's cluster, or a plain `zapper run` session) reaches the network in one of two modes, set per profile with `engine.network`. The example firm's profiles use `nic`.
 
 | Mode | The guest has | Which programs get out | Host needs |
 |---|---|---|---|
@@ -13,7 +13,7 @@ A session reaches the network in one of two modes, set per profile with `engine.
 
 Every session needs unprivileged user namespaces on the host, because the VMM runs confined in its own namespaces ([security](security.md#the-vmm)). In vsock mode the VMM's network namespace is empty.
 
-In both modes, each connection is decided by the session's `net` rules on the host ([policy](policy.md)). Allowed connections are made by the host.
+In both modes, each connection is decided by the session's `net` rules on the host ([policy](policy.md)). Allowed connections are made by the host. In a firm, a connection that hits an `ask` rule is refused at once and becomes an access request for the security officers ([office](office.md#deciding-requests)).
 
 ## How it works
 
@@ -44,19 +44,18 @@ A valid name is then answered by policy. Answers are never made up:
 
 | The policy for the name | Answer |
 |---|---|
-| Some request to it would be allowed | The host looks the name up. If it doesn't exist: NXDOMAIN. If it does: an address from `198.18.0.0/15` that stands for the name within the session |
-| Requests to it can only be asked about | The query waits for an approval ("resolve NAME"); then as allowed, or REFUSED. Retries while waiting get SERVFAIL; the answer is kept for a minute |
+| Some request to it could be allowed, outright or after an `ask` | The host looks the name up. If it doesn't exist: NXDOMAIN. If it does: an address from `198.18.0.0/15` that stands for the name within the session |
 | Nothing could allow it | REFUSED |
 
-"Some request" counts every port, method and path. The rules are taken in evaluation order: final rules from the global layer down, then the layers, then the default. A matching `allow` rule makes the name reachable, even if it only covers some ports or requests. A matching rule that covers all requests (no `ports`, `methods` or `path`) settles the rest, so `deny host: x` stops the search, while `deny host: x, path: /admin/**` doesn't. In short: if a session can reach a name in any way, the name resolves.
+"Some request" counts every port, method and path. The rules are taken in evaluation order: final rules from the global layer down, then the layers, then the default. A matching `allow` rule makes the name reachable, even if it only covers some ports or requests. A matching rule that covers all requests (no `ports`, `methods` or `path`) settles the rest, so `deny host: x` stops the search, while `deny host: x, path: /admin/**` doesn't. In short: if a session can reach a name in any way, the name resolves. `ask` decides access, not resolution, so a name under an `ask` rule resolves without a prompt, and the approval comes when the session connects.
 
-Names are only looked up on the host once a connection to them would be allowed, so queries can't carry data out through the host's resolver before anyone approves them. Lookups are cached for a minute, with at most 8 at once per session. AAAA and other query types for existing names get an empty answer, so clients use IPv4. Each A query, refusal and rejection is a `dns` event with its response code and reason.
-
-Approving "resolve NAME" allows the lookup only; the connection that follows is decided, and asked about, on its own. Answering "the rest of the session" adds a rule that covers both.
+Names are looked up on the host's resolver, so a query for a name the rules cover leaves the host. With a narrow rule (`*.wikipedia.org`) that only reaches the domain's own DNS servers. With a broad `allow` or `ask` (`host: "*"`, or an `allow` or `ask` default), any name a session makes up reaches the resolver, and a program can encode data in names (`data.attacker.example`) without connecting anywhere. Keep broad rules out of profiles for untrusted sessions. Lookups are cached for a minute, with at most 8 at once per session. AAAA and other query types for existing names get an empty answer, so clients use IPv4. Each A query, refusal and rejection is a `dns` event with its response code and reason.
 
 ### Connections
 
 When the guest connects to one of these synthetic addresses, the daemon knows which name it stands for and decides on that name and the port. This works for any TCP protocol, such as HTTPS, SSH, git or a database. A connection to any other address is decided on the address itself.
+
+A firm's own service names (`git.`, `cluster.` and `apps.` under its domain) resolve the same way, but are never looked up on the host: the daemon routes connections to them to the firm's facilities itself ([office](office.md#names-and-who-reaches-what)).
 
 For an allowed connection, the daemon:
 
@@ -90,8 +89,8 @@ Rules name hosts and ports. These are examples for a profile's `policy.net`:
 - { action: allow, host: github.com, ports: [22] }                     # git over SSH
 - { action: allow, host: "*.githubusercontent.com", ports: [443] }     # raw files, passed through
 - { action: allow, host: pypi.org, ports: [443], methods: [GET] }      # inspected: GET only
-- { action: allow, host: db.lab.internal, ports: [5432] }              # needs the lab range in private_networks
-- { action: ask, host: "*" }                                            # anything else waits for approval
+- { action: allow, host: db.corp.example, ports: [5432] }              # needs its private range in private_networks
+- { action: ask, host: "*" }                                            # anything else: an approval, or in a firm an access request
 ```
 
 To see what a session does and why:

@@ -4,12 +4,14 @@
 
 ## Overview
 
+The Office runs on zapper: each worker, and each firm's cluster, is a zapper session. This page describes zapper's parts and a session's life; the parts the office adds to the daemon are under [the office](#the-office).
+
 Terms used on this page:
 
 - **Host**: your machine, where zapper runs.
-- **Session**: one sandbox. Each session is one small virtual machine.
+- **Session**: one sandbox. Each session is one small virtual machine; each office worker is one.
 - **Guest**: the inside of that virtual machine.
-- **Workload**: the program you run in the guest, such as Claude Code or a shell.
+- **Workload**: the program that runs in the guest, such as a worker's Claude Code, or a shell.
 
 ```
             HOST                                        GUEST (one per session)
@@ -22,7 +24,7 @@ Terms used on this page:
  │                        │          │            │                              │
  └────────────────────────┼─────────┘            │ workload (uid 1000)          │
                           ▼                       └──────────────────────────────┘
-                   internet, lab
+                   internet
 ```
 
 zapper has four parts:
@@ -40,16 +42,16 @@ All decisions are made in the daemon. The agent in the guest asks; it doesn't de
 
 ### Starting a session
 
-What happens after `zapper run`:
+What happens when a session starts, for each worker at `zapper firm up` or for `zapper run`:
 
-1. The CLI asks the daemon for a new session with a profile.
+1. The daemon is asked for a new session with a profile: by `firm up` for each worker and facility, or by the CLI.
 2. The daemon gives the session a directory, `state/sessions/<id>/`.
-3. It gives the session its own copy of the image, which becomes the guest's system disk. Folders you mount, like your project, are copied into disks of their own: the guest works on that copy, and `zapper cp` brings results back.
+3. It gives the session its own copy of the image, which becomes the guest's system disk. Folders the profile mounts are copied into disks of their own: the guest works on that copy, and `zapper cp` brings results back.
 4. It starts Firecracker through `zapper __vmm`, which hides the rest of the host from it ([security](security.md#the-vmm)).
 5. The guest boots. Its first process is `zapper-agent`.
 6. The agent connects to the daemon and receives the setup: user, environment, files, disks.
 7. The agent sets up the guest and reports ready. This takes about a second.
-8. The CLI opens a terminal to the workload.
+8. A terminal is opened to the workload: for a worker, by the foreman, which starts Claude Code headless in it ([the office](#the-office)); for `zapper run`, by the CLI.
 
 When the workload exits, the daemon stops the VM and deletes its disks. The audit log and the terminal recordings stay.
 
@@ -79,7 +81,7 @@ The guest and the daemon use vsock, a direct channel between a VM and its host. 
 
 The daemon accepts one control connection per session. After that the socket is removed, so a workload can't pretend to be the agent.
 
-The CLI talks to the daemon over a unix socket that only your user can open. The web UI, for watching and answering approvals, uses `127.0.0.1:7878`. Both are described on the [API](api.md) page.
+The CLI talks to the daemon over a unix socket that only your user can open. The web UI, for watching firms and sessions, the board's writes and answering approvals, uses `127.0.0.1:7878`. Both are described on the [API](api.md) page.
 
 ### Checking each program
 
@@ -96,13 +98,29 @@ If the very first command is refused, the agent prints why and exits with code 1
 
 `zapper-agent` doesn't live in the image. The daemon packs it into a small boot file (an initramfs) each time it starts. So any Linux image works without changes, and the agent always matches the daemon's version.
 
+### The office
+
+A firm's workers are sessions with a link to their firm's run ([office](office.md)). The daemon adds to them:
+
+| Part | Where | Job |
+|---|---|---|
+| Post office | daemon (`office/mail.rs`) | Mail, threads, who owes whom an answer, follow-ups; bodies in the run's journal |
+| Foreman | daemon (`office/foreman.rs`), one per worker | Runs `claude -p --input-format stream-json` in the worker's VM over a terminal channel, writes wake prompts, ends a turn on `result`, records the transcript |
+| Office port | vsock port 1100 of each worker VM | One JSON request and response per connection; the sender is the VM it comes from |
+| `office` | in the guest: `zapper-agent office mcp` | The MCP server Claude Code loads, offering the role's tools; also a command line |
+| Shared drive | daemon (`office/drive.rs`) | Copies published files out of the VM over a system terminal, by content hash |
+| Security | daemon (`office/security.rs`) | Access requests from `ask` rules, officers' decisions as rules at the worker's or role's layer, digests |
+| Facilities | daemon (`office/facility.rs`) | The firm's git repository (`git http-backend`), its cluster VM (k3s), the product port; the proxy routes the firm's names to them |
+
+The cluster VM's agent forwards host vsock connections on ports 6443, 80 and 443 to k3s; only the host may connect.
+
 ## Configuration
 
 See [configuration](configuration.md) and [policy](policy.md).
 
 ## Verification
 
-`make test` checks the rules and the protocols without starting VMs. `make test-e2e` starts real sessions and checks each part ([testing](testing.md)).
+`make test` checks the rules and the protocols without starting VMs. `make test-e2e` starts real sessions and checks each part, then firms ([testing](testing.md)).
 
 ## Limitations
 

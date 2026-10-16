@@ -26,7 +26,7 @@ use super::{spec, Daemon, EventBody, Remember};
 
 type D = State<Arc<Daemon>>;
 
-pub struct ApiError(StatusCode, String);
+pub struct ApiError(pub StatusCode, pub String);
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
@@ -83,6 +83,7 @@ fn read_routes() -> Router<Arc<Daemon>> {
         .route("/sessions/{id}/terminals/{n}/stream", get(terminal_stream))
         .route("/events", get(events))
         .route("/approvals", get(list_approvals))
+        .merge(super::office::http::read_routes())
 }
 
 pub fn api(daemon: Arc<Daemon>) -> Router {
@@ -98,7 +99,9 @@ pub fn api(daemon: Arc<Daemon>) -> Router {
         .route("/sessions/{id}/stop", post(stop_session))
         .route("/sessions/{id}/attach", get(attach))
         .route("/evaluate", post(evaluate))
-        .route("/approvals/{id}", post(answer));
+        .route("/approvals/{id}", post(answer))
+        .merge(super::office::http::board_routes())
+        .merge(super::office::http::api_routes());
     Router::new().nest("/v1", read_routes().merge(write)).with_state(daemon)
 }
 
@@ -106,10 +109,12 @@ pub fn api(daemon: Arc<Daemon>) -> Router {
 pub fn ui(daemon: Arc<Daemon>, port: u16) -> Router {
     Router::new()
         .route("/", get(super::ui::index))
+        .route("/sessions", get(super::ui::sessions))
+        .route("/favicon.ico", get(super::ui::favicon))
         .route("/terminal", get(super::ui::terminal))
         .route("/assets/xterm.js", get(super::ui::xterm_js))
         .route("/assets/xterm.css", get(super::ui::xterm_css))
-        .nest("/api", read_routes().route("/approvals/{id}", post(answer)))
+        .nest("/api", read_routes().route("/approvals/{id}", post(answer)).merge(super::office::http::board_routes()))
         .layer(middleware::from_fn_with_state((daemon.clone(), port), ui_guard))
         .with_state(daemon)
 }
@@ -152,7 +157,10 @@ async fn ui_guard(State((d, port)): State<(Arc<Daemon>, u16)>, req: Request, nex
     }
     let mut resp = next.run(req).await;
     let h = resp.headers_mut();
-    h.insert("content-security-policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'".parse().unwrap());
+    // Published files carry a stricter, sandboxing policy of their own.
+    if !h.contains_key("content-security-policy") {
+        h.insert("content-security-policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'".parse().unwrap());
+    }
     h.insert("x-content-type-options", "nosniff".parse().unwrap());
     h.insert("referrer-policy", "no-referrer".parse().unwrap());
     resp
@@ -250,6 +258,11 @@ async fn list_rules(State(d): D, Query(q): Query<ScopeQuery>) -> R<Json<Vec<Valu
     for (id, s) in d.sessions.read().unwrap().iter() {
         layers.push((Scope::Session(id.clone()), s.policy.read().unwrap().clone()));
     }
+    for run in d.office.runs.read().unwrap().values() {
+        for (role, p) in &run.roles {
+            layers.push((Scope::Role(format!("{}/{role}", run.firm)), p.read().unwrap().clone()));
+        }
+    }
     for (scope, policy) in layers {
         if filter.as_ref().is_some_and(|f| *f != scope) {
             continue;
@@ -292,6 +305,14 @@ async fn add_rule(State(d): D, body: String) -> R<Json<Value>> {
 }
 
 async fn delete_rule(State(d): D, Path(id): Path<String>) -> R<Json<Value>> {
+    // An officer's standing approval: revoked, so the firm's records agree.
+    let runs: Vec<_> = d.office.runs.read().unwrap().values().cloned().collect();
+    for run in runs {
+        if run.security.lock().unwrap().standing.contains_key(&id) {
+            super::office::security::revoke(&run, zapper_policy::BOARD, &id, "removed by the operator")?;
+            return Ok(Json(json!({ "id": id, "revoked": true })));
+        }
+    }
     if id.starts_with("s-") {
         for s in d.sessions.read().unwrap().values() {
             if let Some(r) = s.policy.write().unwrap().remove(&id) {
@@ -437,7 +458,7 @@ async fn create_session(State(d): D, body: String) -> R<Json<session::SessionInf
     for r in req.rules {
         policy.insert(r, None);
     }
-    let s = session::create(d.clone(), NewSession { profile: req.profile, workdir: req.workdir, policy }).await?;
+    let s = session::create(d.clone(), NewSession::plain(req.profile, req.workdir, policy)).await?;
     Ok(Json(s.info()))
 }
 

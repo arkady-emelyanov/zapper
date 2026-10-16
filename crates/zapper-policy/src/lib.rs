@@ -9,10 +9,12 @@
 
 mod config;
 mod eval;
+mod firm;
 mod template;
 pub mod names;
 pub mod proto;
 
 pub use config::*;
 pub use eval::*;
+pub use firm::*;
 pub use template::*;

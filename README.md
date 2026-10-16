@@ -1,42 +1,36 @@
-# zapper
+# The Office
 
-zapper runs programs in Firecracker microVMs and controls what they can reach. Typical programs are a coding agent, an interview candidate's shell, or a student's language sandbox. Each session gets a disposable Linux VM with a network card. zapper captures the VM's traffic on the host, checks each connection, DNS query and exec against layered rules, and records it all. Tokens can be added to requests by the host, so the program uses them without holding them, or given to the program when it has to hold them itself.
+The Office runs a firm of AI workers on your machine. A firm is an org chart: a CEO, a product manager, managers, engineers, researchers, analysts and security officers, each a Claude Code instance in its own Firecracker microVM. You are the board: you start an idle firm and give the CEO a task. Workers mail each other, wake when mail arrives, publish their work to a shared drive, push to the firm's git repository and deploy to the firm's own k3s cluster. Security officers watch the firm's traffic and decide access requests. Every run is journaled on disk and can be replayed.
 
 > [!TIP]
-> If you use a coding agent, point it at [AGENTS.md](AGENTS.md) and it will set zapper up. Operating a running daemon is covered by the [zapper skill](skills/zapper/SKILL.md).
+> If you use a coding agent, point it at [AGENTS.md](AGENTS.md) and it will set The Office up. Operating a running daemon is covered by the [zapper skill](skills/zapper/SKILL.md).
 
-## Use cases
+## What you see
 
-- **Coding agents.** Claude Code runs with `bypassPermissions` inside a VM. The host adds its API token to requests to `api.anthropic.com`, so the agent can use the token but can't read it. You choose the hosts it reaches, for example read-only GitHub, and you see every command it runs.
-- **Interviews.** A candidate gets a shell for two hours, with access to the lab services you allow and the credentials you issue. Afterwards you can replay their terminal.
-- **Study sandboxes.** A Python or Rust environment that reaches its package index, with a time limit.
+The web UI opens on the firm:
 
-zapper is a poor fit for GPU work inside the VM, because Firecracker can't pass devices through. Reach a GPU cluster through its API instead. It also doesn't run desktops, Windows guests or long-lived servers.
+- **Overview**: the org chart with an animated avatar per worker (idle, working, waiting, queued, reviewing an access request), envelopes moving along the chart as mail is sent, and a side panel per worker to write to it as the board, see its desk and follow its current turn.
+- **Messages**: every thread in the firm, the board's inbox, and the delegation tree of each request from the board.
+- **Security**: standing approvals, every access decision with the officer's reason, escalations waiting for the board, and the firm's traffic.
+- **Shared drive**: published documents, reports, decks, board packs, datasets and code.
+- **Statistics**: activity, turns and tokens against the budget, mail, output and security, per worker and for the firm.
+- **VMs**: every running VM, with its size and usage, read-only terminals and each worker's Claude transcript.
+- **Runs**: past runs open in replay, with a timeline to play, pause and scrub.
 
-## How it works
-
-- Each session is a small Linux virtual machine (Firecracker).
-- Your program runs inside it as a normal user.
-- The VM gets a copy of your project folder, not the folder itself.
-- All its network traffic goes through zapper on the host.
-- zapper checks each connection and each started program against your rules.
-- Rules say allow, deny, or ask you first.
-- Tokens can be added by the host on the way out, so the program never sees them.
-- Everything the session does is logged, and terminals are recorded.
-- You manage it with the `zapper` command. A local web page shows what's happening and lets you answer approvals.
-- Rule changes apply at once; `zapper config save` keeps them.
-
-More: [architecture](docs/architecture.md), [network](docs/network.md), [policy](docs/policy.md), [security](docs/security.md).
+The product the engineers deploy is served on a local port; until they deploy one, the cluster serves a landing page about the firm. The cluster's Kubernetes dashboard is on another local port. [docs/office.md](docs/office.md) describes all of it.
 
 ## Quickstart
 
-On a Linux host with KVM:
+On a Linux host with KVM, from a fresh clone (The Office uses `config/zapper.yaml` there, which defines the example firm `acme`):
 
 ```
 make deps                     # Firecracker and a guest kernel into ~/.local/share/zapper (~1 min)
 make install                  # zapper and zapper-agent into ~/.local/bin
-zapper init                   # ~/.config/zapper/zapper.yaml from the example
-make image                    # base Ubuntu image (~2 min); `make image IMAGE=claude` for Claude Code
+make image                    # base Ubuntu image (~2 min)
+make image IMAGE=office       # the workers' image: Claude Code (pinned), git, kubectl, podman (~5 min)
+make image IMAGE=k3s          # the firm's cluster (~2 min)
+make kernel KERNEL=k8s        # the cluster's kernel (~10 min)
+claude setup-token            # on the host; save the token 0600 in ~/.config/zapper/claude-token
 zapper check                  # each line "ok", or the command that fixes it
 zapper serve                  # the daemon; prints the UI URL
 ```
@@ -44,24 +38,50 @@ zapper serve                  # the daemon; prints the UI URL
 In another terminal:
 
 ```
-cd ~/some/project
-zapper run                    # a shell in a VM on a copy of this directory, ready in about a second
-zapper run -p claude          # Claude Code, with its token added by the host
-zapper events                 # live connections, DNS queries, execs, exits and approvals
-zapper rule add profile:claude '{kind: net, action: allow, host: pypi.org, methods: [GET]}'
-zapper config diff            # the unsaved change; `zapper config save` keeps it
+zapper firm up acme           # boots the cluster, then seven idle workers
+zapper mail send acme --to barbara --kind assignment --subject "First product" --body "…"
+zapper firm journal acme -f   # mail, states, turns, access requests, publishes
+zapper firm down acme         # ends the run; it stays on disk for replay
 ```
 
-The [quickstart](docs/quickstart.md) walks through this step by step. [docs/commands.md](docs/commands.md) lists every command, and [docs/README.md](docs/README.md) indexes the documentation.
+Or open the UI, click the CEO and write the first task there. Workers use your Claude subscription; `budget` in the config limits turns per day. The [quickstart](docs/quickstart.md) walks through this step by step, [docs/commands.md](docs/commands.md) lists every command, and [docs/README.md](docs/README.md) indexes the documentation.
+
+Local endpoints, all on loopback only:
+
+| Address | What | Set by |
+|---|---|---|
+| `http://127.0.0.1:7878/?token=…` | The web UI: the office (org chart, messages, security, shared drive, statistics, VMs, replay). `zapper serve` prints the full URL with its token and writes it to `state/ui-url` | `daemon.ui` |
+| `http://127.0.0.1:7878/sessions` | The sessions view: sessions, network, terminals, approvals | `daemon.ui` |
+| `http://127.0.0.1:8080/` | The firm's product: the cluster's ingress (the landing page until the engineers deploy) | `firms.<firm>.product_port` |
+| `http://127.0.0.1:8081/` | The cluster's Kubernetes dashboard (Headlamp); the UI has the sign-in token | `firms.<firm>.dashboard_port` |
+| `$XDG_RUNTIME_DIR/zapper/api.sock` | The REST API for the CLI ([API](docs/api.md)) | `$ZAPPER_SOCKET` |
 
 ## Status
 
-zapper is early software that works end to end. `make test-e2e` boots real VMs and checks each control from inside the guest, including attempts to get around the controls as root. [docs/security.md](docs/security.md) lists the known limitations.
+The Office is early software that works end to end. `make test-e2e` boots real VMs, checks each control from inside the guest, including attempts to get around the controls as root, and then runs firms of real VMs with a fake Claude. A firm with real Claude Code has delegated, published and reported back. [docs/office.md](docs/office.md#limitations) and [docs/security.md](docs/security.md#limitations) list the known limitations.
+
+## Built on zapper
+
+The office runs on zapper, which is the daemon, the `zapper` CLI and the sandbox each worker runs in:
+
+- Each worker is a zapper session: a small Linux VM (Firecracker), started through a shim that confines the VMM in its own namespaces.
+- Claude Code runs inside it as a normal user, with `bypassPermissions`.
+- All the VM's network traffic is captured outside it and goes through zapper on the host. zapper answers its DNS, checks each connection against layered rules (session → profile → global), and makes allowed connections itself.
+- Rules say allow, deny, or ask. In a firm, an `ask` becomes an access request for the security officers.
+- The Claude token stays on the host: zapper adds it to requests to `api.anthropic.com`, so workers use it but can't read it.
+- Each program a worker starts is checked by the host before it runs.
+- Everything a session does is logged, and terminals are recorded.
+- Rule changes apply at once, also to running workers; `zapper config save` keeps them.
+
+The same sessions can be started on their own (`zapper run`), to check the setup or to debug a profile. Firecracker can't pass devices through, so there is no GPU work inside the VMs.
+
+More: [architecture](docs/architecture.md), [network](docs/network.md), [policy](docs/policy.md), [security](docs/security.md).
 
 ## Next
 
-1. **Network rate and volume limits** per session: bandwidth and packet rate on the NIC, using Firecracker's rate limiter, and byte counts per destination and per session in the proxy, with an event when a limit is hit.
-2. **UDP egress** where a rule allows it, for QUIC and NTP.
+1. **Resuming a firm's run** after a daemon restart, with persistent worker disks and conversations.
+2. **Network rate and volume limits** per session: bandwidth and packet rate on the NIC, using Firecracker's rate limiter, and byte counts per destination and per session in the proxy, with an event when a limit is hit.
+3. **UDP egress** where a rule allows it, for QUIC and NTP.
 
 ## License
 

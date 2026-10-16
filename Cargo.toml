@@ -16,5 +16,6 @@ globset = "0.4"
 thiserror = "2"
 
 [profile.release]
-lto = true
+# Thin LTO: most of fat LTO's benefit in a quarter of the build time.
+lto = "thin"
 strip = true

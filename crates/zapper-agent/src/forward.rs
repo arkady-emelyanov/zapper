@@ -25,6 +25,28 @@ pub fn start() -> io::Result<()> {
     Ok(())
 }
 
+/// Forwards host connections on vsock ports to local TCP ports, for a firm's
+/// facilities. Only the host (CID 2) may connect.
+pub fn inbound(forwards: &[zapper_policy::proto::Forward]) -> io::Result<()> {
+    for f in forwards {
+        let listener = sys::VsockListener::bind(f.vsock_port)?;
+        let tcp = f.tcp_port;
+        let host = if f.nic { zapper_policy::proto::GUEST_NIC_ADDR } else { "127.0.0.1" };
+        thread::spawn(move || loop {
+            let Ok((conn, cid)) = listener.accept() else { continue };
+            if cid != HOST_CID {
+                continue;
+            }
+            thread::spawn(move || {
+                if let Ok(local) = TcpStream::connect((host, tcp)) {
+                    splice(local, conn);
+                }
+            });
+        });
+    }
+    Ok(())
+}
+
 fn splice(conn: TcpStream, upstream: std::fs::File) {
     let (Ok(mut conn_r), Ok(mut up_w)) = (conn.try_clone(), upstream.try_clone()) else { return };
     let (mut conn_w, mut up_r) = (conn, upstream);

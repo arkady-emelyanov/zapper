@@ -21,6 +21,9 @@ pub struct Config {
     pub policy: Policy,
     #[serde(default)]
     pub profiles: BTreeMap<String, Profile>,
+    /// Org charts of workers run by the office layer.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub firms: BTreeMap<String, crate::Firm>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -150,11 +153,50 @@ impl SecretSource {
     }
 }
 
+/// Parses `4GiB`, `512MiB`, `1G`, or plain bytes.
+pub fn parse_size(s: &str) -> Result<u64> {
+    let s = s.trim();
+    let split = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
+    let (num, unit) = s.split_at(split);
+    let n: u64 = num.parse().with_context(|| format!("size {s:?}"))?;
+    let mult = match unit.trim().to_ascii_lowercase().as_str() {
+        "" | "b" => 1,
+        "k" | "kb" | "kib" => 1 << 10,
+        "m" | "mb" | "mib" => 1 << 20,
+        "g" | "gb" | "gib" => 1 << 30,
+        "t" | "tb" | "tib" => 1 << 40,
+        _ => bail!("size {s:?}: unknown unit"),
+    };
+    Ok(n * mult)
+}
+
 /// Expands a leading `~/` to `$HOME`.
+/// Where relative paths in the config are resolved: the config file's
+/// directory, set once when the config is found.
+static CONFIG_DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+pub fn set_config_dir(dir: &std::path::Path) {
+    let _ = CONFIG_DIR.set(dir.to_path_buf());
+}
+
+/// Expands a leading `~/` to `$HOME`, and resolves a relative path against
+/// the config file's directory, so a config never needs an absolute path.
 pub fn expand_home(path: &str) -> String {
     match (path.strip_prefix("~/"), std::env::var("HOME")) {
         (Some(rest), Ok(home)) => format!("{home}/{rest}"),
+        _ if !path.is_empty() && !path.starts_with('/') && !path.starts_with('~') => match CONFIG_DIR.get() {
+            Some(dir) => dir.join(path).to_string_lossy().into_owned(),
+            None => path.to_string(),
+        },
         _ => path.to_string(),
+    }
+}
+
+impl Config {
+    /// Whether the config holds secret values itself (`value:`), so the file
+    /// must not be readable by others.
+    pub fn has_inline_secrets(&self) -> bool {
+        self.secrets.values().any(|s| matches!(s.source, SecretSource::Value { .. }))
     }
 }
 
@@ -471,6 +513,8 @@ pub struct ResolvedProfile {
 pub enum Scope {
     Global,
     Profile(String),
+    /// Standing approvals for one role of a running firm (`firm/role`).
+    Role(String),
     Session(String),
 }
 
@@ -479,6 +523,7 @@ impl fmt::Display for Scope {
         match self {
             Scope::Global => f.write_str("global"),
             Scope::Profile(p) => write!(f, "profile:{p}"),
+            Scope::Role(r) => write!(f, "role:{r}"),
             Scope::Session(s) => write!(f, "session:{s}"),
         }
     }
@@ -491,7 +536,8 @@ impl std::str::FromStr for Scope {
             None if s == "global" => Ok(Scope::Global),
             Some(("profile", p)) if !p.is_empty() => Ok(Scope::Profile(p.into())),
             Some(("session", id)) if !id.is_empty() => Ok(Scope::Session(id.into())),
-            _ => bail!("invalid scope {s:?}: expected global, profile:NAME or session:ID"),
+            Some(("role", r)) if !r.is_empty() => Ok(Scope::Role(r.into())),
+            _ => bail!("invalid scope {s:?}: expected global, profile:NAME, role:FIRM/ROLE or session:ID"),
         }
     }
 }
@@ -656,7 +702,7 @@ impl Config {
         match scope {
             Scope::Global => Some(&self.policy),
             Scope::Profile(name) => self.profiles.get(name).map(|p| &p.policy),
-            Scope::Session(_) => None,
+            Scope::Role(_) | Scope::Session(_) => None,
         }
     }
 
@@ -664,7 +710,7 @@ impl Config {
         match scope {
             Scope::Global => Some(&mut self.policy),
             Scope::Profile(name) => self.profiles.get_mut(name).map(|p| &mut p.policy),
-            Scope::Session(_) => None,
+            Scope::Role(_) | Scope::Session(_) => None,
         }
     }
 
@@ -708,6 +754,9 @@ impl Config {
             if let Err(e) = self.resolve(name) {
                 errors.push(format!("profile {name}: {e:#}"));
             }
+        }
+        for (name, firm) in &self.firms {
+            errors.extend(firm.validate(name, self));
         }
         if errors.is_empty() {
             Ok(())
@@ -764,5 +813,17 @@ pub fn merge(base: &mut Value, over: &Value) {
             }
         }
         (b, o) => *b = o.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn relative_paths_resolve_against_the_config() {
+        super::set_config_dir(std::path::Path::new("/repo/config"));
+        assert_eq!(super::expand_home("skills"), "/repo/config/skills");
+        assert_eq!(super::expand_home("/abs/x"), "/abs/x");
+        let home = std::env::var("HOME").unwrap();
+        assert_eq!(super::expand_home("~/.local/x"), format!("{home}/.local/x"));
     }
 }

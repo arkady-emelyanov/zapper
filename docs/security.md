@@ -4,14 +4,14 @@
 
 ## Overview
 
-zapper assumes that whatever runs in a session may be hostile, up to a person with a root shell in the guest. The agent inside the guest is treated the same way. Controls that have to hold are enforced on the host. Controls enforced inside the guest are listed separately, as guardrails.
+Each office worker runs in a zapper session, and zapper assumes that whatever runs in a session may be hostile, up to a root shell in the guest. The agent inside the guest is treated the same way. Controls that have to hold are enforced on the host. Controls enforced inside the guest are listed separately, as guardrails.
 
 ## Threat model
 
 | | |
 |---|---|
-| Adversary | The session's workload: an agent following injected instructions, or a person trying to break out, possibly with root in the guest. |
-| Assets | The host, where the daemon starts VMs and reads secrets. Other sessions. Networks the host can reach, such as management networks, cloud metadata and the host's own services. The values of `proxy` secrets. |
+| Adversary | The session's workload: a worker's Claude Code following injected instructions, from a web page or another worker's mail, or anything trying to break out, possibly with root in the guest. |
+| Assets | The host, where the daemon starts VMs and reads secrets. Other sessions, including the other workers of a firm. Networks the host can reach, such as management networks, cloud metadata and the host's own services. The values of `proxy` secrets. |
 | Goal | The session can do what its policy grants for as long as it lives. Its actions are recorded on the host. |
 | Out of scope | A malicious operator. Compromise of the host by other means. KVM and Firecracker vulnerabilities, which are handled by keeping them up to date. What a credential grants and for how long: `guest` secrets are given to the workload by design, so the issuer scopes them and sets their expiry. |
 
@@ -21,7 +21,7 @@ zapper assumes that whatever runs in a session may be hostile, up to a person wi
 |---|---|---|
 | The VMM runs in its own user, network and mount namespaces, in a read-only root holding its own files: the session's `vm/` directory, the kernel, the initramfs, its binary and four devices ([the VMM](#the-vmm)) | `zapper __vmm` on the host | Yes |
 | Guest traffic goes through zapper. With a NIC, the VMM runs in a network namespace whose only interfaces are loopback and the guest's tap, and nftables there sends TCP to the daemon and DNS to its resolver and drops the rest. In vsock mode the guest has loopback only ([network](network.md)) | Network namespace and nftables outside the VM; Firecracker's device model | Yes |
-| DNS queries are validated (standard query, one question, class IN, a well-formed name) and rate-limited. Names are looked up on the host only when a connection to them would be allowed, so queries can't carry data out; asked-about names wait for approval, others are refused. Answers are never made up ([network: DNS](network.md#dns)) | Host resolver | Yes |
+| DNS queries are validated (standard query, one question, class IN, a well-formed name) and rate-limited. A name is looked up on the host only if some request to it could be allowed, outright or after an `ask`; others are refused. Answers are never made up. With a broad `allow` or `ask` (`*`, or such a default), any name reaches the host's resolver, so queries could carry data out ([network: DNS](network.md#dns)) | Host resolver | Yes |
 | Host names from the guest (`CONNECT` targets, `Host` headers, TLS server names) are validated before any rule sees them | Host proxy | Yes |
 | Policy for each connection and, when inspected, each request | Host proxy | Yes |
 | Address checks: loopback, link-local, metadata and host addresses are unreachable, private ranges only if listed. The host resolves names and connects to the address it checked | Host proxy | Yes |
@@ -41,6 +41,26 @@ zapper assumes that whatever runs in a session may be hostile, up to a person wi
 | Process exit accounting | Guest kernel (`acct`) | No |
 
 The guest-side controls hold while the workload is unprivileged. A profile with `agent.root: true` gives them up, and the UI marks its sessions. A guest kernel exploit also defeats them. The host-side controls hold in both cases.
+
+## The office
+
+In a firm ([office](office.md)), each worker is a session, so everything above holds for it. The office adds:
+
+| Control | Enforced by | Holds with root in the guest |
+|---|---|---|
+| A worker's office requests come on its VM's own office port; the daemon takes the sender from the VM, never from the request | Host | Yes |
+| Every office request is checked against the worker's role (officer tools) and the chart (assignments only down it); mail is readable only by the thread's participants | Host | Yes |
+| An `ask` in a firm is refused at once and becomes an access request; officers' decisions add rules only at a worker's or role's layer, under `final` rules; the firm's own services, secrets, private networks and global rules stay with the board; an officer can't decide its own request | Host | Yes |
+| The firm's service names are routed by the daemon and never looked up on the host; a VM never reaches another VM or a host address | Host | Yes |
+| Facility ports (the cluster's API and ingress) accept connections from the host's CID only | Guest agent of the cluster VM | No |
+| Published files: the archive from the guest is parsed on the host, keeping regular files with clean relative paths; links and devices are dropped; sizes are bounded | Host | Yes |
+| Published files are served to the UI with their own content type and `Content-Security-Policy: sandbox`; mail and documents are rendered from text | Host, UI | Yes |
+| Bounds on what workers send: request line, body, recipients, attachments, mail per hour and per run, fan-out, thread length, artifact and drive size, pending access requests | Host | Yes |
+| Skills are attached read-only | Guest kernel (read-only disk) | No |
+
+What the office does not defend: workers are free to persuade, mislead or instruct each other through mail and access-request reasons. That is deliberate ([workers manipulating workers](office.md#workers-manipulating-workers)); the controls above are what holds regardless.
+
+Engineers hold real credentials for the firm's services (a cluster-admin kubeconfig and a git password, per run); like any `guest` secret, they can use them anywhere their network rules let them. The UI's writes are wider than before: the board's mail, firm up/down/pause and security decisions, under the same guards as answering approvals.
 
 ## Secrets given to a session can be used by it
 
@@ -66,7 +86,7 @@ From there, the VMM sees none of the daemon user's other files: the config, secr
 
 ## Usage
 
-- Run people and agents you don't trust with `root: false`, the default.
+- Run workers, and anything else you don't trust, with `root: false`, the default.
 - Use `proxy` secrets for bearer tokens and API keys: the workload can use them but can't read them. Use `guest` secrets for credentials the client has to hold, such as S3 signing keys, client certificates and kubeconfigs, and issue them scoped and short-lived.
 - Bind each `proxy` secret to the hosts that need it. A destination that echoes request headers back, such as an echo service, returns the value to the guest; `tests/e2e.sh` shows this with a test secret.
 - Use a `final: true` deny in the global layer for destinations that must stay unreachable from every profile.
@@ -79,7 +99,7 @@ From there, the VMM sees none of the daemon user's other files: the config, secr
 make test-e2e      # ends with "all e2e checks passed"
 ```
 
-`tests/e2e.sh` checks each host-side control. As root in the guest, it tries to get around the NIC capture by using another DNS server, connecting to a real address, and connecting to other ports on the gateway. With `tests/attack.c` as the workload, it tries to:
+`tests/e2e.sh` checks each host-side control, and `tests/e2e-office.sh` the office's: from inside a worker it tries to give its manager an assignment, send as another worker, read another worker's mail, use officer tools, publish a symlink to a host file, and reach the post office from outside a firm; a non-engineer tries the cluster API and git. As root in the guest, it tries to get around the NIC capture by using another DNS server, connecting to a real address, and connecting to other ports on the gateway. With `tests/attack.c` as the workload, it tries to:
 
 - impersonate the agent on the control port
 - open a root shell over vsock loopback and through the guest's own CID
@@ -93,7 +113,7 @@ make test-e2e      # ends with "all e2e checks passed"
 - **The VMM keeps the daemon user's uid.** Its namespaces hide the daemon user's files and the host network from it, but kernel interfaces it keeps (`/dev/kvm`, and `/dev/net/tun` with a NIC) are shared with the host. Running it as a separate uid would need `/etc/subuid` entries, a one-time root step.
 - **The daemon is one process that holds the secrets and runs the proxy.** It parses HTTP, TLS, JSON and frames from the guest with memory-safe libraries, and a bug in that code would be a bug in the boundary.
 - **Rate and volume limits** for network traffic are the next item: see [the README](../README.md#next).
-- **Sessions end when the daemon restarts.** Their audit logs stay on disk.
+- **Sessions end when the daemon restarts.** Their audit logs stay on disk. So does a firm's run, which can be replayed but not resumed.
 
 Network-specific limitations are on the [network](network.md#limitations) page.
 
@@ -101,4 +121,4 @@ Network-specific limitations are on the [network](network.md#limitations) page.
 
 - Firecracker design and threat model: https://github.com/firecracker-microvm/firecracker/blob/main/docs/design.md
 - seccomp user notification and its TOCTOU caveat: `man 2 seccomp_unotify`
-- Sources: `crates/zapper/src/vmm.rs`, `crates/zapper/src/netns.rs`, `crates/zapper/src/daemon/{proxy,dns,nic,addr,session,tls}.rs`, `crates/zapper-agent/src/{shell,sys,init}.rs`
+- Sources: `crates/zapper/src/vmm.rs`, `crates/zapper/src/netns.rs`, `crates/zapper/src/daemon/{proxy,dns,nic,addr,session,tls}.rs`, `crates/zapper/src/daemon/office/`, `crates/zapper-agent/src/{shell,sys,init,office,forward}.rs`

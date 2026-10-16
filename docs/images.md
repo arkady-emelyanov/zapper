@@ -4,7 +4,7 @@
 
 ## Overview
 
-An image is an ext4 file built from a container image's filesystem. A profile selects one with `engine.image`, and each session boots its own copy. A kernel is an uncompressed `vmlinux`, selected with `engine.kernel`. The guest agent comes from an initramfs that the daemon builds when it starts, so images don't need it.
+An image is an ext4 file built from a container image's filesystem. A profile selects one with `engine.image`, and each session boots its own copy. A kernel is an uncompressed `vmlinux`, selected with `engine.kernel`. The guest agent comes from an initramfs that the daemon builds when it starts, so images don't need it. In the example firm, workers boot the `office` image, and the cluster boots the `k3s` image with the `vmlinux-6.1-k8s` kernel.
 
 ## How it works
 
@@ -20,9 +20,9 @@ The image is sized at its content plus 25% plus 256 MiB, unless `--size` is give
 ## Usage
 
 ```
-make image                                     # ubuntu-24.04 with curl, git and CA certificates (~2 min)
-make image IMAGE=claude                        # the same, plus ripgrep and Claude Code (~3 min)
-make image IMAGE=python                        # python:3.13-slim with curl and git
+make image IMAGE=office                        # office workers: Claude Code (pinned), git, kubectl, podman, Node.js, Python, headless Chromium (~8 min)
+make image IMAGE=k3s                           # a firm's cluster: k3s (pinned) and its air-gap images (~2 min)
+make image                                     # ubuntu-24.04 with curl, git and CA certificates, for the base profiles (~2 min)
 zapper image build rust --from docker.io/library/rust:1-slim --run "apt-get update && apt-get install -y git"
 zapper image ls
 ```
@@ -30,6 +30,10 @@ zapper image ls
 For TLS through inspected connections, an image needs a CA bundle at `/etc/ssl/certs/ca-certificates.crt`, as the `ca-certificates` package provides. The agent adds the session CA to it at boot.
 
 `make deps` downloads the Firecracker CI kernel 6.1 to `kernels/vmlinux-6.1`, with its config alongside. Another kernel works if it has these built in: virtio-mmio block and net, vsock, `IP_PNP`, devtmpfs, ext4, seccomp filters, cgroup2 and BSD process accounting (`CONFIG_BSD_PROCESS_ACCT`).
+
+Firecracker boots the kernel file from the host, not one from the image, and the CI kernel has no loadable modules: what a guest needs must be built in. `make kernel KERNEL=k8s` builds `kernels/vmlinux-6.1-k8s` for a firm's cluster: the same 6.1 source (checked against kernel.org's checksum) and config, with `config/kernel/k8s.config` merged over it (the netfilter matches kube-proxy uses, ipset, nftables, VXLAN, IPVS). It builds in a container in about 10 minutes and fails if an option doesn't survive `olddefconfig`. Another fragment in `config/kernel/` builds another kernel the same way.
+
+Versions are pinned in the Makefile: `CLAUDE_VERSION` for the office image (Claude Code's auto-update is off in sessions, so a run uses the version the image was built with), `KUBECTL_VERSION`, and `K3S_VERSION` with the checksums of k3s and its images. Update by changing them and rebuilding.
 
 ## Verification
 
@@ -46,4 +50,5 @@ zapper run -p default -- cat /etc/os-release   # boots the image
 ## References
 
 - Firecracker CI kernels: https://github.com/firecracker-microvm/firecracker/blob/main/docs/getting-started.md
-- Sources: `crates/zapper/src/image.rs`, `crates/zapper/src/daemon/vm.rs`, `scripts/fetch-deps.sh`
+- k3s air-gap install: https://docs.k3s.io/installation/airgap
+- Sources: `crates/zapper/src/image.rs`, `crates/zapper/src/daemon/vm.rs`, `scripts/fetch-deps.sh`, `scripts/build-kernel.sh`, `config/kernel/`

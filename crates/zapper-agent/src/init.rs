@@ -100,7 +100,18 @@ fn setup(control: &Control, spec: &GuestSpec) -> Result<()> {
         if !d.read_only {
             let _ = fs::remove_dir(Path::new(&d.path).join("lost+found"));
         }
+        // Directories the mount created under the user's home are the user's.
+        let home = Path::new(&spec.home);
+        let mut p = Path::new(&d.path).parent();
+        while let Some(dir) = p {
+            if !dir.starts_with(home) || dir == home {
+                break;
+            }
+            sys::chown(dir, UID, UID);
+            p = dir.parent();
+        }
     }
+    install_self().context("installing zapper-agent in the guest")?;
     for f in &spec.files {
         write_file(&f.path, &f.content, f.mode, f.user_owned).with_context(|| format!("file {}", f.path))?;
     }
@@ -118,6 +129,7 @@ fn setup(control: &Control, spec: &GuestSpec) -> Result<()> {
     if !spec.nic {
         forward::start().context("proxy forwarder")?;
     }
+    forward::inbound(&spec.forwards).context("facility forwards")?;
 
     for (i, cmd) in spec.setup.iter().enumerate() {
         let out = Command::new("/bin/sh")
@@ -138,6 +150,21 @@ fn setup(control: &Control, spec: &GuestSpec) -> Result<()> {
             bail!("setup step {cmd:?} failed with {}", out.status);
         }
     }
+    Ok(())
+}
+
+/// Copies this binary to `/usr/local/bin/zapper-agent`, also as `office`:
+/// firm workers run it as their MCP server and command line.
+fn install_self() -> Result<()> {
+    let to = Path::new("/usr/local/bin/zapper-agent");
+    fs::create_dir_all("/usr/local/bin")?;
+    let _ = fs::remove_file(to);
+    fs::copy("/proc/self/exe", to)?;
+    fs::set_permissions(to, fs::Permissions::from_mode(0o755))?;
+    sys::chown(to, 0, 0);
+    let link = Path::new("/usr/local/bin/office");
+    let _ = fs::remove_file(link);
+    std::os::unix::fs::symlink("zapper-agent", link)?;
     Ok(())
 }
 

@@ -8,6 +8,7 @@
 |---|---|---|---|---|
 | Unit | `make test` | Rust toolchain | seconds | Rule evaluation and layering, final rules, defaults, inspection, DNS answers, config validation and round-trip, rule ids, templates, frame codec, address checks, SNI parsing, certificate minting, sizes |
 | End to end | `make test-e2e` | KVM, network access, user namespaces, the `ubuntu-24.04` image, gcc | ~40 s | Below |
+| Office | `make test-e2e-office` (also run by `make test-e2e`) | The same; for the cluster checks, the `k3s` image and the `k8s` kernel | ~2 min, ~4 with the cluster | [Office: testing](office.md#testing) |
 
 `tests/e2e.sh` starts its own daemon with a temporary config, socket and state directory, separate from any running daemon. It removes the sessions it starts, and deletes its directory when all checks pass, or keeps it when `ZAPPER_E2E_KEEP=1` is set. It ends with `all e2e checks passed`, or with the number of failures and the path of the daemon log.
 
@@ -33,13 +34,14 @@ Before a release, walk through these:
 | Scenario | Expected |
 |---|---|
 | `zapper run`, resize the terminal, run `vim`, press Ctrl-C during a command | Full-screen programs redraw, and Ctrl-C stops the command in the guest |
-| `zapper run -p claude` with a token in place, and ask for a change to a file | Claude makes the change; `zapper events` shows `api.anthropic.com` with `secrets: [claude]` |
 | A raw TCP connection to `github.com:22` from a session that allows it | The SSH banner arrives within a second |
 | Kill the daemon with SIGKILL during a session | Its `firecracker` processes exit, and the next `zapper serve` removes the leftover disks |
 | SIGTERM to the daemon | Each session stops with `daemon shutdown` |
 | A profile with `ttl_secs: 60` | The session stops after a minute with `ttl expired` |
 | Open the UI URL, then the same URL with another `Host` header | The UI loads, and the other host gets 403 |
+| A two-worker firm on real Claude Code (a small model, `budget: { daily_turns: 30 }`), and an assignment to the CEO: "have your engineer write a haiku to /work/haiku.md, publish it and report back" | Within a minute: the CEO delegates by mail, the engineer publishes and reports with `close`, the CEO reports to the board; `zapper drive get` returns the file; `zapper events -s` on a worker's session shows `api.anthropic.com` with `secrets: [claude]` |
+| `zapper firm up acme` with the example firm, then a kickoff from the UI | The org chart animates; workers' avatars follow their states; envelopes fly; the board pack arrives in the board's inbox |
 
 ## References
 
-- Sources: `tests/e2e.sh`, `tests/attack.c`, and the `#[cfg(test)]` modules in each crate
+- Sources: `tests/e2e.sh`, `tests/e2e-office.sh`, `tests/attack.c`, and the `#[cfg(test)]` modules in each crate

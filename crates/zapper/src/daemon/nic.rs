@@ -7,7 +7,7 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{UnixListener, UnixStream};
 
-use zapper_policy::{lookup_allowed, resolvable, Action, AnyRule, Kind, NetRule};
+use zapper_policy::resolvable;
 
 use super::session::Session;
 use super::{dns, proxy, spec, Daemon, EventBody};
@@ -93,49 +93,21 @@ async fn query_dns(d: &Arc<Daemon>, s: &Arc<Session>, query: &[u8]) -> Option<Ve
     if !s.dns_rate.lock().unwrap().take() {
         return Some(dns::respond(query, Some(&q), dns::SERVFAIL, None));
     }
-    let (lookup, could_ask) = {
+    // `ask` decides access, not resolution: a name some request could reach,
+    // with or without an approval, is looked up.
+    let reachable = {
         let c = d.config.read().unwrap();
         let layers = s.layers(&c);
-        let layers = spec::layers_of(&layers);
-        (lookup_allowed(&layers, &q.name), resolvable(&layers, &q.name))
+        resolvable(&spec::layers_of(&layers), &q.name)
     };
-    // A name that would only be asked about waits for an operator, once
-    // however often the guest retries; the decision is kept for a minute.
-    let allowed = if lookup {
-        true
-    } else if could_ask {
-        let decided = s.dns.lock().unwrap().decided(&q.name);
-        match decided {
-            Some(answer) => answer,
-            None => {
-                if !s.dns.lock().unwrap().start_asking(&q.name) {
-                    // Already waiting for an answer: the guest will retry.
-                    return Some(dns::respond(query, Some(&q), dns::SERVFAIL, None));
-                }
-                let suggestion = AnyRule::Net(NetRule {
-                    id: None,
-                    action: Action::Allow,
-                    host: q.name.clone(),
-                    ports: vec![],
-                    methods: vec![],
-                    path: None,
-                    secrets: vec![],
-                    set_headers: Default::default(),
-                    final_: false,
-                    comment: Some("approved".into()),
-                });
-                let answer = d.ask(s, Kind::Net, format!("resolve {}", q.name), suggestion).await;
-                s.dns.lock().unwrap().decide(&q.name, answer);
-                answer
-            }
-        }
-    } else {
-        false
-    };
-    if !allowed {
-        let reason = if could_ask { "not approved" } else { "no rule allows this name" };
-        event(&q.name, q.qtype, dns::REFUSED, None, Some(reason));
+    if !reachable {
+        event(&q.name, q.qtype, dns::REFUSED, None, Some("no rule allows this name"));
         return Some(dns::respond(query, Some(&q), dns::REFUSED, None));
+    }
+    // The firm's own services are answered here, never looked up on the host.
+    let firm = s.firm.as_ref().and_then(|f| f.run()).and_then(|r| super::office::facility::serves_name(&r, &q.name));
+    if let Some(exists) = firm {
+        s.dns.lock().unwrap().remember(&q.name, exists);
     }
     // Allowed: say whether the name exists, from a real lookup on the host.
     let cached = s.dns.lock().unwrap().cached(&q.name);

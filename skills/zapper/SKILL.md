@@ -1,36 +1,71 @@
 ---
 name: zapper
-description: Operate a running zapper daemon, which runs agents, interview candidates and study sandboxes in policy-bound Firecracker microVMs. Use when the user wants to start, attach to, inspect or stop a sandbox session; allow or block a host or command for a session or profile; answer a pending approval; see what a session did (network, execs, exits, terminal recording); change, diff, save or reload the zapper config; build an image; or run Claude Code in a sandbox.
+description: Operate The Office, firms of AI workers each running Claude Code in its own Firecracker microVM, through the zapper daemon and CLI it runs on. Use when the user wants to start, stop, pause or watch a firm, write to its workers as the board, read its mail, journal, transcripts or shared drive, decide or revoke its access requests, or replay a past run; or to inspect what a worker's session did (network, execs, exits, terminal recording), start, attach to or stop a session, allow or block a host or command for a session or profile, answer a pending approval, change, diff, save or reload the zapper config, or build an image or kernel.
 ---
 
-# Operating zapper
+# Operating The Office
 
-The daemon (`zapper serve`) owns the sessions; the `zapper` CLI talks to it over a unix socket. Before acting, find out what is running and whether the config has unsaved changes:
+The Office runs firms of AI workers; it runs on zapper. The daemon (`zapper serve`) owns the firms and the sessions their workers run in; the `zapper` CLI talks to it over a unix socket. Before acting, find out what is running and whether the config has unsaved changes:
 
 ```
+zapper firm ls            # firms and their runs' states
 zapper ps                 # sessions: id, profile, state, counters
 zapper config diff        # unsaved running-config changes ("no unsaved changes")
-zapper approvals          # anything waiting for a decision
 ```
 
 If the CLI says it can't connect, the daemon isn't running: start it with `zapper serve` in the background and a log (`zapper serve > /tmp/zapper.log 2>&1 &`), then give the user `tail -f /tmp/zapper.log`.
 
 ## Rules
 
-- Sessions may belong to someone else, such as a candidate in an interview. Before `stop`, `rm`, `config reload` or restarting the daemon, check `zapper ps` and say what you're about to end. A restart stops every session and loses unsaved config.
+- A firm's run and its workers' sessions may be in use. Before `firm down`, `stop`, `rm`, `config reload` or restarting the daemon, check `zapper firm status` and `zapper ps` and say what you're about to end. A restart or `firm down` ends the run, which can't be resumed, and a restart loses unsaved config.
+- A firm spends the user's Claude usage: check `zapper firm status` (turns and tokens today) and the budget before starting one, and say what you are about to start.
 - API changes edit the running config only. Run `zapper config save` when the user wants a change kept, and show `zapper config diff` first.
 - Prefer the narrowest change: a session rule (`session:ID`) over a profile rule, and a profile rule over a global one. Prefer `methods`/`path` limits over allowing a whole host.
-- Keep secret values out of rules, profiles and commands. Secrets come from `env` or `file` sources in the config: `proxy` secrets are bound to `hosts`, `guest` secrets are delivered into the session. The user creates the files; don't read or print them.
-- Don't approve requests on the user's behalf unless they said to. Show the pending request and ask.
-- Audit logs and recordings are sensitive: summarise them rather than pasting them wholesale.
+- Keep secret values out of rules, profiles and commands. Secrets come from `env` or `file` sources in the config: `proxy` secrets are bound to `hosts`, `guest` secrets are delivered into the session. The user creates the files (the Claude token included); don't read or print them.
+- Don't decide access requests or approve requests on the user's behalf unless they said to. Show the pending request and ask.
+- Runs in `state/firms/` (mail, transcripts, published files), audit logs and recordings are sensitive: summarise them rather than pasting them wholesale, and don't prune or delete them unasked.
 
-## Sessions
+## Firms
+
+A firm is an org chart of AI workers, each Claude Code in its own session ([docs/office.md](../../docs/office.md)). You act as the board.
 
 ```
-zapper run                               # shell on a copy of $PWD, removed on exit
-zapper run -p claude -C ~/proj --keep    # keep it after the command exits
-zapper attach ID                         # another terminal (profile command, or -- CMD)
+zapper firm ls ; zapper firm status acme          # before anything: is a run going, what are workers doing
+zapper firm up acme                               # a fresh, idle run (the cluster first, if the firm has one)
+zapper mail send acme --to barbara --kind assignment --subject "…" --body "…"
+zapper firm journal acme -f                        # mail, states, turns, access requests, publishes
+zapper firm transcript acme ada                    # what a worker's Claude did
+zapper mail ls acme ; zapper mail thread acme t-1  # the board's inbox
+zapper firm security acme                          # access requests, standing approvals
+zapper firm decide acme r-3 --allow --scope worker --reason "…"
+zapper firm revoke acme RULE                       # remove a standing approval
+zapper drive ls acme ; zapper drive get acme a-2 ./out
+zapper firm pause acme ; zapper firm resume acme   # stop starting turns / start again
+zapper firm down acme                              # ends the run; it stays on disk for replay
+zapper firm runs acme ; zapper firm replay acme RUN
+```
+
+The UI URL is in `~/.local/state/zapper/ui-url`; the user can watch the firm and decide access requests there too. The product is on the firm's `product_port` (`http://127.0.0.1:8080` in the example), the cluster's dashboard on `dashboard_port` (`8081`).
+
+## A worker's session
+
+Each worker is a zapper session; `zapper ps` lists it. To see what it did:
+
+```
+zapper events --history -s ID            # live and recent, one line each
+zapper audit ID | jq -r 'select(.type=="net" and .action=="deny") | "\(.host) \(.error // "")"' | sort | uniq -c
+zapper audit ID | jq -r 'select(.type=="exec") | .argv | join(" ")'
+ls ~/.local/state/zapper/sessions/ID/    # audit.jsonl, shell-N.cast (asciinema play), console.log
 zapper exec ID -- git -C /work status    # no terminal; exit code passes through
+zapper exec ID --system -- CMD           # as root, unsupervised: the operator's maintenance (e.g. the cluster VM)
+```
+
+Plain sessions, for checking the setup or debugging a profile:
+
+```
+zapper run -C $(mktemp -d)               # shell on a copy of an empty directory, removed on exit
+zapper run -p PROFILE --keep             # keep it after the command exits
+zapper attach ID                         # another terminal (profile command, or -- CMD)
 zapper cp ID:/work ./out                 # results out (mounts are copies)
 zapper stop ID ; zapper rm ID
 ```
@@ -38,42 +73,35 @@ zapper stop ID ; zapper rm ID
 ## Rules and approvals
 
 ```
-zapper rules --scope profile:claude
+zapper rules --scope profile:office
 zapper rule add session:ID '{kind: net, action: allow, host: pypi.org, ports: [443], methods: [GET]}'
-zapper rule add profile:claude '{kind: exec, action: deny, path: ssh}'
+zapper rule add profile:office '{kind: exec, action: deny, path: ssh}'
 zapper rule add global '{kind: net, action: deny, host: "*.example.internal", final: true}'
 zapper rule rm net-7
 zapper eval -s ID net github.com:443 POST /org/repo/pulls      # which rule decides, before changing anything
-zapper approve ABC --remember session    # or: zapper deny ABC
+zapper approvals ; zapper approve ABC --remember session        # outside firms; or: zapper deny ABC
 ```
 
-## What happened
-
-```
-zapper events --history -s ID            # live and recent, one line each
-zapper audit ID | jq -r 'select(.type=="net" and .action=="deny") | "\(.host) \(.error // "")"' | sort | uniq -c
-zapper audit ID | jq -r 'select(.type=="exec") | .argv | join(" ")'
-ls ~/.local/state/zapper/sessions/ID/    # audit.jsonl, shell-N.cast (asciinema play), console.log
-```
-
-The UI URL is in `~/.local/state/zapper/ui-url`; the user can answer approvals there too.
+Rule changes apply to running workers at once. Firm profiles can't have `exec` rules with `ask`, and in a firm a network `ask` becomes an access request (`zapper firm security`), not an approval.
 
 ## Config
 
 ```
 zapper config show | diff | save | reload | edit
-zapper profile ls ; zapper profile show claude
+zapper profile ls ; zapper profile show office-engineer
 ```
 
 ## Images
 
 ```
 zapper image ls
-make image IMAGE=claude > /tmp/zapper-image.log 2>&1     # background; tail -f the log
+make image IMAGE=office > /tmp/zapper-image.log 2>&1     # background; tail -f the log
+make image IMAGE=k3s ; make kernel KERNEL=k8s             # the firm's cluster
 ```
 
 ## More
 
+- The office: [docs/office.md](../../docs/office.md)
 - Rules and secrets: [docs/policy.md](../../docs/policy.md)
 - Config keys and profiles: [docs/configuration.md](../../docs/configuration.md)
 - Security model: [docs/security.md](../../docs/security.md)

@@ -4,7 +4,7 @@
 
 ## Overview
 
-zapper records what a session does as events. Each event goes to the session's audit log, to the live stream (`zapper events`, `GET /v1/events`), and to an in-memory buffer of the latest 2000 events that the UI reads. Terminals are recorded as asciicast files. All of this is written on the host.
+zapper records what each session does, an office worker's included, as events. Each event goes to the session's audit log, to the live stream (`zapper events`, `GET /v1/events`), and to an in-memory buffer of the latest 2000 events that the UI reads. Terminals are recorded as asciicast files. All of this is written on the host. A firm's run adds its own journal and each worker's Claude transcript ([office: state](office.md#state)).
 
 ## Events
 
@@ -40,7 +40,7 @@ These files stay after the session ends. The `vm/` directory, with the disks and
 
 ## The UI
 
-`zapper serve` prints `http://127.0.0.1:7878/?token=…` and writes the URL to `state/ui-url` (0600). The UI shows the daemon's state, and its one action is answering approvals. Its views:
+`zapper serve` prints `http://127.0.0.1:7878/?token=…` and writes the URL to `state/ui-url` (0600). The UI opens on the office: firms' org charts, mail, security, shared drives, statistics and replays, where the board writes to workers and decides access requests ([office: web UI](office.md#web-ui)). Its Sessions tab, at `/sessions`, shows the daemon's sessions; there, the one action is answering approvals. Its views:
 
 - **sessions**, with counters
 - **session detail**: the session's details and terminals, its network traffic, exec history with decisions and wait times, process exits with CPU and memory
@@ -53,7 +53,7 @@ These files stay after the session ends. The `vm/` directory, with the disks and
 
 The network view keeps up to 1000 requests per session in memory, with the first 64 KiB of each body and up to 16 MiB of bodies in total; gzip, deflate and brotli bodies are decoded for display. Request headers are recorded as the guest sent them, before the proxy adds secrets, and secret values the proxy added are shown as `***` wherever they appear, including in a response that echoes them back. `guest`-mode secret values aren't masked yet. None of it is written to disk.
 
-The UI exchanges the token for a strict cookie and requires a local `Host` header, which defeats DNS rebinding. Answering an approval also needs an `X-Zapper-UI` header and an `Origin` naming the UI. A page on another site can't send that header without a CORS preflight, which the UI never grants, so it can't answer approvals through your browser. Rules, profiles, sessions and the config are changed with the CLI or the API on the unix socket. The UI renders session data as text.
+The UI exchanges the token for a strict cookie and requires a local `Host` header, which defeats DNS rebinding. Its writes (answering an approval, and the board's mail, firm controls and security decisions) also need an `X-Zapper-UI` header and an `Origin` naming the UI. A page on another site can't send that header without a CORS preflight, which the UI never grants, so it can't write through your browser. Rules, profiles, sessions and the config are changed with the CLI or the API on the unix socket. The UI renders session and firm data as text; files workers publish are served with their own type and a sandboxing CSP.
 
 ## Usage
 

@@ -14,22 +14,7 @@ pub const GUEST_CID: u32 = 3;
 /// Serial console output kept per session; the rest is dropped.
 const CONSOLE_LIMIT: u64 = 1 << 20;
 
-/// Parses `4GiB`, `512MiB`, `1G`, or plain bytes.
-pub fn parse_size(s: &str) -> Result<u64> {
-    let s = s.trim();
-    let split = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
-    let (num, unit) = s.split_at(split);
-    let n: u64 = num.parse().with_context(|| format!("size {s:?}"))?;
-    let mult = match unit.trim().to_ascii_lowercase().as_str() {
-        "" | "b" => 1,
-        "k" | "kb" | "kib" => 1 << 10,
-        "m" | "mb" | "mib" => 1 << 20,
-        "g" | "gb" | "gib" => 1 << 30,
-        "t" | "tb" | "tib" => 1 << 40,
-        _ => bail!("size {s:?}: unknown unit"),
-    };
-    Ok(n * mult)
-}
+pub use zapper_policy::parse_size;
 
 async fn run(cmd: &mut Command) -> Result<()> {
     let out = cmd.stdin(Stdio::null()).output().await.with_context(|| format!("running {cmd:?}"))?;

@@ -1,0 +1,3155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>zapper office</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg:#F5F4EE; --panel:#FAF9F5; --card:#FFFFFF; --line:#E8E6DC; --line2:#D6D2C4;
+    --text:#2F2C24; --muted:#83807A; --accent:#D97757; --accent-ink:#B85C3E; --accent-soft:rgba(217,119,87,.12);
+    --ok:#5E8D5A; --bad:#C2493D; --warn:#B7862C; --info:#5B86A8;
+    --head:#F1E6D6; --eye:#3D3929; --av-stroke:#3D3929; --paper:#FFFDF8; --screen:#2E2C28;
+    --s-off:#DEDBD0; --s-booting:#C9C2B3; --s-idle:#A3B18A; --s-waiting:#D9AE5B; --s-queued:#86A9C6;
+    --s-working:#D97757; --s-reviewing:#B07AA1; --s-over:#8E8375; --s-error:#C2493D;
+    --shadow: 0 1px 2px rgba(60,50,30,.06), 0 4px 14px rgba(60,50,30,.05);
+    --serif: ui-serif, Georgia, Cambria, "Times New Roman", serif;
+    --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg:#262624; --panel:#1F1E1D; --card:#2C2B29; --line:#3A3936; --line2:#4A4844;
+      --text:#ECEAE3; --muted:#A29F95; --accent:#D97757; --accent-ink:#E8916F; --accent-soft:rgba(217,119,87,.16);
+      --ok:#8DB889; --bad:#E07A6F; --warn:#D9AE5B; --info:#8DB3D3;
+      --head:#E6D8C4; --eye:#2A2724; --av-stroke:#D3CBBE; --paper:#EFE9DE; --screen:#171614;
+      --s-off:#3E3C38; --s-booting:#6A655C; --shadow: 0 1px 2px rgba(0,0,0,.25), 0 4px 14px rgba(0,0,0,.2);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin:0; font: 14px/1.5 var(--sans); background:var(--bg); color:var(--text); }
+  h1, h2, h3, h4, .serif { font-family: var(--serif); font-weight: 500; }
+  button, input, select, textarea { font: inherit; color: inherit; }
+  a { color: var(--accent-ink); }
+  .mono, code, pre { font-family: var(--mono); font-size: 12.5px; }
+  .muted { color: var(--muted); }
+  .small { font-size: 12px; }
+  .hidden { display: none !important; }
+
+  /* header */
+  header { position: sticky; top: 0; z-index: 20; background: var(--panel); border-bottom: 1px solid var(--line); }
+  .hrow { display:flex; align-items:center; gap:14px; padding: 12px 24px; flex-wrap: wrap; }
+  .brand { display:flex; align-items:center; gap:10px; }
+  .brand h1 { margin:0; font-size: 21px; letter-spacing: .1px; }
+  .brand .desc { color: var(--muted); font-size: 13px; max-width: 360px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .spark-logo { width: 22px; height: 22px; }
+  .hstats { display:flex; align-items:center; gap:10px; margin-left: 6px; flex-wrap: wrap; }
+  .hctl { margin-left:auto; display:flex; align-items:center; gap:8px; flex-wrap: wrap; }
+  .pill { display:inline-flex; align-items:center; gap:5px; padding: 1px 9px; border-radius: 999px; font-size: 12px; border: 1px solid var(--line2); color: var(--muted); background: var(--panel); white-space: nowrap; }
+  .pill.running, .pill.allow, .pill.allowed, .pill.closed { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
+  .pill.paused, .pill.waiting, .pill.pending, .pill.starting, .pill.ask, .pill.escalated, .pill.stopping { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+  .pill.failed, .pill.deny, .pill.denied, .pill.overdue, .pill.error { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
+  .pill.accent, .pill.assignment { color: var(--accent-ink); border-color: color-mix(in srgb, var(--accent) 50%, transparent); background: var(--accent-soft); }
+  .pill.question { color: var(--info); border-color: color-mix(in srgb, var(--info) 45%, transparent); }
+  .pill.report { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
+  .pill.follow-up { color: var(--warn); border-style: dashed; }
+  .badge { display:inline-flex; align-items:center; justify-content:center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: var(--accent); color: #fff; font-size: 11px; font-weight: 600; }
+  .badge.warn { background: var(--warn); }
+  .btn { border: 1px solid var(--line2); background: var(--card); border-radius: 9px; padding: 5px 13px; cursor: pointer; transition: background .15s, border-color .15s; }
+  .btn:hover:not(:disabled) { border-color: var(--accent); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.primary:hover:not(:disabled) { background: var(--accent-ink); }
+  .btn.danger { color: var(--bad); }
+  .btn.ok { color: var(--ok); }
+  .btn.ghost { background: transparent; border-color: transparent; }
+  .btn.small { padding: 2px 9px; font-size: 12px; border-radius: 7px; }
+  .btn:disabled { opacity: .45; cursor: default; }
+  .linkish { color: var(--accent-ink); cursor: pointer; text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 2px; background: none; border: 0; padding: 0; }
+  input[type=text], input[type=search], input:not([type]), select, textarea { background: var(--card); border: 1px solid var(--line2); border-radius: 9px; padding: 5px 10px; outline: none; }
+  input:focus, select:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  textarea { width: 100%; resize: vertical; min-height: 110px; line-height: 1.45; }
+  .menu { position: relative; }
+  .menu > summary { list-style: none; cursor: pointer; }
+  .menu > summary::-webkit-details-marker { display: none; }
+  .menu .pop { position: absolute; right: 0; top: calc(100% + 6px); background: var(--card); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); min-width: 300px; max-height: 60vh; overflow: auto; padding: 6px; z-index: 30; }
+  .menu .pop .item { display:flex; justify-content: space-between; gap: 12px; padding: 7px 10px; border-radius: 8px; cursor: pointer; }
+  .menu .pop .item:hover { background: var(--accent-soft); }
+  nav.tabs { display:flex; gap: 4px; padding: 0 20px; }
+  nav.tabs button, nav.tabs a { background: none; border: 0; border-bottom: 2px solid transparent; padding: 8px 12px 10px; cursor: pointer; color: var(--muted); text-decoration: none; display:inline-flex; align-items:center; gap:6px; }
+  nav.tabs button.on { color: var(--text); border-bottom-color: var(--accent); }
+  nav.tabs button:hover, nav.tabs a:hover { color: var(--text); }
+  nav.tabs .right { margin-left: auto; }
+  .replaybar { display:flex; align-items:center; gap: 10px; padding: 8px 24px; background: var(--accent-soft); border-top: 1px solid var(--line); flex-wrap: wrap; }
+  .replaybar .title { font-family: var(--serif); font-size: 15px; }
+  .replaybar input[type=range] { flex: 1; min-width: 200px; accent-color: var(--accent); }
+  .seg { display:inline-flex; border: 1px solid var(--line2); border-radius: 9px; overflow: hidden; }
+  .seg button { border: 0; background: var(--card); padding: 3px 10px; cursor: pointer; }
+  .seg button.on { background: var(--accent); color: #fff; }
+
+  main { padding: 22px 24px 60px; }
+  section.tab { display: none; } section.tab.on { display: block; }
+  h2.sec { font-size: 18px; margin: 26px 0 10px; }
+  h2.sec:first-child { margin-top: 0; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; box-shadow: var(--shadow); }
+  .cards { display:grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; margin-bottom: 14px; }
+  .kpi .k { color: var(--muted); font-size: 12px; } .kpi .v { font-family: var(--serif); font-size: 24px; }
+  .empty { color: var(--muted); padding: 22px; text-align: center; }
+  .bar { display:flex; gap: 8px; align-items:center; flex-wrap: wrap; margin-bottom: 12px; }
+  table.t { width: 100%; border-collapse: separate; border-spacing: 0; background: var(--card); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  table.t th, table.t td { text-align: left; padding: 7px 11px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  table.t tr:last-child td { border-bottom: 0; }
+  table.t th { color: var(--muted); font-weight: 500; font-size: 12px; background: var(--panel); }
+  table.t tr.click { cursor: pointer; } table.t tr.click:hover td { background: var(--accent-soft); }
+  table.t td.wrap { word-break: break-all; }
+  pre.json { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; overflow: auto; max-height: 50vh; margin: 6px 0; white-space: pre-wrap; word-break: break-word; }
+  .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--card); border: 1px solid var(--line2); border-radius: 12px; padding: 10px 16px; box-shadow: var(--shadow); z-index: 100; max-width: 80vw; }
+  .toast.bad { border-color: var(--bad); color: var(--bad); }
+  .split { display:grid; grid-template-columns: minmax(300px, 380px) 1fr; gap: 18px; align-items: start; }
+  @media (max-width: 960px) { .split { grid-template-columns: 1fr; } }
+  .list { display:flex; flex-direction: column; gap: 6px; }
+  .li { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 9px 12px; cursor: pointer; }
+  .li:hover { border-color: var(--line2); }
+  .li.sel { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .li .top { display:flex; gap: 8px; align-items: center; justify-content: space-between; }
+  .li .subj { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .li .meta { color: var(--muted); font-size: 12px; display:flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 3px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); display:inline-block; flex: none; }
+  label.f { display:flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+  label.f > input, label.f > select, label.f > textarea { color: var(--text); font-size: 14px; }
+  .form { display:flex; flex-direction: column; gap: 10px; }
+  .row2 { display:grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .hint { background: var(--accent-soft); border-radius: 10px; padding: 8px 12px; color: var(--accent-ink); }
+  .chips { display:flex; flex-wrap: wrap; gap: 6px; }
+  .chip { border: 1px solid var(--line2); border-radius: 999px; padding: 1px 10px; font-size: 12px; cursor: pointer; background: var(--panel); }
+  .chip:hover { border-color: var(--accent); }
+  .picker { max-height: 140px; overflow: auto; border: 1px solid var(--line2); border-radius: 9px; padding: 6px 8px; background: var(--card); }
+  .picker label { display:flex; gap: 6px; align-items: center; font-size: 13px; color: var(--text); }
+
+  /* overview */
+  .ovwrap { position: relative; }
+  .ovhead { display:flex; align-items: baseline; gap: 12px; margin-bottom: 10px; }
+  .stagebox { position: relative; overflow: hidden; background: var(--panel); border: 1px solid var(--line); border-radius: 18px; padding: 18px 0; }
+  .stage { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+  .stage svg.edges { position: absolute; left: 0; top: 0; overflow: visible; }
+  .stage svg.edges path { fill: none; stroke: var(--line2); stroke-width: 1.5; }
+  .node { position: absolute; width: 176px; height: 156px; display:flex; flex-direction: column; align-items: center; text-align: center; cursor: pointer; border-radius: 16px; padding: 6px 6px 8px; transition: background .2s; }
+  .node:hover { background: var(--accent-soft); }
+  .node.sel { background: var(--accent-soft); box-shadow: inset 0 0 0 1.5px var(--accent); }
+  .node .nm { font-weight: 600; line-height: 1.2; margin-top: 2px; }
+  .node .tt { color: var(--muted); font-size: 12px; line-height: 1.2; }
+  .node .st { font-size: 12px; line-height: 1.25; margin-top: 3px; max-width: 168px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); opacity: .85; }
+  .node .st.bad { color: var(--bad); }
+  .node .bdg { position: absolute; top: 4px; right: 22px; display:flex; flex-direction: column; gap: 3px; align-items: flex-start; }
+  .node .bdg .ic { display:inline-flex; align-items:center; gap: 2px; font-size: 11px; background: var(--card); border: 1px solid var(--line2); border-radius: 999px; padding: 0 6px; height: 19px; }
+  .node .bdg .ic.mail { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .node .bdg .ic.lock { color: var(--warn); }
+  .node .bdg .ic.clock { color: var(--bad); }
+  .node .bdg svg { width: 11px; height: 11px; }
+  .node .rm-state { display: none; font-size: 11px; color: var(--muted); }
+  .env { position: absolute; left: 0; top: 0; width: 22px; height: 16px; margin: -8px 0 0 -11px; pointer-events: none; z-index: 5; }
+  .env svg { width: 22px; height: 16px; display:block; filter: drop-shadow(0 1px 1.5px rgba(0,0,0,.18)); }
+  .legend { display:flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-top: 10px; }
+  .legend i { display:inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 4px; vertical-align: -1px; }
+
+  /* side panel */
+  .git-crumbs { font-size: 15px; margin: 4px 0 10px; }
+  .git-empty-card { max-width: 640px; margin: 40px auto; padding: 36px 40px; text-align: center; }
+  .git-empty-card h2 { margin: 18px 0 6px; font-size: 24px; }
+  .git-empty-card p { margin: 0 auto 22px; max-width: 460px; }
+  .git-art { width: 220px; height: auto; }
+  .git-art .gl { fill: none; stroke-width: 4; stroke-linecap: round; }
+  .git-art .gl.main { stroke: var(--line2); }
+  .git-art .gl.side { stroke: var(--accent); stroke-dasharray: 6 7; opacity: .7; }
+  .git-art .gd { stroke: var(--card); stroke-width: 3; }
+  .git-art .gd.main { fill: var(--muted); }
+  .git-art .gd.side { fill: var(--accent); }
+  .git-art .gd.ghost { fill: var(--card); stroke: var(--line2); stroke-dasharray: 3 3; }
+  @media (prefers-reduced-motion: no-preference) { .git-art .gl.side { animation: gitdash 3s linear infinite; } }
+  @keyframes gitdash { to { stroke-dashoffset: -26; } }
+  .git-empty-rows { display: grid; grid-template-columns: auto 1fr auto; gap: 10px 12px; align-items: center; text-align: left; }
+  .git-empty-rows code { font-family: var(--mono); font-size: 12.5px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; overflow-x: auto; white-space: nowrap; }
+  .git-crumbs a, a.link { cursor: pointer; }
+  .git-tree { padding: 6px 0; }
+  .git-row { display:grid; grid-template-columns: 18px 1fr auto; gap: 8px; padding: 6px 16px; cursor: pointer; align-items: baseline; }
+  .git-row:hover { background: var(--accent-soft); }
+  .git-ic { color: var(--muted); }
+  .git-dir { font-weight: 600; }
+  .git-pre { white-space: pre; overflow: auto; max-height: 70vh; margin: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+  .git-msg { white-space: pre-wrap; font-family: var(--sans); margin: 8px 0; }
+  .git-files { margin: 10px 0; display:flex; flex-direction: column; gap: 2px; }
+  .git-diff .dadd, .git-files .dadd { color: var(--ok); }
+  .git-diff .ddel, .git-files .ddel { color: var(--bad); }
+  .git-diff .dhunk { color: var(--info); }
+  .git-diff .dh { font-weight: 600; }
+  .commits .c.sel { background: var(--accent-soft); }
+  .ov-product { margin-left: auto; display:flex; gap: 8px; align-items: center; }
+  .vm-dash { display:flex; gap: 8px; align-items: center; }
+  .ov-product a { text-decoration: none; }
+  /* VMs */
+  .vm-host { padding: 14px 18px; margin: 12px 0 0; }
+  .vm-host-t { display:flex; gap: 12px; align-items: baseline; }
+  .vm-host-t .serif { font-size: 18px; }
+  .vm-chips { display:flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
+  .vm-chip { display:flex; flex-direction: column; padding: 6px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+  .vm-group { position: relative; margin: 26px 0 0 18px; padding-left: 22px; border-left: 2px solid var(--line2); }
+  .vm-group::before { content: ''; position: absolute; left: -2px; top: -26px; height: 26px; border-left: 2px solid var(--line2); }
+  .vm-gh { display:flex; gap: 10px; align-items: baseline; margin-bottom: 10px; }
+  .vm-gh .serif { font-size: 17px; }
+  .vm-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; }
+  .vm { position: relative; padding: 14px 16px; display:flex; flex-direction: column; gap: 10px; }
+  .vm::before { content: ''; position: absolute; left: -24px; top: 28px; width: 22px; border-top: 2px solid var(--line2); }
+  .vm-grid .vm:not(:first-child)::before { display: none; }
+  .vm.facility { border-color: color-mix(in srgb, var(--info) 45%, var(--line)); }
+  .vm-head { display:flex; gap: 12px; align-items: center; }
+  .vm-head .avatar, .vm-head svg { width: 44px; height: 44px; flex: none; }
+  .vm-icon { width: 44px; height: 44px; display:flex; align-items:center; justify-content:center; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); font-size: 22px; color: var(--muted); flex: none; }
+  .vm-icon.fac { color: var(--info); }
+  .vm-name { flex: 1; min-width: 0; }
+  .vm-name .serif { font-size: 17px; }
+  .vm-spec { display:flex; flex-wrap: wrap; gap: 6px; }
+  .vm-spec span { padding: 0 8px; border-radius: 999px; background: var(--panel); border: 1px solid var(--line); color: var(--muted); }
+  .vm-spec .warn { color: var(--bad); }
+  .vm-meter .vm-ml { display:flex; justify-content: space-between; font-size: 12px; }
+  .vm-bar { height: 6px; border-radius: 999px; background: var(--line); overflow: hidden; margin-top: 3px; }
+  .vm-fill { height: 100%; background: var(--s-idle); border-radius: 999px; transition: width .4s; }
+  .vm-fill.hot { background: var(--accent); }
+  .vm-stats { display:flex; flex-wrap: wrap; gap: 4px 12px; color: var(--muted); margin-top: 6px; }
+  .vm-sub { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+  .vm-terms { display:flex; flex-direction: column; gap: 6px; }
+  .vm-term { display:flex; gap: 8px; align-items: center; }
+  .vm-term .vm-argv { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .vm-actions { display:flex; gap: 10px; align-items: center; justify-content: space-between; }
+  .btn.small { padding: 2px 10px; font-size: 12px; }
+  aside.panel { position: fixed; right: 0; top: 0; bottom: 0; width: min(480px, 100vw); background: var(--panel); border-left: 1px solid var(--line); box-shadow: -8px 0 30px rgba(0,0,0,.08); z-index: 40; overflow-y: auto; padding: 18px 20px 40px; transform: translateX(100%); transition: transform .22s ease; }
+  aside.panel.open { transform: none; }
+  aside.panel .ph { display:flex; gap: 12px; align-items: center; }
+  aside.panel .ph h2 { margin: 0; font-size: 22px; }
+  aside.panel .close { margin-left: auto; }
+  aside.panel h3 { font-size: 16px; margin: 22px 0 8px; }
+  .desk .item { display:flex; gap: 8px; align-items: baseline; padding: 4px 0; border-bottom: 1px dashed var(--line); font-size: 13px; }
+  .desk .item:last-child { border-bottom: 0; }
+
+  /* transcript */
+  .feed { display:flex; flex-direction: column; gap: 6px; font-size: 13px; max-height: 60vh; overflow-y: auto; padding-right: 4px; }
+  .feed .tx { border-left: 2px solid var(--line2); padding: 2px 0 2px 10px; }
+  .feed .tx.text { border-left-color: var(--accent); }
+  .feed .tx.tool { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .feed .tx.tool b { color: var(--text); font-weight: 600; }
+  .feed .tx.err { border-left-color: var(--bad); color: var(--bad); }
+  .feed .tx.res { color: var(--muted); font-size: 12px; }
+  .feed .tx.turn { border-left-color: var(--ok); color: var(--muted); font-size: 12px; }
+  .feed details > summary { cursor: pointer; color: var(--muted); }
+  .feed pre { white-space: pre-wrap; word-break: break-word; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; margin: 4px 0; max-height: 300px; overflow: auto; }
+
+  /* messages */
+  .msg { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px 16px; margin-bottom: 10px; }
+  .msg.auto { background: var(--panel); border-style: dashed; }
+  .msg.board { border-left: 3px solid var(--accent); }
+  .msg .mh { display:flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .msg .mh .who { font-weight: 600; }
+  .msg .mh .to { color: var(--muted); font-size: 12.5px; }
+  .msg .mh .when { margin-left: auto; color: var(--muted); font-size: 12px; }
+  .mini { width: 26px; height: 30px; flex: none; }
+  .tree { list-style: none; padding-left: 18px; margin: 4px 0; border-left: 1px dashed var(--line2); }
+  .tree > li { margin: 6px 0; }
+  .tree .tn { display:flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .pinned { display:flex; gap: 12px; align-items: center; border-color: var(--accent); margin-bottom: 12px; cursor: pointer; }
+
+  /* markdown */
+  .md { line-height: 1.6; word-wrap: break-word; overflow-wrap: anywhere; }
+  .md > :first-child { margin-top: 0; } .md > :last-child { margin-bottom: 0; }
+  .md h1, .md h2, .md h3, .md h4, .md h5, .md h6 { margin: 1em 0 .4em; line-height: 1.25; }
+  .md h1 { font-size: 1.55em; } .md h2 { font-size: 1.3em; } .md h3 { font-size: 1.12em; } .md h4, .md h5, .md h6 { font-size: 1em; }
+  .md p { margin: .55em 0; }
+  .md code { background: var(--accent-soft); border-radius: 5px; padding: 0 4px; }
+  .md pre { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; overflow: auto; }
+  .md pre code { background: none; padding: 0; }
+  .md blockquote { margin: .6em 0; padding: .1em 0 .1em 14px; border-left: 3px solid var(--line2); color: var(--muted); }
+  .md table { border-collapse: collapse; margin: .6em 0; display: block; overflow-x: auto; }
+  .md th, .md td { border: 1px solid var(--line); padding: 4px 9px; }
+  .md th { background: var(--panel); }
+  .md hr { border: 0; border-top: 1px solid var(--line2); margin: 1.2em 0; }
+  .md img { max-width: 100%; border-radius: 8px; }
+  .md ul, .md ol { padding-left: 1.5em; margin: .5em 0; }
+  .md .url { color: var(--muted); font-size: .85em; margin-left: 3px; word-break: break-all; }
+  .md .imgtext { color: var(--muted); font-style: italic; }
+  .slides { border: 1px solid var(--line); border-radius: 16px; background: var(--card); outline: none; }
+  .slides:focus-visible { box-shadow: 0 0 0 3px var(--accent-soft); }
+  .slides .slide { min-height: 340px; padding: 34px 44px; }
+  .slides .slide.md h1, .slides .slide.md h2 { color: var(--accent-ink); }
+  .slides .sctl { display:flex; align-items:center; gap: 10px; padding: 8px 14px; border-top: 1px solid var(--line); }
+  .slides .sctl .n { margin: 0 auto; color: var(--muted); font-size: 12.5px; }
+
+  /* drive */
+  .viewer { min-height: 200px; }
+  .files { display:flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 12px; }
+  .vers { display:flex; gap: 4px; flex-wrap: wrap; }
+  .csv { overflow: auto; max-height: 70vh; }
+  .csv table { border-collapse: collapse; font-size: 12.5px; }
+  .csv td, .csv th { border: 1px solid var(--line); padding: 3px 8px; white-space: nowrap; }
+  .csv th { background: var(--panel); position: sticky; top: 0; }
+  pre.file { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; overflow: auto; max-height: 70vh; white-space: pre; }
+  .commits .c { display:flex; gap: 10px; padding: 5px 0; border-bottom: 1px dashed var(--line); font-size: 13px; align-items: baseline; }
+  .commits .c:last-child { border-bottom: 0; }
+
+  /* statistics */
+  .chart { width: 100%; max-width: 1100px; display: block; }
+  .chart.bars { max-width: 760px; }
+  .chart text { fill: var(--muted); font-size: 11px; font-family: var(--sans); }
+  .chart text.lbl { fill: var(--text); font-size: 12px; }
+  .chart .track { fill: var(--line); }
+  .chart .barf { fill: var(--accent); }
+  .chart .barf2 { fill: var(--s-queued); }
+  .chart .budget { stroke: var(--bad); stroke-dasharray: 3 3; stroke-width: 1.5; }
+  .s-off { fill: var(--s-off); } .s-booting { fill: var(--s-booting); } .s-idle { fill: var(--s-idle); } .s-waiting { fill: var(--s-waiting); }
+  .s-queued { fill: var(--s-queued); } .s-working { fill: var(--s-working); } .s-reviewing { fill: var(--s-reviewing); }
+  .s-over-budget { fill: var(--s-over); } .s-error { fill: var(--s-error); }
+  .grid2 { display:grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 1000px) { .grid2 { grid-template-columns: 1fr; } }
+
+  /* avatars */
+  svg.av { overflow: visible; }
+  svg.av .f-body { stroke: rgba(0,0,0,.18); stroke-width: 1; }
+  svg.av .f-head { fill: var(--head); stroke: var(--av-stroke); stroke-width: 1; }
+  svg.av .eye { fill: var(--eye); }
+  svg.av .ln { fill: none; stroke: var(--av-stroke); stroke-width: 1.2; stroke-linecap: round; stroke-linejoin: round; }
+  svg.av .paper { fill: var(--paper); stroke: var(--av-stroke); stroke-width: 1; }
+  svg.av .acc { fill: var(--accent); }
+  svg.av .screen { fill: var(--screen); stroke: var(--av-stroke); stroke-width: 1; }
+  svg.av .code { fill: var(--accent); font: 600 7px var(--mono); }
+  svg.av .spark line { stroke: var(--accent); stroke-width: 1.7; stroke-linecap: round; }
+  svg.av .spark, svg.av .hourglass, svg.av .gauge, svg.av .errdot { opacity: 0; }
+  svg.av g, svg.av rect, svg.av circle, svg.av path { transform-box: fill-box; transform-origin: center; }
+  svg.av .fig { transform-origin: 50% 100%; }
+  svg.av .hourglass path { fill: var(--paper); stroke: var(--av-stroke); stroke-width: 1; }
+  svg.av .hourglass .sand { fill: var(--s-waiting); stroke: none; }
+  svg.av .gauge path { fill: none; stroke: var(--av-stroke); stroke-width: 1.4; stroke-linecap: round; }
+  svg.av .gauge .needle { stroke: var(--bad); }
+  svg.av .errdot { fill: var(--bad); }
+  .st-working .spark, .st-reviewing .spark { opacity: 1; }
+  .st-waiting .hourglass { opacity: 1; }
+  .st-over-budget .gauge { opacity: 1; }
+  .st-error .errdot { opacity: 1; }
+  .st-over-budget .fig, .st-error .fig { opacity: .45; }
+  .st-off .fig * { fill: transparent !important; stroke: var(--muted) !important; }
+  .st-off .fig .code { fill: var(--muted) !important; stroke: none !important; }
+  .st-off .fig .eye { fill: var(--muted) !important; stroke: none !important; }
+  .st-queued .eyes { transform: translateY(-1.6px); }
+  @keyframes breathe { 0%,100% { transform: scale(1); } 50% { transform: scale(1.02); } }
+  @keyframes blink { 0%, 94%, 100% { transform: scaleY(1); } 96% { transform: scaleY(.12); } }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes fadein { 0% { opacity: .15; } 100% { opacity: 1; } }
+  @keyframes glow { 0%,100% { fill-opacity: 1; } 50% { fill-opacity: .25; } }
+  @keyframes typing { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+  @keyframes rise1 { 0%,100% { transform: scaleY(.55); } 50% { transform: scaleY(1); } }
+  @keyframes rise2 { 0%,100% { transform: scaleY(1); } 50% { transform: scaleY(.6); } }
+  @keyframes turn { 0%,40% { transform: scaleX(1); } 50% { transform: scaleX(.05); } 60%,100% { transform: scaleX(1); } }
+  @keyframes scan { 0%,100% { transform: translate(0,0); } 33% { transform: translate(-2px,-3px); } 66% { transform: translate(1px,2px); } }
+  @keyframes check { 0% { stroke-dashoffset: 10; } 40%,100% { stroke-dashoffset: 0; } }
+  @keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.12); } }
+  @keyframes wiggle { 0%,100% { transform: rotate(0); } 50% { transform: rotate(-8deg); } }
+  @keyframes flip { 0%,45% { transform: rotate(0); } 50%,95% { transform: rotate(180deg); } 100% { transform: rotate(360deg); } }
+  @keyframes wave { 0%,100% { transform: skewY(0); } 50% { transform: skewY(-8deg); } }
+  @media (prefers-reduced-motion: no-preference) {
+    .anim.st-idle .fig { animation: breathe 4.5s ease-in-out infinite; }
+    .anim.st-idle .eyes { animation: blink 6s infinite; }
+    .anim.st-waiting .fig { animation: breathe 7s ease-in-out infinite; }
+    .anim.st-waiting .hourglass { animation: flip 4s ease-in-out infinite; }
+    .anim.st-booting .fig { animation: fadein 1.4s ease-in-out infinite alternate; }
+    .anim.st-working .spark, .anim.st-reviewing .spark { animation: spin 3.2s linear infinite; }
+    .anim.st-working .fig, .anim.st-reviewing .fig { animation: breathe 2.6s ease-in-out infinite; }
+    .anim.st-working .screen-glow { animation: glow 1.1s ease-in-out infinite; }
+    .anim.st-working .code { animation: typing .7s steps(2) infinite; }
+    .anim.st-working .bar1 { animation: rise1 1.4s ease-in-out infinite; transform-origin: 50% 100%; }
+    .anim.st-working .bar2 { animation: rise2 1.4s ease-in-out infinite; transform-origin: 50% 100%; }
+    .anim.st-working .bar3 { animation: rise1 1.1s ease-in-out infinite .3s; transform-origin: 50% 100%; }
+    .anim.st-working .pageflip { animation: turn 2.4s ease-in-out infinite; transform-origin: 0 50%; }
+    .anim.st-working .lens { animation: scan 3s ease-in-out infinite; }
+    .anim.st-working .brush { animation: scan 1.6s ease-in-out infinite; }
+    .anim.st-working .checks path { stroke-dasharray: 10; animation: check 2s ease-out infinite; }
+    .anim.st-working .checks path:nth-child(2) { animation-delay: .6s; }
+    .anim.st-working .note { animation: wiggle 1.6s ease-in-out infinite; }
+    .anim.st-working .flag { animation: wave 1.6s ease-in-out infinite; }
+    .anim.st-reviewing .shield, .anim.st-working .shield { animation: pulse 1.3s ease-in-out infinite; }
+    .env { transition: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .node .rm-state { display: block; }
+    aside.panel { transition: none; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="hrow">
+    <div class="brand">
+      <svg class="spark-logo" viewBox="-10 -10 20 20" aria-hidden="true"><g stroke="#D97757" stroke-width="2.2" stroke-linecap="round"><line x1="0" y1="-8" x2="0" y2="-2.5"/><line x1="0" y1="8" x2="0" y2="2.5"/><line x1="-8" y1="0" x2="-2.5" y2="0"/><line x1="8" y1="0" x2="2.5" y2="0"/><line x1="-5.6" y1="-5.6" x2="-1.8" y2="-1.8"/><line x1="5.6" y1="5.6" x2="1.8" y2="1.8"/><line x1="5.6" y1="-5.6" x2="1.8" y2="-1.8"/><line x1="-5.6" y1="5.6" x2="-1.8" y2="1.8"/></g></svg>
+      <span id="firmpick"></span>
+      <h1 id="firmname">office</h1>
+      <span class="desc" id="firmdesc"></span>
+    </div>
+    <div class="hstats" id="hstats"></div>
+    <div class="hctl" id="hctl"></div>
+  </div>
+  <div class="replaybar hidden" id="replaybar"></div>
+  <nav class="tabs" id="tabs"></nav>
+</header>
+<main>
+  <section class="tab" id="tab-overview"></section>
+  <section class="tab" id="tab-messages"></section>
+  <section class="tab" id="tab-security"></section>
+  <section class="tab" id="tab-drive"></section>
+  <section class="tab" id="tab-git"></section>
+  <section class="tab" id="tab-stats"></section>
+  <section class="tab" id="tab-vms"></section>
+</main>
+<aside class="panel" id="panel" aria-label="Worker"></aside>
+<div class="toast hidden" id="toast" role="status"></div>
+<script>
+'use strict';
+// zapper office UI.
+//
+// Everything shown here comes from workers that may be hostile: mail,
+// transcripts, published files, request reasons, even names. The page is
+// built with createElement and textContent only; no HTML is ever parsed
+// from data. The only URLs taken from data are http(s) links (shown with
+// their target) and files of the shared drive, built from our own API path.
+
+// ───────────────────────────── helpers ─────────────────────────────
+
+const $ = (id) => document.getElementById(id);
+const SVGNS = 'http://www.w3.org/2000/svg';
+const REDUCED = window.matchMedia('(prefers-reduced-motion: reduce)');
+
+// el('div', {class: 'x', onclick: fn, title: 't'}, 'text', child, [more])
+function el(tag, props, ...kids) {
+  const e = document.createElement(tag);
+  setProps(e, props);
+  append(e, kids);
+  return e;
+}
+function sv(tag, props, ...kids) {
+  const e = document.createElementNS(SVGNS, tag);
+  setProps(e, props);
+  append(e, kids);
+  return e;
+}
+function setProps(e, props) {
+  if (!props) return;
+  for (const [k, v] of Object.entries(props)) {
+    if (v == null || v === false) continue;
+    if (k === 'class') e.setAttribute('class', v);
+    else if (k.startsWith('on') && typeof v === 'function') e.addEventListener(k.slice(2), v);
+    else if (k === 'href' || k === 'src') throw new Error('set ' + k + ' explicitly'); // URLs only through safe helpers
+    else if (k === 'value' || k === 'checked' || k === 'disabled' || k === 'selected') e[k] = v;
+    else e.setAttribute(k, v === true ? '' : String(v));
+  }
+}
+function append(e, kids) {
+  for (const k of kids.flat(Infinity)) {
+    if (k == null || k === false) continue;
+    e.append(k instanceof Node ? k : document.createTextNode(String(k)));
+  }
+}
+const str = (v) => (v == null ? '' : typeof v === 'string' ? v : String(v));
+const clip = (s, n) => { s = str(s); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
+const firstLine = (s) => str(s).split('\n').find((l) => l.trim()) || '';
+const nowSec = () => Date.now() / 1000;
+const pad2 = (n) => String(n).padStart(2, '0');
+function fmtTime(t) { if (!t) return ''; const d = new Date(t * 1000); return pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds()); }
+function fmtDate(t) { if (!t) return ''; const d = new Date(t * 1000); return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()); }
+function fmtDur(s) {
+  if (s == null || !isFinite(s)) return '–';
+  s = Math.max(0, s);
+  if (s < 60) return Math.round(s) + 's';
+  if (s < 3600) return Math.round(s / 60) + 'm';
+  if (s < 86400) return (s / 3600).toFixed(s < 36000 ? 1 : 0) + 'h';
+  return (s / 86400).toFixed(1) + 'd';
+}
+function ago(t) { return t ? fmtDur(T() - t) + ' ago' : ''; }
+function fmtNum(n) { n = Number(n) || 0; return n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e4 ? (n / 1e3).toFixed(0) + 'k' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'k' : String(Math.round(n)); }
+function fmtBytes(n) { n = Number(n) || 0; return n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(1) + ' KB' : (n / 1048576).toFixed(1) + ' MB'; }
+function median(xs) { if (!xs.length) return null; const a = xs.slice().sort((x, y) => x - y); const m = a.length >> 1; return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2; }
+const pill = (cls, text) => el('span', { class: 'pill ' + (cls || '') }, text ?? cls);
+const arr = (v) => (Array.isArray(v) ? v : v == null ? [] : [v]);
+function opt(value, label, selected) { return el('option', { value, selected: !!selected }, label ?? value); }
+function selectOf(options, value, props) {
+  const s = el('select', props);
+  for (const o of options) { const [v, l] = Array.isArray(o) ? o : [o, o]; s.append(opt(v, l, v === value)); }
+  return s;
+}
+let toastTimer = null;
+function toast(msg, bad) {
+  const t = $('toast');
+  t.textContent = str(msg);
+  t.className = 'toast' + (bad ? ' bad' : '');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.add('hidden'), bad ? 7000 : 3000);
+}
+// A colour from config: only #rgb/#rrggbb(aa) is used, anything else falls back.
+const safeColor = (c) => (typeof c === 'string' && /^#[0-9a-fA-F]{3,8}$/.test(c) ? c : '#D97757');
+
+// ─────────────────────────────── api ───────────────────────────────
+
+async function api(path, opts) {
+  const r = await fetch('/api' + path, opts);
+  const ct = r.headers.get('content-type') || '';
+  let body = null;
+  try { body = ct.includes('application/json') ? await r.json() : await r.text(); } catch (e) { body = null; }
+  if (!r.ok) throw new Error((body && typeof body === 'object' && body.error) || (typeof body === 'string' && body.slice(0, 200)) || ('HTTP ' + r.status));
+  return body;
+}
+function write(method, path, body) {
+  return api(path, {
+    method,
+    headers: { 'X-Zapper-UI': '1', 'content-type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+}
+const enc = encodeURIComponent;
+const F = () => '/firms/' + enc(S.firm);
+const runPath = (run) => F() + '/runs/' + enc(run || S.run);
+// A file of the shared drive. Every part comes from the journal and is
+// encoded segment by segment; '.' and '..' segments are refused.
+function driveUrl(artifact, version, path) {
+  const segs = str(path).split('/');
+  if (!/^[\w.-]+$/.test(str(artifact)) || !/^\d+$/.test(str(version)) || segs.some((s) => !s || s === '.' || s === '..')) return null;
+  return '/api' + runPath() + '/drive/' + enc(artifact) + '/' + enc(version) + '/' + segs.map(enc).join('/');
+}
+// Parses an ndjson body; bad lines are skipped.
+function parseLines(text) {
+  const out = [];
+  for (const line of str(text).split('\n')) {
+    if (!line.trim()) continue;
+    try { const v = JSON.parse(line); if (v && typeof v === 'object') out.push(v); } catch (e) { /* partial or bad line */ }
+  }
+  return out;
+}
+// The bytes of complete lines in a text, to follow a file from there.
+function completeBytes(text) {
+  const i = text.lastIndexOf('\n');
+  return i < 0 ? { text: '', bytes: 0 } : { text: text.slice(0, i + 1), bytes: new TextEncoder().encode(text.slice(0, i + 1)).length };
+}
+
+// ────────────────────────────── state ──────────────────────────────
+
+const TABS = [['overview', 'Overview'], ['messages', 'Messages'], ['security', 'Security'], ['drive', 'Shared drive'], ['git', 'Git'], ['stats', 'Statistics'], ['vms', 'VMs']];
+const S = {
+  firms: [], firm: null, info: null, tab: 'overview',
+  mode: 'live',          // 'live' or 'replay'
+  run: null,             // the run being shown
+  M: null,               // the folded journal
+  seen: new Set(),       // journal seqs applied
+  es: null,              // live journal stream
+  boardUnread: new Set(),
+  security: null,        // GET /security (live)
+  rp: null,              // replay: {events, idx, t0, t1, pos, playing, speed, timer, skip}
+  gen: 0,                // bumps when the source changes; stale async results are dropped
+};
+// "Now": wall clock live, the timeline position in replay.
+const T = () => (S.mode === 'replay' && S.rp ? S.rp.pos : nowSec());
+const live = () => S.mode === 'live';
+const runState = () => (S.M && S.M.runState) || (S.info && S.info.run && S.info.run.state) || 'off';
+const canWrite = () => live() && S.info && S.info.run && ['running', 'paused'].includes(S.info.run.state);
+const BOARD = 'board';
+const boardName = () => (S.M && S.M.board) || (S.info && S.info.board) || 'Board';
+
+// ─────────────────────────── journal fold ───────────────────────────
+//
+// One fold serves live and replay: apply() takes one journal event at a
+// time; live applies the stream as it comes, replay applies events up to
+// the timeline position (and starts over when moving back).
+
+function newModel() {
+  return {
+    chart: null, board: null, domain: '', budget: null, description: '',
+    runState: null, started: null, last: null, runStates: [],
+    workers: new Map(), mails: new Map(), threads: new Map(), obl: new Map(),
+    requests: new Map(), access: [], standing: new Map(), artifacts: new Map(),
+    published: [], digests: [], opErrors: [], turns: [], settled: [], escalations: [],
+    fetched: [], overBudget: false, count: 0,
+  };
+}
+function setChart(M, chart) {
+  M.chart = chart;
+  M.board = chart.board || M.board;
+  M.domain = chart.domain || '';
+  M.description = chart.description || '';
+  for (const c of arr(chart.workers)) {
+    if (!c || typeof c.name !== 'string') continue;
+    const w = worker(M, c.name);
+    Object.assign(w, { role: str(c.role), title: str(c.title), reports_to: c.reports_to || null, officer: !!c.officer, avatar: c.avatar || null, model: c.model || null, inChart: true });
+  }
+}
+function worker(M, name) {
+  let w = M.workers.get(name);
+  if (!w) {
+    w = { name, role: '', title: '', reports_to: null, officer: false, avatar: null, inChart: false,
+      state: 'off', detail: '', since: null, segs: [], session: null, sessions: [],
+      unread: new Set(), turns: 0, tokens: 0, cost: 0, rateLimited: 0, interrupted: 0, errors: 0,
+      inTurn: false, reviewing: false };
+    M.workers.set(name, w);
+  }
+  return w;
+}
+function setState(M, w, state, detail, ts) {
+  const last = w.segs[w.segs.length - 1];
+  if (last && last.to == null) {
+    if (last.state === state) { w.detail = str(detail); return; }
+    last.to = ts;
+  }
+  w.segs.push({ state, from: ts, to: null });
+  w.state = state; w.detail = str(detail); w.since = ts;
+}
+const isWorker = (M, n) => M.workers.has(n);
+
+function apply(M, e) {
+  if (!e || typeof e !== 'object') return;
+  const ts = Number(e.ts) || M.last || 0;
+  if (M.started == null) M.started = ts;
+  M.last = ts;
+  M.count++;
+  switch (e.type) {
+    case 'run': {
+      if (e.chart && typeof e.chart === 'object') setChart(M, e.chart);
+      if (e.budget) M.budget = e.budget;
+      if (e.state) { M.runState = e.state; M.runStates.push({ state: e.state, ts, reason: e.reason || e.error || '' }); }
+      if (e.state === 'ended' || e.state === 'failed') for (const w of M.workers.values()) setState(M, w, 'off', '', ts);
+      break;
+    }
+    case 'worker': {
+      if (typeof e.worker !== 'string') break;
+      const w = worker(M, e.worker);
+      setState(M, w, str(e.state) || 'idle', e.detail, ts);
+      if (e.state === 'error') w.errors++;
+      break;
+    }
+    case 'worker_session': {
+      if (typeof e.worker !== 'string') break;
+      const w = worker(M, e.worker);
+      w.session = str(e.session); w.sessions.push(w.session);
+      break;
+    }
+    case 'mail': {
+      if (typeof e.id !== 'string') break;
+      const m = { id: e.id, thread: str(e.thread) || e.id, from: str(e.from), to: arr(e.to).map(str), cc: arr(e.cc).map(str),
+        subject: str(e.subject), kind: str(e.kind) || 'fyi', expects: str(e.expects) || 'nothing', due: Number(e.due) || null,
+        in_reply_to: e.in_reply_to || null, attachments: arr(e.attachments).map(str), automatic: !!e.automatic,
+        close: !!e.close, context: e.context || null, body: str(e.body), ts, seq: e.seq };
+      M.mails.set(m.id, m);
+      let t = M.threads.get(m.thread);
+      if (!t) {
+        t = { id: m.thread, subject: m.subject, kind: m.kind, first: m.id, mails: [], people: new Set(), context: m.context, started: ts, last: ts, closed: false, paused: false, obl: [], board: false };
+        M.threads.set(t.id, t);
+      }
+      if (!t.subject && m.subject) t.subject = m.subject;
+      t.mails.push(m.id); t.last = ts;
+      if (m.close) t.closed = true;
+      for (const p of [m.from, ...m.to, ...m.cc]) if (p) t.people.add(p);
+      if (m.from === BOARD || m.to.includes(BOARD) || m.cc.includes(BOARD)) t.board = true;
+      for (const r of [...m.to, ...m.cc]) if (r !== BOARD && r !== m.from && isWorker(M, r)) worker(M, r).unread.add(m.id);
+      if (m.expects === 'reply' || m.expects === 'done') {
+        for (const d of m.to) {
+          if (d === BOARD || d === m.from) continue;
+          const key = m.id + '|' + d;
+          const o = { key, message: m.id, thread: t.id, debtor: d, creditor: m.from, due: m.due, created: ts, kind: m.kind, expects: m.expects, settled: null, escalated: null };
+          M.obl.set(key, o); t.obl.push(key);
+        }
+      }
+      break;
+    }
+    case 'settled': {
+      const o = M.obl.get(str(e.message) + '|' + str(e.debtor));
+      if (o && !o.settled) { o.settled = { by: str(e.by), ts }; M.settled.push({ o, ts }); }
+      break;
+    }
+    case 'escalated': {
+      const o = M.obl.get(str(e.message) + '|' + str(e.debtor));
+      if (o) o.escalated = str(e.manager);
+      M.escalations.push({ message: str(e.message), thread: str(e.thread), debtor: str(e.debtor), creditor: str(e.creditor), manager: str(e.manager), ts });
+      break;
+    }
+    case 'thread_paused': {
+      const t = M.threads.get(str(e.thread));
+      if (t) t.paused = true;
+      break;
+    }
+    case 'turn': {
+      if (typeof e.worker !== 'string') break;
+      const w = worker(M, e.worker);
+      if (e.event === 'start') {
+        w.inTurn = true; w.reviewing = !!e.reviewing;
+        for (const id of arr(e.messages)) w.unread.delete(str(id));
+      } else if (e.event === 'end') {
+        w.inTurn = false; w.turns++;
+        const tok = Number(e.tokens) || 0;
+        w.tokens += tok; w.cost += Number(e.cost_usd) || 0;
+        M.turns.push({ worker: w.name, ts, tokens: tok, ms: Number(e.ms) || 0, error: !!e.is_error });
+      } else if (e.event === 'interrupted') { w.inTurn = false; w.interrupted++; }
+      else if (e.event === 'rate_limited') { w.inTurn = false; w.rateLimited++; }
+      break;
+    }
+    case 'access': {
+      const rec = { seq: e.seq, ts, event: str(e.event), by: e.by ? str(e.by) : null, reason: e.reason ? str(e.reason) : null, rule: e.rule ? str(e.rule) : null, raw: e };
+      let r = null;
+      if (e.request && typeof e.request === 'object' && typeof e.request.id === 'string') {
+        r = Object.assign({}, M.requests.get(e.request.id) || {}, e.request);
+        M.requests.set(r.id, r);
+      } else if (typeof e.request === 'string') {
+        r = M.requests.get(e.request) || null;
+        if (r && e.event === 'board_asked') { r = Object.assign({}, r, { board_asked: true }); M.requests.set(r.id, r); }
+      }
+      rec.request = r ? Object.assign({}, r) : null;
+      M.access.push(rec);
+      if (e.event === 'decided' && r && r.decision && r.decision.rule && (r.decision.scope === 'worker' || r.decision.scope === 'role')) {
+        const d = r.decision;
+        const role = M.workers.has(r.worker) ? M.workers.get(r.worker).role : '';
+        M.standing.set(str(d.rule), {
+          id: str(d.rule), rule: { action: d.allow ? 'allow' : 'deny', host: r.host, ports: r.port ? [r.port] : [], methods: d.methods || r.methods || null, path: d.path || null },
+          scope: d.scope === 'role' ? 'role:' + role : 'worker:' + r.worker, by: str(d.by), reason: str(d.reason), request: r.id,
+          created: Number(d.at) || ts, expires: Number(d.expires) || null, uses: 0, ended: null,
+        });
+      }
+      if ((e.event === 'revoked' || e.event === 'expired') && e.rule) {
+        const st = M.standing.get(str(e.rule));
+        if (st) st.ended = { how: e.event, ts, by: e.by ? str(e.by) : null };
+      }
+      if (e.event === 'used' && e.rule) { const st = M.standing.get(str(e.rule)); if (st) st.uses++; }
+      break;
+    }
+    case 'published': {
+      const id = str(e.artifact);
+      if (!id) break;
+      let a = M.artifacts.get(id);
+      if (!a) { a = { id, title: '', kind: '', author: '', audience: null, thread: null, versions: [], created: ts }; M.artifacts.set(id, a); }
+      Object.assign(a, { title: str(e.title), kind: str(e.kind), author: str(e.author), audience: e.audience, thread: e.thread || a.thread, last: ts });
+      const files = arr(e.files).filter((f) => f && typeof f.path === 'string').map((f) => ({ path: f.path, size: Number(f.size) || 0, sha256: str(f.sha256) }));
+      a.versions.push({ version: Number(e.version) || a.versions.length + 1, summary: str(e.summary), files, ts, title: str(e.title) });
+      M.published.push({ artifact: id, version: Number(e.version) || a.versions.length, author: a.author, kind: a.kind, ts });
+      break;
+    }
+    case 'fetched': M.fetched.push({ artifact: str(e.artifact), version: e.version, worker: str(e.worker), dest: str(e.dest), ts }); break;
+    case 'digest': M.digests.push({ requests: Number(e.requests) || 0, allowed: Number(e.allowed) || 0, new_hosts: arr(e.new_hosts).map(str), ts }); break;
+    case 'budget': if (e.over) M.overBudget = true; break;
+    case 'op_error': M.opErrors.push({ worker: str(e.worker), op: str(e.op), error: str(e.error), ts }); break;
+  }
+}
+
+// ─────────────────────── derived from the fold ───────────────────────
+
+const openObl = (M) => [...M.obl.values()].filter((o) => !o.settled);
+const overdue = (o, now) => !o.settled && o.due && now > o.due;
+function threadState(M, t, now) {
+  if (t.paused) return 'paused';
+  const obs = t.obl.map((k) => M.obl.get(k)).filter(Boolean);
+  const open = obs.filter((o) => !o.settled);
+  if (open.some((o) => overdue(o, now))) return 'overdue';
+  if (open.length) return 'waiting';
+  if (t.closed || obs.length) return 'closed';
+  return 'open';
+}
+function desk(M, name, now) {
+  const owes = [], waits = [];
+  for (const o of M.obl.values()) {
+    if (o.settled) continue;
+    if (o.debtor === name) owes.push(o);
+    if (o.creditor === name) waits.push(o);
+  }
+  const reqs = [...M.requests.values()].filter((r) => r.worker === name && (r.state === 'pending' || r.state === 'escalated'));
+  return { owes, waits, overdue: owes.filter((o) => overdue(o, now)), reqs };
+}
+function statusLine(M, w, now) {
+  const d = desk(M, w.name, now);
+  const parts = [];
+  if (w.state === 'waiting' && d.waits.length) parts.push('waiting for ' + [...new Set(d.waits.map((o) => o.debtor))].join(', '));
+  else if (w.state === 'off') parts.push('off');
+  else if (w.detail) parts.push(w.detail);
+  else parts.push(w.state);
+  if (d.overdue.length) parts.push('overdue: ' + d.overdue.length);
+  return { text: parts.join(' · '), bad: d.overdue.length > 0 || w.state === 'error' };
+}
+const escalationsWaiting = (M) => [...M.requests.values()].filter((r) => (r.state === 'escalated' || (r.board_asked && r.state === 'pending')));
+// The chart: from the run's first event, else from the firm's config.
+// `claude-opus-5-5` → `Opus 5.5`; other names as they are.
+function modelName(m) {
+  const x = /^claude-([a-z]+)-(\d+)-(\d+)/.exec(str(m));
+  return x ? x[1][0].toUpperCase() + x[1].slice(1) + ' ' + x[2] + '.' + x[3] : str(m);
+}
+function chartWorkers() {
+  const M = S.M;
+  if (M && M.chart) return [...M.workers.values()].filter((w) => w.inChart);
+  return [];
+}
+function rootWorker() { const ws = chartWorkers(); return (ws.find((w) => !w.reports_to) || ws[0] || {}).name || null; }
+function workerUnread(name) {
+  if (live() && S.info && S.info.run) { const w = arr(S.info.run.workers).find((x) => x.name === name); if (w && typeof w.unread === 'number') return w.unread; }
+  const w = S.M && S.M.workers.get(name);
+  return w ? w.unread.size : 0;
+}
+function workerSession(name) {
+  const w = S.M && S.M.workers.get(name);
+  if (live() && S.info && S.info.run) { const x = arr(S.info.run.workers).find((x) => x.name === name); if (x && x.session) return x.session; }
+  return w ? w.session : null;
+}
+
+// ───────────────────────────── avatars ─────────────────────────────
+//
+// Schematic figures from parts: a round head with two dot eyes, a rounded
+// body in the role's colour, a role prop, and a spark above the head as
+// the thinking mark. States are classes; CSS animates them.
+
+const STATES = ['off', 'booting', 'idle', 'waiting', 'queued', 'working', 'reviewing', 'over-budget', 'error'];
+const STATE_ICON = { off: '○', booting: '◌', idle: '◯', waiting: '⧗', queued: '…', working: '✳', reviewing: '⛨', 'over-budget': '◔', error: '●' };
+
+function sparkG(cx, cy, r1, r2) {
+  const g = sv('g', { class: 'spark' });
+  for (let k = 0; k < 8; k++) {
+    const a = (k * Math.PI) / 4, c = Math.cos(a), s = Math.sin(a);
+    const long = k % 2 === 0 ? r2 : r2 * 0.72;
+    g.append(sv('line', { x1: (cx + c * r1).toFixed(2), y1: (cy + s * r1).toFixed(2), x2: (cx + c * long).toFixed(2), y2: (cy + s * long).toFixed(2) }));
+  }
+  return g;
+}
+function propFor(figure, color) {
+  const g = sv('g', { class: 'prop' });
+  switch (figure) {
+    case 'ceo':
+      g.append(
+        sv('path', { class: 'f', d: 'M32 44.5 l-2.2 2.6 l2.2 11.5 l2.2 -11.5 z', fill: 'var(--av-stroke)' }),
+        sv('path', { class: 'f', d: 'M30.3 43.2 h3.4 l-0.7 1.8 h-2 z', fill: 'var(--av-stroke)' }),
+        sv('line', { class: 'ln', x1: 53, y1: 45, x2: 53, y2: 68 }),
+        sv('path', { class: 'f acc flag', d: 'M53.4 45.5 h8 l-2.3 3.2 l2.3 3.2 h-8 z' }));
+      break;
+    case 'product-manager':
+      g.append(
+        sv('rect', { class: 'paper', x: 44, y: 45, width: 18, height: 14, rx: 1.8 }),
+        sv('line', { class: 'ln', x1: 47, y1: 59, x2: 46, y2: 67 }), sv('line', { class: 'ln', x1: 59, y1: 59, x2: 60, y2: 67 }),
+        sv('rect', { class: 'f note', x: 46.5, y: 47.5, width: 6.5, height: 6.5, rx: 0.8, fill: '#E9B949' }),
+        sv('rect', { class: 'f', x: 55, y: 49, width: 4.8, height: 4.8, rx: 0.7, fill: '#9DBE9A' }),
+        sv('rect', { class: 'f', x: 48, y: 55.3, width: 9, height: 1.4, rx: 0.7, fill: 'var(--av-stroke)', opacity: 0.35 }));
+      break;
+    case 'manager': {
+      const checks = sv('g', { class: 'checks' },
+        sv('path', { class: 'ln', d: 'M48 53 l1.6 1.6 l3 -3.2' }), sv('path', { class: 'ln', d: 'M48 59 l1.6 1.6 l3 -3.2' }));
+      g.append(
+        sv('rect', { class: 'paper', x: 45, y: 46, width: 14, height: 19, rx: 2 }),
+        sv('rect', { class: 'f acc', x: 49, y: 44.3, width: 6, height: 3.4, rx: 1 }),
+        checks,
+        sv('line', { class: 'ln', x1: 54.5, y1: 53.5, x2: 57, y2: 53.5 }), sv('line', { class: 'ln', x1: 54.5, y1: 59.5, x2: 57, y2: 59.5 }));
+      break;
+    }
+    case 'engineer': {
+      const code = sv('text', { class: 'code', x: 32, y: 59.6, 'text-anchor': 'middle' });
+      code.textContent = '</>';
+      g.append(
+        sv('rect', { class: 'screen', x: 20.5, y: 48.5, width: 23, height: 15, rx: 1.8 }),
+        sv('rect', { class: 'f screen-glow', x: 22.5, y: 50.5, width: 19, height: 11, rx: 1, fill: color, 'fill-opacity': 0.18 }),
+        code,
+        sv('path', { class: 'paper', d: 'M17 63.5 h30 l-1.6 2.6 h-26.8 z' }));
+      break;
+    }
+    case 'researcher':
+      g.append(
+        sv('rect', { class: 'paper', x: 44, y: 46, width: 14, height: 18, rx: 1.5 }),
+        sv('rect', { class: 'paper pageflip', x: 51, y: 46, width: 7, height: 18, rx: 0.8 }),
+        sv('line', { class: 'ln', x1: 46.5, y1: 50, x2: 55, y2: 50 }), sv('line', { class: 'ln', x1: 46.5, y1: 53.5, x2: 55, y2: 53.5 }), sv('line', { class: 'ln', x1: 46.5, y1: 57, x2: 52, y2: 57 }),
+        sv('g', { class: 'lens' }, sv('circle', { class: 'ln', cx: 48, cy: 58, r: 4.6, fill: 'var(--paper)', 'fill-opacity': 0.5 }), sv('line', { class: 'ln', x1: 44.8, y1: 61.4, x2: 41.5, y2: 65 })));
+      break;
+    case 'analyst':
+      g.append(
+        sv('path', { class: 'ln', d: 'M44 46 V65 H62' }),
+        sv('rect', { class: 'f acc bar1', x: 46.5, y: 56, width: 3.6, height: 9, rx: 0.6 }),
+        sv('rect', { class: 'f bar2', x: 51.5, y: 51, width: 3.6, height: 14, rx: 0.6, fill: color }),
+        sv('rect', { class: 'f bar3', x: 56.5, y: 47.5, width: 3.6, height: 17.5, rx: 0.6, fill: 'var(--av-stroke)', 'fill-opacity': 0.55 }));
+      break;
+    case 'designer':
+      g.append(
+        sv('path', { class: 'paper', d: 'M52 46 c6.5 0 10.5 4 10.5 9 c0 3.2 -2.6 4 -4.6 3.6 c-2 -0.4 -3 1 -2.2 2.8 c0.8 1.8 -0.4 3.4 -3.6 3.4 c-5.6 0 -9.6 -4.2 -9.6 -9.4 c0 -5.4 4.1 -9.4 9.5 -9.4 z' }),
+        sv('circle', { class: 'f', cx: 47.6, cy: 52.4, r: 1.6, fill: '#D97757' }),
+        sv('circle', { class: 'f', cx: 52.4, cy: 50, r: 1.6, fill: '#6A9BCC' }),
+        sv('circle', { class: 'f', cx: 57.4, cy: 51.6, r: 1.6, fill: '#E9B949' }),
+        sv('circle', { class: 'f', cx: 47.6, cy: 58, r: 1.6, fill: color }),
+        sv('g', { class: 'brush' }, sv('line', { class: 'ln', x1: 40, y1: 66, x2: 50.5, y2: 55.5 }), sv('path', { class: 'f acc', d: 'M50 56 l2.6 -2.6 l1.8 1.8 l-2.6 2.6 z' })));
+      break;
+    case 'shield':
+      g.append(sv('g', { class: 'shield' },
+        sv('path', { class: 'paper', d: 'M32 44.5 l8.5 3 v6.5 c0 5.3 -3.8 8.6 -8.5 10.6 c-4.7 -2 -8.5 -5.3 -8.5 -10.6 v-6.5 z' }),
+        sv('path', { class: 'ln', d: 'M28.4 54.4 l2.6 2.6 l4.8 -5.2', stroke: color })));
+      break;
+    default: break;
+  }
+  return g;
+}
+function avatar(figure, color, state, opts) {
+  opts = opts || {};
+  color = safeColor(color);
+  const size = opts.size || 72;
+  const s = sv('svg', { class: 'av' + (opts.static ? '' : ' anim') + ' st-' + (STATES.includes(state) ? state : 'idle'), viewBox: '0 0 72 74', width: size, height: (size * 74 / 72).toFixed(1), 'aria-hidden': 'true' });
+  const fig = sv('g', { class: 'fig' },
+    sv('path', { class: 'f f-body', d: 'M18 70 V56 a14 13.5 0 0 1 28 0 V70 z', fill: color }),
+    sv('circle', { class: 'f f-head', cx: 32, cy: 30, r: 9.5 }),
+    sv('g', { class: 'eyes' }, sv('circle', { class: 'eye', cx: 28.6, cy: 30.6, r: 1.15 }), sv('circle', { class: 'eye', cx: 35.4, cy: 30.6, r: 1.15 })),
+    propFor(figure, color));
+  s.append(fig, sparkG(32, 11.5, 2, 6));
+  // State marks, top right.
+  s.append(sv('g', { class: 'hourglass' }, sv('path', { d: 'M54 8 h8 l-4 6 l4 6 h-8 l4 -6 z' }), sv('path', { class: 'sand', d: 'M56 18.5 h4 l-2 -2.6 z' })));
+  s.append(sv('g', { class: 'gauge' }, sv('path', { d: 'M52 19 a6 6 0 0 1 12 0' }), sv('path', { class: 'needle', d: 'M58 19 l4 -4' })));
+  s.append(sv('circle', { class: 'errdot', cx: 60, cy: 12, r: 3.6 }));
+  return s;
+}
+function setAvatarState(svgEl, state) {
+  const st = STATES.includes(state) ? state : 'idle';
+  const cls = svgEl.getAttribute('class').split(' ').filter((c) => !c.startsWith('st-'));
+  cls.push('st-' + st);
+  svgEl.setAttribute('class', cls.join(' '));
+}
+function podium() {
+  const s = sv('svg', { class: 'av', viewBox: '0 0 72 74', width: 72, height: 74, 'aria-hidden': 'true' });
+  s.append(
+    sv('rect', { x: 10, y: 34, width: 52, height: 7, rx: 3.5, fill: 'var(--accent)' }),
+    sv('path', { d: 'M16 41 h40 l-4 26 h-32 z', fill: 'var(--paper)', stroke: 'var(--av-stroke)', 'stroke-width': 1 }),
+    sv('line', { x1: 24, y1: 50, x2: 48, y2: 50, stroke: 'var(--av-stroke)', 'stroke-width': 1, 'stroke-opacity': 0.4 }),
+    sv('circle', { cx: 24, cy: 24, r: 5, fill: 'var(--head)', stroke: 'var(--av-stroke)', 'stroke-width': 1 }),
+    sv('circle', { cx: 36, cy: 21, r: 5.5, fill: 'var(--head)', stroke: 'var(--av-stroke)', 'stroke-width': 1 }),
+    sv('circle', { cx: 48, cy: 24, r: 5, fill: 'var(--head)', stroke: 'var(--av-stroke)', 'stroke-width': 1 }));
+  return s;
+}
+function miniAvatar(name) {
+  if (name === BOARD) { const p = podium(); p.setAttribute('class', 'av mini'); return p; }
+  const w = S.M && S.M.workers.get(name);
+  if (!w) { const s = sv('svg', { class: 'av mini', viewBox: '0 0 72 74' }, sv('circle', { cx: 36, cy: 37, r: 14, fill: 'var(--line2)' })); return s; }
+  const a = avatar((w.avatar && w.avatar.figure) || 'plain', w.avatar && w.avatar.color, 'idle', { static: true, size: 26 });
+  a.classList.add('mini');
+  return a;
+}
+function envelopeIcon(kind) {
+  const fill = kind === 'assignment' ? 'var(--accent)' : kind === 'report' ? 'var(--ok)' : kind === 'question' ? 'var(--info)' : 'var(--paper)';
+  return sv('svg', { viewBox: '0 0 22 16' },
+    sv('rect', { x: 1, y: 1, width: 20, height: 14, rx: 2.5, fill, stroke: 'var(--av-stroke)', 'stroke-width': 1 }),
+    sv('path', { d: 'M2 2.5 l9 6.5 l9 -6.5', fill: 'none', stroke: 'var(--av-stroke)', 'stroke-width': 1 }));
+}
+const ICONS = {
+  lock: () => sv('svg', { viewBox: '0 0 12 12' }, sv('rect', { x: 2, y: 5, width: 8, height: 6, rx: 1.2, fill: 'currentColor' }), sv('path', { d: 'M4 5 V3.5 a2 2 0 0 1 4 0 V5', fill: 'none', stroke: 'currentColor', 'stroke-width': 1.3 })),
+  clock: () => sv('svg', { viewBox: '0 0 12 12' }, sv('circle', { cx: 6, cy: 6, r: 4.8, fill: 'none', stroke: 'currentColor', 'stroke-width': 1.3 }), sv('path', { d: 'M6 3.4 V6 l1.8 1.3', fill: 'none', stroke: 'currentColor', 'stroke-width': 1.3, 'stroke-linecap': 'round' })),
+  mail: () => sv('svg', { viewBox: '0 0 12 12' }, sv('rect', { x: 1, y: 2.5, width: 10, height: 7, rx: 1.2, fill: 'none', stroke: 'currentColor', 'stroke-width': 1.2 }), sv('path', { d: 'M1.5 3 l4.5 3.4 l4.5 -3.4', fill: 'none', stroke: 'currentColor', 'stroke-width': 1.2 })),
+};
+
+// ───────────────────────────── layout ─────────────────────────────
+//
+// A tidy top-down tree: leaves take consecutive slots, a parent sits over
+// the middle of its children. The board is the root; workers without a
+// (known) manager, and any caught in a reporting cycle, hang under it.
+
+const NW = 176, NH = 156, GX = 22, GY = 46;
+function layoutTree(workers) {
+  const names = new Set(workers.map((w) => w.name));
+  const parent = new Map();
+  for (const w of workers) parent.set(w.name, w.reports_to && names.has(w.reports_to) && w.reports_to !== w.name ? w.reports_to : BOARD);
+  const kidsOf = () => {
+    const k = new Map([[BOARD, []]]);
+    for (const w of workers) k.set(w.name, []);
+    for (const w of workers) k.get(parent.get(w.name)).push(w.name);
+    return k;
+  };
+  let kids = kidsOf();
+  for (;;) {
+    const reach = new Set(), stack = [BOARD];
+    while (stack.length) { const n = stack.pop(); if (reach.has(n)) continue; reach.add(n); stack.push(...kids.get(n)); }
+    const lost = workers.find((w) => !reach.has(w.name));
+    if (!lost) break;
+    parent.set(lost.name, BOARD);
+    kids = kidsOf();
+  }
+  const pos = new Map();
+  let slot = 0, maxDepth = 0;
+  const place = (n, depth) => {
+    maxDepth = Math.max(maxDepth, depth);
+    const ks = kids.get(n);
+    let x;
+    if (!ks.length) x = slot++;
+    else { for (const k of ks) place(k, depth + 1); x = (pos.get(ks[0]).slot + pos.get(ks[ks.length - 1]).slot) / 2; }
+    pos.set(n, { slot: x, depth, x: x * (NW + GX), y: depth * (NH + GY) });
+  };
+  place(BOARD, 0);
+  return { pos, parent, width: Math.max(1, slot) * (NW + GX) - GX, height: (maxDepth + 1) * (NH + GY) - GY };
+}
+
+// ───────────────────────────── overview ─────────────────────────────
+
+const OV = { sig: null, nodes: new Map(), lay: null, scale: 1, built: false };
+
+function mountOverview() {
+  const root = $('tab-overview');
+  root.replaceChildren(
+    el('div', { class: 'ovhead' }, el('h2', { class: 'sec', style: 'margin:0' }, 'Organization'), el('span', { class: 'muted', id: 'ov-sub' }), el('span', { id: 'ov-product', class: 'ov-product' })),
+    el('div', { class: 'hint hidden', id: 'ov-hint' }),
+    el('div', { class: 'stagebox', id: 'stagebox' }, el('div', { class: 'stage', id: 'stage' })),
+    el('div', { class: 'legend', id: 'ov-legend' }));
+  const lg = $('ov-legend');
+  for (const s of ['idle', 'working', 'reviewing', 'waiting', 'queued', 'booting', 'over-budget', 'error', 'off']) {
+    const sw = sv('svg', { width: 10, height: 10 }, sv('rect', { class: 's-' + s, width: 10, height: 10, rx: 3 }));
+    lg.append(el('span', {}, sw, ' ', s));
+  }
+  lg.append(el('span', {}, '· envelopes fly as mail is sent; click a worker to write to them'));
+  OV.sig = null;
+}
+function buildOverview() {
+  const ws = chartWorkers();
+  const sig = JSON.stringify([boardName(), ws.map((w) => [w.name, w.reports_to, w.title, w.avatar])]);
+  if (sig === OV.sig) return;
+  OV.sig = sig;
+  const stage = $('stage');
+  stage.replaceChildren();
+  OV.nodes.clear();
+  if (!ws.length) { OV.lay = null; stage.append(el('div', { class: 'empty', style: 'width:600px' }, 'No workers in this firm.')); fitOverview(); return; }
+  const lay = layoutTree(ws);
+  OV.lay = lay;
+  stage.style.width = lay.width + 'px';
+  stage.style.height = lay.height + 'px';
+  const edges = sv('svg', { class: 'edges', width: lay.width, height: lay.height });
+  for (const w of ws) {
+    const a = lay.pos.get(lay.parent.get(w.name)), b = lay.pos.get(w.name);
+    const x1 = a.x + NW / 2, y1 = a.y + NH - 6, x2 = b.x + NW / 2, y2 = b.y + 4, my = (y1 + y2) / 2;
+    edges.append(sv('path', { d: `M${x1} ${y1} C${x1} ${my} ${x2} ${my} ${x2} ${y2}` }));
+  }
+  stage.append(edges);
+  // The board.
+  const bp = lay.pos.get(BOARD);
+  const bBadge = el('div', { class: 'bdg' });
+  const bnode = el('div', { class: 'node', style: `left:${bp.x}px;top:${bp.y}px`, title: 'The board: open its inbox', onclick: () => { MSG.view = 'inbox'; showTab('messages'); } },
+    podium(), el('div', { class: 'nm' }, boardName()), el('div', { class: 'tt' }, 'the board'), el('div', { class: 'st', id: 'ov-board-st' }, ''), bBadge);
+  stage.append(bnode);
+  OV.nodes.set(BOARD, { el: bnode, bdg: bBadge });
+  for (const w of ws) {
+    const p = lay.pos.get(w.name);
+    const av = avatar((w.avatar && w.avatar.figure) || 'plain', w.avatar && w.avatar.color, w.state);
+    const st = el('div', { class: 'st' });
+    const rm = el('div', { class: 'rm-state' });
+    const bdg = el('div', { class: 'bdg' });
+    const node = el('div', { class: 'node', style: `left:${p.x}px;top:${p.y}px`, tabindex: 0, role: 'button', onclick: () => openPanel(w.name),
+      onkeydown: (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); openPanel(w.name); } } },
+    av, el('div', { class: 'nm' }, w.name), el('div', { class: 'tt', title: w.model ? 'model ' + w.model : '' }, (w.title || w.role) + (w.model ? ' · ' + modelName(w.model) : '')), st, rm, bdg);
+    stage.append(node);
+    OV.nodes.set(w.name, { el: node, av, st, rm, bdg });
+  }
+  fitOverview();
+}
+function fitOverview() {
+  const box = $('stagebox'), stage = $('stage');
+  if (!box || !OV.lay) { if (box) box.style.height = '120px'; return; }
+  const avail = Math.max(200, box.clientWidth - 24);
+  const scale = Math.min(1, avail / OV.lay.width);
+  OV.scale = scale;
+  const left = (box.clientWidth - OV.lay.width * scale) / 2;
+  stage.style.transform = `translate(${left}px, 18px) scale(${scale})`;
+  box.style.height = Math.ceil(OV.lay.height * scale + 36) + 'px';
+}
+function updateOverview() {
+  buildOverview();
+  const M = S.M, now = T();
+  const sub = [];
+  if (M.domain) sub.push(M.domain);
+  if (M.started) sub.push((live() ? 'run started ' : 'run of ') + fmtDate(M.started));
+  $('ov-sub').textContent = sub.join(' · ');
+  // The product: the cluster's ingress on the host, from the config; only a
+  // loopback address becomes a link.
+  const pp = str(S.info && S.info.product_port);
+  const pbox = $('ov-product');
+  const dsig = pp + '|' + dashboardSig();
+  if (pbox.dataset.sig !== dsig) {
+    pbox.dataset.sig = dsig;
+    const a = localLink(pp, 'Product ↗ ' + pp);
+    pbox.replaceChildren(...(a ? [a] : []), ...dashboardButtons());
+  }
+  for (const [name, n] of OV.nodes) {
+    if (name === BOARD) {
+      const unread = live() ? S.boardUnread.size : 0;
+      const open = M ? [...M.obl.values()].filter((o) => !o.settled && o.creditor === BOARD).length : 0;
+      $('ov-board-st').textContent = open ? 'waiting on ' + open + ' answer' + (open > 1 ? 's' : '') : '';
+      n.bdg.replaceChildren(unread ? el('span', { class: 'ic mail', title: unread + ' unread' }, ICONS.mail(), unread) : '');
+      continue;
+    }
+    const w = M.workers.get(name);
+    if (!w) continue;
+    setAvatarState(n.av, w.state);
+    const sl = statusLine(M, w, now);
+    n.st.textContent = sl.text; n.st.title = sl.text;
+    n.st.className = 'st' + (sl.bad ? ' bad' : '');
+    n.rm.textContent = (STATE_ICON[w.state] || '') + ' ' + w.state;
+    const d = desk(M, name, now), unread = workerUnread(name);
+    n.bdg.replaceChildren(
+      unread ? el('span', { class: 'ic mail', title: unread + ' unread' }, ICONS.mail(), unread) : '',
+      d.reqs.length ? el('span', { class: 'ic lock', title: d.reqs.length + ' access request(s) pending' }, ICONS.lock()) : '',
+      d.overdue.length ? el('span', { class: 'ic clock', title: d.overdue.length + ' overdue' }, ICONS.clock(), d.overdue.length) : '');
+    n.el.classList.toggle('sel', PANEL.name === name);
+  }
+  // Kickoff: a running firm with no threads yet gets its first task.
+  const hint = $('ov-hint');
+  const kick = live() && M.runState === 'running' && M.threads.size === 0;
+  hint.classList.toggle('hidden', !kick);
+  if (kick) {
+    hint.textContent = 'The firm is running and idle. Give ' + (rootWorker() || 'the CEO') + ' the firm\'s first task: click here, or on ' + (rootWorker() || 'the CEO') + '.';
+    hint.style.cursor = 'pointer';
+    hint.onclick = () => { if (rootWorker()) openPanel(rootWorker(), { kickoff: true }); };
+
+  }
+}
+// An envelope from one node to another.
+function flyMail(m) {
+  if (REDUCED.matches || S.tab !== 'overview' || !OV.lay || document.hidden) return;
+  const stage = $('stage');
+  if (!stage || stage.querySelectorAll('.env').length > 30) return;
+  const centre = (n) => { const p = OV.lay.pos.get(n); return p ? { x: p.x + NW / 2, y: p.y + 38 } : null; };
+  const from = centre(m.from) || { x: OV.lay.width - 12, y: -10 };
+  const targets = [...new Set([...m.to, ...m.cc])].filter((r) => r !== m.from);
+  targets.forEach((r, i) => {
+    const to = centre(r);
+    if (!to) return;
+    const dx = to.x - from.x, dy = to.y - from.y, len = Math.hypot(dx, dy) || 1;
+    const bend = Math.min(90, len * 0.2) * (i % 2 ? -1 : 1);
+    const cx = (from.x + to.x) / 2 - (dy / len) * bend, cy = (from.y + to.y) / 2 + (dx / len) * bend;
+    const frames = [];
+    for (let k = 0; k <= 24; k++) {
+      const t = k / 24, u = 1 - t;
+      const x = u * u * from.x + 2 * u * t * cx + t * t * to.x, y = u * u * from.y + 2 * u * t * cy + t * t * to.y;
+      frames.push({ transform: `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) scale(${(1 + 0.25 * Math.sin(Math.PI * t)).toFixed(3)})`, opacity: k === 24 ? 0 : 1 });
+    }
+    const env = el('div', { class: 'env' }, envelopeIcon(m.kind));
+    env.style.transform = frames[0].transform;
+    stage.append(env);
+    const anim = env.animate(frames, { duration: 1100 + i * 120, easing: 'ease-in-out', delay: i * 60 });
+    anim.onfinish = () => env.remove();
+    anim.oncancel = () => env.remove();
+  });
+}
+window.addEventListener('resize', () => fitOverview());
+
+// ─────────────────────────── worker panel ───────────────────────────
+
+const PANEL = { name: null, form: null, tr: null };
+
+function openPanel(name, opts) {
+  opts = opts || {};
+  const M = S.M, w = M && M.workers.get(name);
+  if (!w) return;
+  closeTranscript();
+  PANEL.name = name;
+  const p = $('panel');
+  const fig = (w.avatar && w.avatar.figure) || 'plain';
+  PANEL.av = avatar(fig, w.avatar && w.avatar.color, w.state, { size: 60 });
+  PANEL.state = el('div', { class: 'small' });
+  PANEL.form = composeForm({ fixedTo: [name], kinds: ['assignment', 'question', 'fyi'], kind: 'assignment', threadsWith: name });
+  PANEL.desk = el('div', { class: 'desk' });
+  PANEL.feed = el('div', { class: 'feed' });
+  PANEL.mail = el('div', { class: 'list' });
+  PANEL.pub = el('div', { class: 'list' });
+  PANEL.earlier = el('button', { class: 'btn small ghost', onclick: () => { if (PANEL.tr) { PANEL.tr.all = !PANEL.tr.all; renderFeed(); } } }, 'Show earlier turns');
+  p.replaceChildren(
+    el('div', { class: 'ph' }, PANEL.av,
+      el('div', {}, el('h2', {}, name), el('div', { class: 'muted' }, [w.title, w.role !== w.title ? w.role : '', w.officer ? 'security officer' : '', w.model ? modelName(w.model) : ''].filter(Boolean).join(' · '))),
+      el('button', { class: 'btn ghost close', title: 'Close', onclick: closePanel }, '✕')),
+    PANEL.state,
+    opts.kickoff ? el('div', { class: 'hint', style: 'margin-top:12px' }, 'Give ' + name + ' the firm\'s first task.') : '',
+    el('h3', {}, 'Write as the board'), PANEL.form,
+    el('h3', {}, 'Desk'), PANEL.desk,
+    el('div', { style: 'display:flex;align-items:baseline;gap:8px' }, el('h3', {}, 'Now'), PANEL.earlier), PANEL.feed,
+    el('h3', {}, 'Recent mail'), PANEL.mail,
+    el('h3', {}, 'Published'), PANEL.pub);
+  p.classList.add('open');
+  p.scrollTop = 0;
+  if (opts.kickoff) setTimeout(() => { const s = PANEL.form.querySelector('input[name=subject]'); if (s) s.focus(); }, 250);
+  openTranscript(name);
+  updatePanel();
+  if (S.tab === 'overview') updateOverview();
+}
+function closePanel() {
+  closeTranscript();
+  PANEL.name = null;
+  $('panel').classList.remove('open');
+  if (S.tab === 'overview' && S.M) updateOverview();
+}
+function updatePanel() {
+  if (!PANEL.name || !S.M) return;
+  const M = S.M, name = PANEL.name, w = M.workers.get(name), now = T();
+  if (!w) return;
+  setAvatarState(PANEL.av, w.state);
+  const sess = workerSession(name);
+  const sl = statusLine(M, w, now);
+  PANEL.state.replaceChildren(el('div', { style: 'display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px' },
+    pill(w.state === 'error' ? 'error' : w.state === 'working' || w.state === 'reviewing' ? 'accent' : '', w.state), el('span', {}, sl.text),
+    sess ? el('span', { class: 'muted small', style: 'margin-left:auto' }, sessionsLink('Session'), ' ', el('span', { class: 'mono' }, sess)) : ''),
+  el('div', { class: 'muted small', style: 'margin-top:4px' }, `${w.turns} turns · ${fmtNum(w.tokens)} tokens` + (w.cost ? ` · $${w.cost.toFixed(2)}` : '') + (w.rateLimited ? ` · ${w.rateLimited} rate-limited` : '')));
+  PANEL.form.refresh();
+  // Desk.
+  const d = desk(M, name, now);
+  const items = [];
+  const oblItem = (o, owes) => {
+    const m = M.mails.get(o.message);
+    const other = owes ? o.creditor : o.debtor;
+    return el('div', { class: 'item' },
+      overdue(o, now) ? pill('overdue', 'overdue') : pill(o.kind, o.kind),
+      el('span', {}, (owes ? 'owes ' : 'waits on ') + other + ': '),
+      el('button', { class: 'linkish', onclick: () => openThread(o.thread) }, clip((m && (m.subject || (M.threads.get(o.thread) || {}).subject)) || o.thread, 60)),
+      o.due ? el('span', { class: 'muted small' }, 'due ' + fmtDate(o.due)) : '');
+  };
+  for (const o of d.owes) items.push(oblItem(o, true));
+  for (const o of d.waits) items.push(oblItem(o, false));
+  for (const r of d.reqs) items.push(el('div', { class: 'item' }, pill(r.state, r.state), el('span', {}, 'access: ' + (r.method ? r.method + ' ' : '') + r.host + (r.port && r.port !== 443 ? ':' + r.port : '') + (r.path || '')),
+    el('button', { class: 'linkish', onclick: () => showTab('security') }, 'security')));
+  PANEL.desk.replaceChildren(...(items.length ? items : [el('div', { class: 'muted' }, 'Nothing on the desk.')]));
+  // Recent mail.
+  const mails = [...M.mails.values()].filter((m) => m.from === name || m.to.includes(name) || m.cc.includes(name)).slice(-8).reverse();
+  PANEL.mail.replaceChildren(...(mails.length ? mails.map((m) => mailItem(m)) : [el('div', { class: 'muted' }, 'No mail yet.')]));
+  const arts = [...M.artifacts.values()].filter((a) => a.author === name).reverse();
+  PANEL.pub.replaceChildren(...(arts.length ? arts.map((a) => artifactItem(a)) : [el('div', { class: 'muted' }, 'Nothing published.')]));
+  if (S.mode === 'replay') renderFeed();
+}
+// /sessions is a constant path: the sessions UI.
+function sessionsLink(text) { const a = el('a', {}, text); a.href = '/sessions'; return a; }
+function mailItem(m) {
+  const t = S.M.threads.get(m.thread);
+  return el('div', { class: 'li', onclick: () => openThread(m.thread) },
+    el('div', { class: 'top' }, el('span', { class: 'subj' }, clip((t && t.subject) || m.subject || '(no subject)', 70)), pill(m.kind, m.kind)),
+    el('div', { class: 'meta' }, m.from + ' → ' + m.to.join(', '), el('span', {}, '· ' + ago(m.ts))));
+}
+function artifactItem(a) {
+  const v = a.versions[a.versions.length - 1];
+  return el('div', { class: 'li', onclick: () => openDrive(a.id, v.version) },
+    el('div', { class: 'top' }, el('span', { class: 'subj' }, clip(a.title || a.id, 70)), pill(a.kind, a.kind)),
+    el('div', { class: 'meta' }, a.id + ' v' + v.version + ' · ' + a.author + ' · ' + ago(v.ts)));
+}
+
+// ─────────────────────────── compose form ───────────────────────────
+//
+// opts: fixedTo (names) or a recipient picker; kinds; kind; threadsWith
+// (offer replying in one of the board's threads with that worker);
+// replyIn (a thread: always a reply in it).
+
+function composeForm(opts) {
+  const f = el('form', { class: 'form', onsubmit: (ev) => { ev.preventDefault(); send(); } });
+  const note = el('div', { class: 'muted small' });
+  let toPick = null, ccPick = null, threadSel = null;
+  if (!opts.fixedTo && !opts.replyIn) {
+    toPick = el('div', { class: 'picker' });
+    ccPick = el('div', { class: 'picker' });
+    for (const w of chartWorkers()) {
+      toPick.append(el('label', {}, el('input', { type: 'checkbox', value: w.name }), w.name + (w.title ? ' — ' + w.title : '')));
+      ccPick.append(el('label', {}, el('input', { type: 'checkbox', value: w.name }), w.name));
+    }
+    f.append(el('label', { class: 'f' }, 'To', toPick), el('details', {}, el('summary', { class: 'muted small' }, 'Cc'), ccPick));
+  } else if (opts.fixedTo) {
+    f.append(el('div', { class: 'muted small' }, 'To ' + opts.fixedTo.join(', ') + ', from ' + boardName() + ' (the board)'));
+  }
+  if (opts.threadsWith) {
+    threadSel = el('select', { name: 'thread', onchange: () => syncThread() });
+    f.append(el('label', { class: 'f' }, 'Thread', threadSel));
+  }
+  const kindSel = selectOf(opts.kinds, opts.kind || opts.kinds[0], { name: 'kind' });
+  const subject = el('input', { name: 'subject', placeholder: 'Subject', maxlength: 300 });
+  const subjLabel = el('label', { class: 'f' }, 'Subject', subject);
+  const body = el('textarea', { name: 'body', placeholder: 'Write in Markdown', maxlength: 65536 });
+  const due = el('input', { name: 'due', placeholder: 'e.g. 2h, 1d', maxlength: 10 });
+  const attach = el('div', { class: 'picker' });
+  const attachBox = el('details', {}, el('summary', { class: 'muted small' }, 'Attach from the shared drive'), attach);
+  const btn = el('button', { class: 'btn primary', type: 'submit' }, 'Send');
+  // Kind and due date are options: a new message is an assignment, an
+  // answer in a thread a reply, unless the board picks otherwise.
+  const optSummary = el('summary', { class: 'muted small' });
+  const syncSummary = () => { optSummary.textContent = 'Options: ' + kindSel.value + ' · ' + (due.value.trim() ? 'due in ' + due.value.trim() : 'no due date'); };
+  kindSel.addEventListener('change', syncSummary);
+  due.addEventListener('input', syncSummary);
+  const optBox = el('details', {}, optSummary,
+    el('div', { class: 'row2' }, el('label', { class: 'f' }, 'Kind', kindSel), el('label', { class: 'f' }, 'Due (optional)', due)),
+    el('div', { class: 'muted small' }, 'assignment: they owe you a report, with follow-ups when overdue · question: they owe you a reply · fyi: nothing is owed'));
+  f.append(subjLabel, el('label', { class: 'f' }, 'Message', body), optBox, attachBox, el('div', { style: 'display:flex;gap:10px;align-items:center' }, btn, note));
+  syncSummary();
+  function syncThread() {
+    const reply = !!opts.replyIn || !!(threadSel && threadSel.value);
+    subjLabel.classList.toggle('hidden', reply);
+    if (threadSel) {
+      const mode = reply ? 'reply' : 'new';
+      const want = reply ? ['reply', 'question', 'fyi', 'assignment'] : opts.kinds;
+      const cur = kindSel.value;
+      const pick = kindSel.dataset.mode === mode && want.includes(cur) ? cur : reply ? 'reply' : opts.kind || want[0];
+      kindSel.dataset.mode = mode;
+      kindSel.replaceChildren(...want.map((k) => opt(k, k, k === pick)));
+    }
+    syncSummary();
+  }
+  f.refresh = () => {
+    const ok = canWrite() && S.info.run.state === 'running';
+    for (const x of f.querySelectorAll('input,select,textarea,button')) x.disabled = !ok;
+    note.textContent = ok ? '' : S.mode === 'replay' ? 'Writing is off in replay.' : 'The firm isn\'t running.';
+    // Attachments.
+    const checked = new Set([...attach.querySelectorAll('input:checked')].map((x) => x.value));
+    const arts = S.M ? [...S.M.artifacts.values()].reverse() : [];
+    const sig = arts.map((a) => a.id + '@' + a.versions.length).join(',');
+    if (attach.dataset.sig !== sig) {
+      attach.dataset.sig = sig;
+      attach.replaceChildren(...(arts.length ? arts.map((a) => {
+        const ref = 'drive:' + a.id + '@v' + a.versions[a.versions.length - 1].version;
+        return el('label', {}, el('input', { type: 'checkbox', value: ref, checked: checked.has(ref), disabled: !ok }), clip(a.title || a.id, 50) + ' (' + ref + ')');
+      }) : [el('span', { class: 'muted small' }, 'Nothing published yet.')]));
+    }
+    if (threadSel) {
+      const M = S.M, cur = threadSel.value;
+      const ts = M ? [...M.threads.values()].filter((t) => t.board && t.people.has(opts.threadsWith)).sort((a, b) => b.last - a.last) : [];
+      const tsig = ts.map((t) => t.id + t.mails.length).join(',');
+      if (threadSel.dataset.sig !== tsig) {
+        threadSel.dataset.sig = tsig;
+        threadSel.replaceChildren(opt('', 'New thread'), ...ts.map((t) => opt(t.id, 'Re: ' + clip(t.subject || t.id, 60), t.id === cur)));
+        syncThread();
+      }
+    }
+  };
+  async function send() {
+    if (!canWrite()) return;
+    const M = S.M;
+    let to = opts.fixedTo ? opts.fixedTo.slice() : toPick ? [...toPick.querySelectorAll('input:checked')].map((x) => x.value) : [];
+    const cc = ccPick ? [...ccPick.querySelectorAll('input:checked')].map((x) => x.value) : [];
+    const threadId = opts.replyIn || (threadSel && threadSel.value) || null;
+    let in_reply_to = null, subj = subject.value.trim();
+    if (threadId) {
+      const t = M.threads.get(threadId);
+      const ms = t ? t.mails.map((id) => M.mails.get(id)).filter(Boolean) : [];
+      const other = [...ms].reverse().find((m) => m.from !== BOARD && isWorker(M, m.from)) || ms[ms.length - 1];
+      if (!other) { toast('That thread has no messages.', true); return; }
+      in_reply_to = other.id;
+      if (opts.replyIn) to = [other.from !== BOARD ? other.from : other.to.find((x) => x !== BOARD)].filter((x) => x && isWorker(M, x));
+      subj = '';
+    }
+    const d = due.value.trim();
+    if (d && !/^\d+\s*[smhd]$/.test(d)) { toast('Due is like 30m, 2h or 1d.', true); return; }
+    if (!to.length) { toast('Choose at least one recipient.', true); return; }
+    if (!threadId && !subj) { toast('Write a subject.', true); return; }
+    if (!body.value.trim()) { toast('Write a message.', true); return; }
+    const attachments = [...attach.querySelectorAll('input:checked')].map((x) => x.value);
+    btn.disabled = true;
+    try {
+      const r = await write('POST', F() + '/mail', { to, cc, subject: subj, body: body.value, kind: kindSel.value, due: d ? d.replace(/\s+/g, '') : null, in_reply_to, attachments });
+      toast('Sent ' + str(r && r.id) + (r && r.recipients ? ' to ' + arr(r.recipients).join(', ') : ''));
+      body.value = ''; subject.value = ''; due.value = ''; syncSummary();
+      for (const x of attach.querySelectorAll('input:checked')) x.checked = false;
+      if (toPick) for (const x of f.querySelectorAll('.picker input:checked')) x.checked = false;
+      if (opts.onSent) opts.onSent(r);
+    } catch (e) { toast(e.message, true); }
+    btn.disabled = false;
+    f.refresh();
+  }
+  syncThread();
+  f.refresh();
+  return f;
+}
+
+// ──────────────────────────── transcripts ────────────────────────────
+
+function closeTranscript() {
+  if (PANEL.tr) { PANEL.tr.closed = true; if (PANEL.tr.es) PANEL.tr.es.close(); }
+  PANEL.tr = null;
+}
+async function openTranscript(name) {
+  const tr = { name, events: [], seen: new Set(), es: null, all: false, closed: false, shown: -1, gen: S.gen };
+  PANEL.tr = tr;
+  PANEL.feed.replaceChildren(el('div', { class: 'muted' }, 'Loading…'));
+  const path = runPath() + '/transcripts/' + enc(name);
+  let bytes = 0;
+  try {
+    const text = await api(path);
+    const c = completeBytes(typeof text === 'string' ? text : '');
+    bytes = c.bytes;
+    for (const e of parseLines(c.text)) addTr(tr, e);
+  } catch (e) { /* none yet */ }
+  if (tr.closed) return;
+  renderFeed();
+  if (live()) {
+    tr.es = new EventSource('/api' + path + '?follow=true&from=' + bytes);
+    tr.es.onmessage = (ev) => {
+      if (tr.closed) return;
+      let e; try { e = JSON.parse(ev.data); } catch (x) { return; }
+      if (addTr(tr, e)) appendFeed(e);
+    };
+  }
+}
+function addTr(tr, e) {
+  if (!e || typeof e !== 'object') return false;
+  if (e.seq != null) { if (tr.seen.has(e.seq)) return false; tr.seen.add(e.seq); }
+  tr.events.push(e);
+  if (tr.events.length > 5000) tr.events.splice(0, tr.events.length - 5000);
+  return true;
+}
+function visibleTr(tr) {
+  let evs = tr.events;
+  if (S.mode === 'replay') { const pos = T(); evs = evs.filter((e) => !e.ts || e.ts <= pos); }
+  if (!tr.all) {
+    let i = evs.length - 1;
+    while (i > 0 && evs[i].type !== 'wake') i--;
+    evs = evs.slice(Math.max(0, i));
+  }
+  return evs.slice(-1500);
+}
+function renderFeed() {
+  const tr = PANEL.tr;
+  if (!tr) return;
+  const evs = visibleTr(tr);
+  const key = evs.length + ':' + (evs.length ? evs[evs.length - 1].seq : '') + ':' + tr.all;
+  if (key === tr.shown) return;
+  tr.shown = key;
+  PANEL.earlier.textContent = tr.all ? 'Current turn only' : 'Show earlier turns';
+  const nodes = [];
+  for (const e of evs) nodes.push(...feedNodes(e));
+  PANEL.feed.replaceChildren(...(nodes.length ? nodes : [el('div', { class: 'muted' }, S.mode === 'replay' ? 'No turn yet at this point.' : 'No turn yet.')]));
+  PANEL.feed.scrollTop = PANEL.feed.scrollHeight;
+}
+function appendFeed(e) {
+  const tr = PANEL.tr;
+  if (!tr) return;
+  if (e.type === 'wake' && !tr.all) { tr.shown = -1; renderFeed(); return; }
+  const near = PANEL.feed.scrollHeight - PANEL.feed.scrollTop - PANEL.feed.clientHeight < 60;
+  if (PANEL.feed.firstChild && PANEL.feed.firstChild.classList && PANEL.feed.firstChild.classList.contains('muted')) PANEL.feed.replaceChildren();
+  PANEL.feed.append(...feedNodes(e));
+  while (PANEL.feed.childElementCount > 2000) PANEL.feed.firstChild.remove();
+  if (near) PANEL.feed.scrollTop = PANEL.feed.scrollHeight;
+}
+function toolLine(name, input) {
+  const short = str(name).replace(/^mcp__office__/, 'office.').replace(/^mcp__([^_]+)__/, '$1.');
+  const i = input && typeof input === 'object' ? input : {};
+  for (const k of ['command', 'file_path', 'path', 'paths', 'pattern', 'url', 'query', 'to', 'subject', 'title', 'artifact', 'host', 'description', 'prompt', 'content', 'body']) {
+    if (i[k] == null) continue;
+    const v = Array.isArray(i[k]) ? i[k].map(str).join(', ') : typeof i[k] === 'object' ? JSON.stringify(i[k]) : str(i[k]);
+    return [short, clip(firstLine(v), 140)];
+  }
+  const s = Object.values(i).find((v) => typeof v === 'string');
+  return [short, s ? clip(firstLine(s), 140) : ''];
+}
+function resultText(c) {
+  if (typeof c === 'string') return c;
+  if (Array.isArray(c)) return c.map((x) => (x && typeof x === 'object' ? (x.type === 'text' ? str(x.text) : '[' + str(x.type) + ']') : str(x))).join('\n');
+  return c == null ? '' : JSON.stringify(c);
+}
+function feedNodes(e) {
+  const out = [];
+  const t = e.ts ? el('span', { class: 'muted small' }, fmtTime(e.ts) + ' ') : '';
+  switch (e.type) {
+    case 'wake': {
+      out.push(el('details', { class: 'tx turn' }, el('summary', {}, t, 'Woken: ', clip(firstLine(e.text), 100)), el('pre', {}, clip(e.text, 20000))));
+      break;
+    }
+    case 'system':
+      if (e.subtype === 'init') out.push(el('div', { class: 'tx res' }, t, 'Claude started' + (e.model ? ' (' + str(e.model) + ')' : '')));
+      break;
+    case 'assistant': {
+      const content = e.message && Array.isArray(e.message.content) ? e.message.content : [];
+      for (const c of content) {
+        if (!c || typeof c !== 'object') continue;
+        if (c.type === 'text' && str(c.text).trim()) out.push(el('div', { class: 'tx text' }, renderMarkdown(clip(c.text, 30000), {})));
+        else if (c.type === 'tool_use') {
+          const [n, arg] = toolLine(c.name, c.input);
+          out.push(el('details', { class: 'tx tool' }, el('summary', {}, '▸ ', el('b', {}, n), arg ? ' ' + arg : ''), el('pre', {}, clip(JSON.stringify(c.input, null, 2), 20000))));
+        } else if (c.type === 'thinking') out.push(el('div', { class: 'tx res' }, 'thinking…'));
+      }
+      break;
+    }
+    case 'user': {
+      const content = e.message && Array.isArray(e.message.content) ? e.message.content : [];
+      for (const c of content) {
+        if (!c || c.type !== 'tool_result') continue;
+        const text = resultText(c.content);
+        out.push(el('details', { class: 'tx res' + (c.is_error ? ' err' : '') }, el('summary', {}, c.is_error ? 'error: ' + clip(firstLine(text), 120) : 'result (' + fmtNum(text.length) + ' chars)'), el('pre', {}, clip(text, 20000))));
+      }
+      break;
+    }
+    case 'result': {
+      const u = e.usage || {};
+      const tok = (Number(u.input_tokens) || 0) + (Number(u.output_tokens) || 0);
+      const bits = ['Turn finished'];
+      if (e.num_turns) bits.push(e.num_turns + ' steps');
+      if (tok) bits.push(fmtNum(tok) + ' tokens');
+      if (e.total_cost_usd) bits.push('$' + Number(e.total_cost_usd).toFixed(3));
+      if (e.duration_ms) bits.push(fmtDur(e.duration_ms / 1000));
+      out.push(el('div', { class: 'tx turn' + (e.is_error ? ' err' : '') }, t, bits.join(' · '), e.is_error && e.result ? el('pre', {}, clip(str(e.result), 4000)) : ''));
+      break;
+    }
+    case 'stderr': out.push(el('details', { class: 'tx err' }, el('summary', {}, 'stderr: ' + clip(firstLine(e.text), 120)), el('pre', {}, clip(e.text, 8000)))); break;
+    case 'raw': out.push(el('details', { class: 'tx res' }, el('summary', {}, 'output: ' + clip(firstLine(e.text), 120)), el('pre', {}, clip(e.text, 8000)))); break;
+    default: break;
+  }
+  return out;
+}
+
+// ───────────────────────────── markdown ─────────────────────────────
+//
+// A small, safe subset. It only ever makes nodes with createElement and
+// text with createTextNode: raw HTML shows as text. Links are made only for
+// http(s) (shown with their target) and drive: references; images only for
+// files of the same artifact version. Size and nesting are bounded.
+//
+// ctx: { artifact, version, files: Set of paths, base: 'dir/' } for images;
+// breaks: true turns single newlines into line breaks (mail).
+
+const MD_MAX = 200 * 1024, MD_DEPTH = 6, MD_WINDOW = 4000;
+const RE_FENCE = /^ {0,3}(`{3,}|~{3,})\s*([^`\s]*)[^`]*$/;
+const RE_HEAD = /^ {0,3}(#{1,6})(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$/;
+const RE_HR = /^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/;
+const RE_QUOTE = /^ {0,3}> ?(.*)$/;
+const RE_LIST = /^( {0,12})([-*+]|\d{1,9}[.)])[ \t]+(\S.*)$/;
+const RE_TSEP = /^ {0,3}\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$/;
+const RE_DRIVE = /^drive:([A-Za-z0-9_-]+)(?:@v?(\d+))?(?:\/(.+))?$/;
+
+function renderMarkdown(text, ctx) {
+  ctx = Object.assign({}, ctx || {});
+  let src = str(text);
+  let truncated = false;
+  if (src.length > MD_MAX) { src = src.slice(0, MD_MAX); truncated = true; }
+  src = src.replace(/\r\n?/g, '\n').replace(/\t/g, '    ');
+  const root = el('div', { class: 'md' });
+  append(root, mdBlocks(src.split('\n'), ctx, 0));
+  if (truncated) root.append(el('p', { class: 'muted' }, '[truncated: longer than 200 KB]'));
+  return root;
+}
+function startsBlock(l) {
+  return RE_FENCE.test(l) || RE_HEAD.test(l) || RE_HR.test(l) || RE_QUOTE.test(l) || RE_LIST.test(l);
+}
+function mdBlocks(lines, ctx, depth) {
+  const out = [];
+  const n = lines.length;
+  let i = 0, m;
+  while (i < n) {
+    const line = lines[i];
+    if (!line.trim()) { i++; continue; }
+    if ((m = RE_FENCE.exec(line))) {
+      const ch = m[1][0], len = m[1].length, body = [];
+      i++;
+      while (i < n) {
+        const t = lines[i].trim();
+        if (t.length >= len && t[0] === ch && /^(`+|~+)$/.test(t)) { i++; break; }
+        body.push(lines[i]); i++;
+      }
+      out.push(el('pre', {}, el('code', {}, body.join('\n'))));
+    } else if ((m = RE_HEAD.exec(line))) {
+      out.push(el('h' + m[1].length, {}, inline(m[2] || '', ctx, 0)));
+      i++;
+    } else if (RE_HR.test(line)) {
+      out.push(el('hr')); i++;
+    } else if (RE_QUOTE.test(line)) {
+      const q = [];
+      while (i < n && (m = RE_QUOTE.exec(lines[i]))) { q.push(m[1]); i++; }
+      out.push(el('blockquote', {}, depth >= MD_DEPTH ? el('pre', {}, q.join('\n')) : mdBlocks(q, ctx, depth + 1)));
+    } else if (line.includes('|') && i + 1 < n && lines[i + 1].includes('|') && lines[i + 1].includes('-') && RE_TSEP.test(lines[i + 1])) {
+      const [t, next] = mdTable(lines, i, ctx);
+      out.push(t); i = next;
+    } else if (RE_LIST.test(line)) {
+      const [list, next] = mdList(lines, i, ctx, depth);
+      out.push(list); i = next;
+    } else {
+      const p = [line.trim()];
+      i++;
+      while (i < n && lines[i].trim() && !startsBlock(lines[i])) { p.push(lines[i].trim()); i++; }
+      out.push(el('p', {}, inline(p.join('\n'), ctx, 0)));
+    }
+  }
+  return out;
+}
+function splitRow(l) {
+  let s = l.trim();
+  if (s.startsWith('|')) s = s.slice(1);
+  if (s.endsWith('|') && !s.endsWith('\\|')) s = s.slice(0, -1);
+  const cells = [];
+  let cur = '';
+  for (let k = 0; k < s.length; k++) {
+    if (s[k] === '\\' && s[k + 1] === '|') { cur += '|'; k++; } else if (s[k] === '|') { cells.push(cur.trim()); cur = ''; } else cur += s[k];
+  }
+  cells.push(cur.trim());
+  return cells.slice(0, 50);
+}
+function mdTable(lines, i, ctx) {
+  const head = splitRow(lines[i]);
+  const aligns = splitRow(lines[i + 1]).map((c) => (/^:-+:$/.test(c) ? 'center' : /^-+:$/.test(c) ? 'right' : null));
+  const cell = (tag, text, k) => { const c = el(tag, {}, inline(text, ctx, 0)); if (aligns[k]) c.style.textAlign = aligns[k]; return c; };
+  const thead = el('thead', {}, el('tr', {}, head.map((h, k) => cell('th', h, k))));
+  const tbody = el('tbody');
+  i += 2;
+  let rows = 0;
+  while (i < lines.length && lines[i].trim() && lines[i].includes('|')) {
+    if (rows++ < 1000) { const r = splitRow(lines[i]); tbody.append(el('tr', {}, head.map((_, k) => cell('td', r[k] || '', k)))); }
+    i++;
+  }
+  return [el('table', {}, thead, tbody), i];
+}
+function mdList(lines, i, ctx, depth) {
+  const first = RE_LIST.exec(lines[i]);
+  const ordered = /\d/.test(first[2]);
+  const base = first[1].length;
+  const list = el(ordered ? 'ol' : 'ul');
+  if (ordered) { const s = parseInt(first[2], 10); if (s !== 1 && s < 1e6) list.setAttribute('start', String(s)); }
+  const items = [];
+  let cur = null, loose = false;
+  const sibling = (mm) => mm && mm[1].length <= base + 1 && /\d/.test(mm[2]) === ordered;
+  while (i < lines.length) {
+    const l = lines[i];
+    const m = RE_LIST.exec(l);
+    if (sibling(m)) { cur = { lines: [m[3]], indent: m[1].length + m[2].length + 1 }; items.push(cur); i++; continue; }
+    if (!l.trim()) {
+      let j = i + 1;
+      while (j < lines.length && !lines[j].trim()) j++;
+      if (j < lines.length && cur) {
+        const nl = lines[j], ind = nl.length - nl.trimStart().length;
+        if (sibling(RE_LIST.exec(nl)) || ind >= cur.indent) { cur.lines.push(''); loose = true; i++; continue; }
+      }
+      break;
+    }
+    const ind = l.length - l.trimStart().length;
+    if (cur && ind >= Math.min(cur.indent, base + 2)) { cur.lines.push(l.slice(Math.min(ind, cur.indent))); i++; continue; }
+    if (cur && cur.lines[cur.lines.length - 1] !== '' && !startsBlock(l)) { cur.lines.push(l.trim()); i++; continue; }
+    break;
+  }
+  for (const it of items) {
+    const li = el('li');
+    if (depth >= MD_DEPTH) li.append(it.lines.join('\n'));
+    else {
+      const blocks = mdBlocks(it.lines, ctx, depth + 1);
+      if (!loose && blocks.length && blocks[0].tagName === 'P') li.append(...Array.from(blocks.shift().childNodes));
+      li.append(...blocks);
+    }
+    list.append(li);
+  }
+  return [list, i];
+}
+const isWordChar = (c) => !!c && /[\p{L}\p{N}]/u.test(c);
+function findClose(s, from, mark) {
+  const win = s.slice(from, from + MD_WINDOW);
+  let k = 0;
+  while ((k = win.indexOf(mark, k)) > -1) {
+    if (k > 0 && !/\s/.test(win[k - 1])) {
+      if (mark.length === 1 && win[k + 1] === mark) { k += 2; continue; }
+      if (mark[0] === '_' && isWordChar(win[k + mark.length])) { k++; continue; }
+      return from + k;
+    }
+    k++;
+  }
+  return -1;
+}
+// [text](url) at s[i] === '['; returns {text, url, end} or null.
+function parseLinkAt(s, i) {
+  let depth = 0, j = i;
+  const lim = Math.min(s.length, i + 1000);
+  for (; j < lim; j++) {
+    if (s[j] === '\\') { j++; continue; }
+    if (s[j] === '[') depth++;
+    else if (s[j] === ']') { depth--; if (depth === 0) break; }
+  }
+  if (j >= lim || s[j] !== ']' || s[j + 1] !== '(') return null;
+  let k = j + 2, pd = 1;
+  const lim2 = Math.min(s.length, k + 2100);
+  for (; k < lim2; k++) {
+    if (s[k] === '\\') { k++; continue; }
+    if (s[k] === '(') pd++;
+    else if (s[k] === ')') { pd--; if (pd === 0) break; }
+  }
+  if (k >= lim2 || s[k] !== ')') return null;
+  let inner = s.slice(j + 2, k).trim(), url;
+  if (inner.startsWith('<')) { const e = inner.indexOf('>'); url = e > 0 ? inner.slice(1, e) : inner; } else url = inner.split(/\s+/)[0] || '';
+  return { text: s.slice(i + 1, j), url, end: k + 1 };
+}
+function inline(s, ctx, depth) {
+  s = str(s);
+  if (depth > 8) return [document.createTextNode(s)];
+  const out = [];
+  let buf = '', i = 0;
+  const flush = () => { if (buf) { out.push(document.createTextNode(buf)); buf = ''; } };
+  while (i < s.length) {
+    const c = s[i];
+    if (c === '\\' && i + 1 < s.length && /[!-/:-@[-`{-~]/.test(s[i + 1])) { buf += s[i + 1]; i += 2; continue; }
+    if (c === '\n') { if (ctx.breaks) { flush(); out.push(el('br')); } else buf += ' '; i++; continue; }
+    if (c === '`') {
+      let k = i;
+      while (s[k] === '`') k++;
+      const ticks = s.slice(i, k);
+      const rel = s.slice(k, k + MD_WINDOW).indexOf(ticks);
+      if (rel > -1) {
+        flush();
+        let code = s.slice(k, k + rel).replace(/\n/g, ' ');
+        if (code.length > 2 && code[0] === ' ' && code[code.length - 1] === ' ') code = code.slice(1, -1);
+        out.push(el('code', {}, code));
+        i = k + rel + ticks.length;
+        continue;
+      }
+      buf += ticks; i = k; continue;
+    }
+    if (c === '!' && s[i + 1] === '[') {
+      const r = parseLinkAt(s, i + 1);
+      if (r) { flush(); out.push(mdImage(r.text, r.url, ctx)); i = r.end; continue; }
+    }
+    if (c === '[' && !ctx.inLink) {
+      const r = parseLinkAt(s, i);
+      if (r) { flush(); out.push(mdLink(r.url, () => inline(r.text, Object.assign({}, ctx, { inLink: true }), depth + 1), r.text)); i = r.end; continue; }
+    }
+    if (c === '<' && !ctx.inLink) {
+      const m = /^<(https?:\/\/[^\s<>]+)>/i.exec(s.slice(i, i + 2100));
+      if (m) { flush(); out.push(mdLink(m[1], () => [document.createTextNode(m[1])], null, true)); i += m[0].length; continue; }
+    }
+    if ((c === 'h' || c === 'H') && !ctx.inLink && (i === 0 || /[\s(]/.test(s[i - 1]))) {
+      const m = /^https?:\/\/[^\s<>()[\]]+/i.exec(s.slice(i, i + 2100));
+      if (m) {
+        const u = m[0].replace(/[.,;:!?'"*_]+$/, '');
+        flush(); out.push(mdLink(u, () => [document.createTextNode(u)], null, true)); i += u.length; continue;
+      }
+    }
+    if (c === '*' || c === '_' || c === '~') {
+      const two = s[i + 1] === c;
+      if (c === '~' && !two) { buf += c; i++; continue; }
+      const mark = two ? c + c : c;
+      if (c === '_' && isWordChar(s[i - 1])) { buf += mark; i += mark.length; continue; }
+      const startC = s[i + mark.length];
+      if (startC && !/\s/.test(startC)) {
+        const end = findClose(s, i + mark.length, mark);
+        if (end > -1) {
+          flush();
+          out.push(el(c === '~' ? 'del' : two ? 'strong' : 'em', {}, inline(s.slice(i + mark.length, end), ctx, depth + 1)));
+          i = end + mark.length;
+          continue;
+        }
+      }
+      buf += mark; i += mark.length; continue;
+    }
+    buf += c; i++;
+  }
+  flush();
+  return out;
+}
+function parseDriveRef(url) {
+  const m = RE_DRIVE.exec(str(url).trim());
+  return m ? { artifact: m[1], version: m[2] ? Number(m[2]) : null, path: m[3] || null } : null;
+}
+// A link: http(s) opens in a new tab and shows its target, drive: opens the
+// Shared drive tab, anything else stays text.
+function mdLink(url, kids, rawText, auto) {
+  url = str(url).trim();
+  const d = parseDriveRef(url);
+  if (d) {
+    return el('span', {}, el('button', { class: 'linkish', type: 'button', title: url, onclick: (ev) => { ev.preventDefault(); openDrive(d.artifact, d.version, d.path); } }, kids()),
+      el('span', { class: 'url' }, '(' + url + ')'));
+  }
+  if (/^https?:\/\//i.test(url)) {
+    let u = null;
+    try { u = new URL(url); } catch (e) { u = null; }
+    if (u && (u.protocol === 'http:' || u.protocol === 'https:')) {
+      const a = el('a', { target: '_blank', rel: 'noopener noreferrer', title: u.href }, kids());
+      a.href = u.href;
+      const label = a.textContent;
+      return el('span', {}, a, auto || label === url || label === u.href ? '' : el('span', { class: 'url' }, '(' + clip(u.href, 140) + ')'));
+    }
+  }
+  return document.createTextNode(rawText != null ? '[' + rawText + '](' + url + ')' : url);
+}
+function resolvePath(base, rel) {
+  let p = rel;
+  try { p = decodeURIComponent(rel); } catch (e) { p = rel; }
+  const out = [];
+  for (const seg of (base + p).split('/')) {
+    if (!seg || seg === '.') continue;
+    if (seg === '..') { if (!out.length) return null; out.pop(); } else out.push(seg);
+  }
+  return out.join('/');
+}
+// An image: only a relative path to a file of the same artifact version.
+function mdImage(alt, src, ctx) {
+  src = str(src).trim();
+  if (ctx.artifact && ctx.files && src && !/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(src) && !src.startsWith('/') && !src.startsWith('\\')) {
+    const path = resolvePath(ctx.base || '', src.split(/[?#]/)[0]);
+    if (path && ctx.files.has(path)) {
+      const url = driveUrl(ctx.artifact, ctx.version, path);
+      if (url) { const img = el('img', { alt: alt, loading: 'lazy' }); img.src = url; return img; }
+    }
+  }
+  return el('span', { class: 'imgtext' }, '[image: ' + alt + (src ? ' → ' + src : '') + ']');
+}
+
+// ─────────────────────────── slide viewer ───────────────────────────
+
+function splitSlides(text) {
+  const lines = str(text).slice(0, MD_MAX).replace(/\r\n?/g, '\n').split('\n');
+  const slides = [[]];
+  let fence = null;
+  for (const l of lines) {
+    if (fence) { const t = l.trim(); if (t.length >= fence.len && t[0] === fence.ch && /^(`+|~+)$/.test(t)) fence = null; }
+    else { const m = RE_FENCE.exec(l); if (m) fence = { ch: m[1][0], len: m[1].length }; else if (/^---\s*$/.test(l)) { slides.push([]); continue; } }
+    slides[slides.length - 1].push(l);
+  }
+  return slides.map((s) => s.join('\n')).filter((s) => s.trim()).slice(0, 500);
+}
+function slideViewer(text, ctx) {
+  const slides = splitSlides(text);
+  if (!slides.length) slides.push('');
+  let i = 0;
+  const stage = el('div', { class: 'slide md' });
+  const n = el('span', { class: 'n' });
+  const prev = el('button', { class: 'btn small', type: 'button', onclick: () => go(i - 1) }, '← Previous');
+  const next = el('button', { class: 'btn small', type: 'button', onclick: () => go(i + 1) }, 'Next →');
+  const box = el('div', { class: 'slides', tabindex: 0, 'aria-label': 'Slides; use the arrow keys',
+    onkeydown: (ev) => {
+      const k = ev.key;
+      if (k === 'ArrowRight' || k === 'PageDown' || k === ' ') go(i + 1);
+      else if (k === 'ArrowLeft' || k === 'PageUp') go(i - 1);
+      else if (k === 'Home') go(0);
+      else if (k === 'End') go(slides.length - 1);
+      else return;
+      ev.preventDefault();
+    },
+    onclick: (ev) => { if (!ev.target.closest('a,button')) box.focus({ preventScroll: true }); } },
+  stage, el('div', { class: 'sctl' }, prev, n, next));
+  function go(k) {
+    i = Math.max(0, Math.min(slides.length - 1, k));
+    stage.replaceChildren(...Array.from(renderMarkdown(slides[i], ctx).childNodes));
+    n.textContent = 'Slide ' + (i + 1) + ' of ' + slides.length;
+    prev.disabled = i === 0; next.disabled = i === slides.length - 1;
+  }
+  go(0);
+  return box;
+}
+
+// ───────────────────────────── messages ─────────────────────────────
+
+const MSG = { view: 'inbox', thread: null, compose: false, treeRoot: null, sig: null, mainSig: null, reply: null, composeForm: null };
+
+function mountMessages() {
+  const root = $('tab-messages');
+  const views = el('div', { class: 'seg', id: 'msg-views' });
+  for (const [v, l] of [['inbox', 'Board inbox'], ['all', 'All threads'], ['tree', 'Delegation tree']]) {
+    const b = el('button', { type: 'button', onclick: () => { MSG.view = v; MSG.sig = null; MSG.mainSig = null; updateMessages(); } }, l);
+    b.dataset.v = v;
+    views.append(b);
+  }
+  const fWorker = el('select', { id: 'mf-worker', onchange: () => { MSG.sig = null; updateMessages(); } });
+  const fKind = selectOf([['', 'any kind'], 'assignment', 'question', 'fyi', 'report', 'reply', 'follow-up'], '', { id: 'mf-kind', onchange: () => { MSG.sig = null; updateMessages(); } });
+  const fState = selectOf([['', 'any state'], 'waiting', 'overdue', 'open', 'closed', 'paused'], '', { id: 'mf-state', onchange: () => { MSG.sig = null; updateMessages(); } });
+  const fBoard = el('label', { class: 'small muted', style: 'display:flex;gap:4px;align-items:center' }, el('input', { type: 'checkbox', id: 'mf-board', onchange: () => { MSG.sig = null; updateMessages(); } }), 'involves the board');
+  const fq = el('input', { type: 'search', id: 'mf-q', placeholder: 'Search subject and text', oninput: () => { MSG.sig = null; updateMessages(); } });
+  root.replaceChildren(el('div', { class: 'split' },
+    el('div', {},
+      el('div', { class: 'bar' }, views, el('button', { class: 'btn small', id: 'msg-compose', type: 'button', onclick: () => { MSG.compose = true; MSG.thread = null; MSG.mainSig = null; updateMessages(); } }, 'Compose')),
+      el('div', { class: 'bar', id: 'msg-filters' }, fWorker, fKind, fState, fBoard, fq),
+      el('div', { id: 'msg-pin' }),
+      el('div', { class: 'list', id: 'msg-list' })),
+    el('div', { id: 'msg-main' })));
+  MSG.sig = null; MSG.mainSig = null;
+}
+function threadMatches(M, t, now) {
+  const w = $('mf-worker').value, k = $('mf-kind').value, st = $('mf-state').value, q = $('mf-q').value.trim().toLowerCase();
+  if (MSG.view === 'inbox' && !t.board) return false;
+  if (MSG.view === 'all' && $('mf-board').checked && !t.board) return false;
+  if (w && !t.people.has(w)) return false;
+  if (k && !t.mails.some((id) => (M.mails.get(id) || {}).kind === k)) return false;
+  if (st && threadState(M, t, now) !== st) return false;
+  if (q) {
+    const hay = (t.subject + '\n' + t.mails.map((id) => { const m = M.mails.get(id); return m ? m.from + ' ' + m.subject + ' ' + m.body : ''; }).join('\n')).toLowerCase();
+    if (!hay.includes(q)) return false;
+  }
+  return true;
+}
+function updateMessages() {
+  const M = S.M;
+  if (!M) return;
+  const now = T();
+  for (const b of $('msg-views').children) b.classList.toggle('on', b.dataset.v === MSG.view);
+  $('msg-compose').classList.toggle('hidden', !canWrite());
+  $('mf-board').parentElement.classList.toggle('hidden', MSG.view !== 'all');
+  $('msg-filters').classList.toggle('hidden', MSG.view === 'tree');
+  // Worker filter options.
+  const ws = [...M.workers.keys()];
+  const fw = $('mf-worker');
+  if (fw.dataset.sig !== ws.join(',')) {
+    const cur = fw.value;
+    fw.dataset.sig = ws.join(',');
+    fw.replaceChildren(opt('', 'any worker'), ...ws.map((n) => opt(n, n, n === cur)));
+  }
+  const sig = [MSG.view, M.count, S.boardUnread.size, Math.floor(now / 30), MSG.thread, MSG.treeRoot].join('|');
+  if (sig !== MSG.sig) {
+    MSG.sig = sig;
+    renderPin(M);
+    const list = $('msg-list');
+    if (MSG.view === 'tree') {
+      const roots = [...M.threads.values()].filter((t) => t.board).sort((a, b) => b.last - a.last);
+      if (!MSG.treeRoot && roots.length) MSG.treeRoot = roots[0].id;
+      list.replaceChildren(...(roots.length ? roots.map((t) => threadItem(M, t, now, MSG.treeRoot === t.id, () => { MSG.treeRoot = t.id; MSG.sig = null; MSG.mainSig = null; updateMessages(); }))
+        : [el('div', { class: 'empty' }, 'No threads with the board yet.')]));
+    } else {
+      const ts = [...M.threads.values()].filter((t) => threadMatches(M, t, now)).sort((a, b) => b.last - a.last).slice(0, 500);
+      list.replaceChildren(...(ts.length ? ts.map((t) => threadItem(M, t, now, MSG.thread === t.id, () => openThread(t.id)))
+        : [el('div', { class: 'empty' }, MSG.view === 'inbox' ? 'The board has no mail yet.' : 'No threads match.')]));
+    }
+  }
+  renderMsgMain(M, now);
+}
+function renderPin(M) {
+  const pin = $('msg-pin');
+  const packs = [...M.artifacts.values()].filter((a) => a.kind === 'board-pack').sort((a, b) => b.last - a.last);
+  if (MSG.view !== 'inbox' || !packs.length) { pin.replaceChildren(); return; }
+  const a = packs[0], v = a.versions[a.versions.length - 1];
+  pin.replaceChildren(el('div', { class: 'card pinned', onclick: () => openDrive(a.id, v.version) },
+    el('span', { class: 'badge' }, '★'),
+    el('div', {}, el('div', { class: 'serif', style: 'font-size:16px' }, 'Board pack: ' + clip(a.title || a.id, 60)),
+      el('div', { class: 'muted small' }, a.id + ' v' + v.version + ' · ' + a.author + ' · ' + ago(v.ts)))));
+}
+function threadUnread(M, t) {
+  if (!live()) return 0;
+  return t.mails.filter((id) => S.boardUnread.has(id)).length;
+}
+function threadItem(M, t, now, sel, onclick) {
+  const st = threadState(M, t, now);
+  const first = M.mails.get(t.first);
+  const unread = threadUnread(M, t);
+  return el('div', { class: 'li' + (sel ? ' sel' : ''), onclick },
+    el('div', { class: 'top' }, el('span', { class: 'subj' }, unread ? el('span', { class: 'dot', title: 'unread' }) : '', unread ? ' ' : '', clip(t.subject || '(no subject)', 80)), pill(st, st)),
+    el('div', { class: 'meta' }, first ? pill(first.kind, first.kind) : '', clip([...t.people].join(', '), 70), el('span', {}, '· ' + t.mails.length + ' · ' + ago(t.last))));
+}
+function openThread(id) {
+  const M = S.M;
+  const t = M && M.threads.get(id);
+  if (!t) return;
+  MSG.thread = id; MSG.compose = false;
+  if (MSG.view === 'tree' || (MSG.view === 'inbox' && !t.board)) MSG.view = t.board ? 'inbox' : 'all';
+  MSG.sig = null; MSG.mainSig = null;
+  if (S.tab !== 'messages') showTab('messages'); else updateMessages();
+}
+function markRead(M, t) {
+  if (!live() || !t) return;
+  const ids = t.mails.filter((id) => S.boardUnread.has(id));
+  if (!ids.length) return;
+  for (const id of ids) S.boardUnread.delete(id);
+  write('POST', F() + '/mail/read', { ids }).catch((e) => toast(e.message, true));
+  MSG.sig = null;
+  scheduleRender();
+}
+function renderMsgMain(M, now) {
+  const main = $('msg-main');
+  if (MSG.view === 'tree') {
+    const sig = 'tree|' + MSG.treeRoot + '|' + M.count + '|' + Math.floor(now / 30);
+    if (sig === MSG.mainSig) return;
+    MSG.mainSig = sig;
+    main.replaceChildren(delegationTree(M, MSG.treeRoot, now));
+    return;
+  }
+  if (MSG.compose) {
+    if (MSG.mainSig === 'compose') { if (MSG.composeForm) MSG.composeForm.refresh(); return; }
+    MSG.mainSig = 'compose';
+    MSG.composeForm = composeForm({ kinds: ['assignment', 'question', 'fyi'], kind: 'assignment', onSent: (r) => { MSG.compose = false; MSG.mainSig = null; if (r && r.thread) MSG.pendingThread = r.thread; } });
+    main.replaceChildren(el('div', { class: 'card' }, el('h2', { class: 'sec' }, 'New message from the board'), MSG.composeForm));
+    return;
+  }
+  if (MSG.pendingThread && M.threads.has(MSG.pendingThread)) { MSG.thread = MSG.pendingThread; MSG.pendingThread = null; }
+  const t = MSG.thread && M.threads.get(MSG.thread);
+  if (!t) {
+    if (MSG.mainSig !== 'none') { MSG.mainSig = 'none'; main.replaceChildren(el('div', { class: 'empty card' }, 'Choose a thread.')); }
+    return;
+  }
+  const sig = 'thread|' + t.id + '|' + t.mails.length + '|' + M.count + '|' + Math.floor(now / 30);
+  if (sig === MSG.mainSig) { if (MSG.reply) MSG.reply.refresh(); return; }
+  const sameThread = MSG.mainSig && MSG.mainSig.startsWith('thread|' + t.id + '|');
+  MSG.mainSig = sig;
+  markRead(M, t);
+  const st = threadState(M, t, now);
+  const msgs = () => el('div', {}, t.mails.map((id) => M.mails.get(id)).filter(Boolean).map((m) => messageCard(M, m, now)));
+  const obls = t.obl.map((k) => M.obl.get(k)).filter(Boolean);
+  const kids = [...M.threads.values()].filter((x) => x.context === t.id);
+  const ctxT = t.context && M.threads.get(t.context);
+  const head = el('div', { class: 'card', style: 'margin-bottom:12px' },
+    el('div', { style: 'display:flex;gap:10px;align-items:center;flex-wrap:wrap' }, el('h2', { class: 'sec', style: 'margin:0' }, t.subject || '(no subject)'), pill(st, st)),
+    el('div', { class: 'muted small', style: 'margin-top:4px' }, [...t.people].map((p) => (p === BOARD ? boardName() + ' (board)' : p)).join(', ') + ' · ' + t.mails.length + ' message' + (t.mails.length > 1 ? 's' : '') + ' · started ' + fmtDate(t.started)),
+    ctxT ? el('div', { class: 'small', style: 'margin-top:4px' }, 'Started while working on ', el('button', { class: 'linkish', type: 'button', onclick: () => openThread(ctxT.id) }, clip(ctxT.subject || ctxT.id, 60))) : '',
+    kids.length ? el('div', { class: 'small', style: 'margin-top:4px' }, kids.length + ' thread' + (kids.length > 1 ? 's' : '') + ' spawned from this one: ', el('button', { class: 'linkish', type: 'button', onclick: () => { MSG.view = 'tree'; MSG.treeRoot = rootOf(M, t).id; MSG.sig = null; MSG.mainSig = null; updateMessages(); } }, 'delegation tree')) : '',
+    obls.length ? el('div', { class: 'desk', style: 'margin-top:8px' }, obls.map((o) => el('div', { class: 'item' },
+      o.settled ? pill('closed', 'done') : overdue(o, now) ? pill('overdue', 'overdue') : pill('waiting', 'open'),
+      el('span', {}, o.debtor + ' owes ' + (o.creditor === BOARD ? boardName() : o.creditor) + ' ' + (o.expects === 'done' ? 'the work' : 'a reply') + ' (' + o.kind + ')'),
+      o.settled ? el('span', { class: 'muted small' }, 'settled by ' + o.settled.by + ' after ' + fmtDur(o.settled.ts - o.created)) : o.due ? el('span', { class: 'muted small' }, 'due ' + fmtDate(o.due)) : '',
+      o.escalated ? el('span', { class: 'muted small' }, 'escalated to ' + o.escalated) : ''))) : '');
+  if (!sameThread) {
+    MSG.reply = t.board && live() && t.mails.some((id) => { const m = M.mails.get(id); return m && m.from !== BOARD && isWorker(M, m.from); })
+      ? composeForm({ replyIn: t.id, kinds: ['reply', 'question', 'fyi', 'assignment'], kind: 'reply' }) : null;
+    MSG.headBox = el('div'); MSG.msgsBox = el('div'); MSG.msgsSig = null;
+    main.replaceChildren(MSG.headBox, MSG.msgsBox, MSG.reply ? el('div', { class: 'card' }, el('h3', { style: 'margin:0 0 8px' }, 'Reply as the board'), MSG.reply) : '');
+  } else if (MSG.reply) MSG.reply.refresh();
+  MSG.headBox.replaceChildren(head);
+  const msgsSig = t.mails.length + '|' + Math.floor(now / 30);
+  if (msgsSig !== MSG.msgsSig) { MSG.msgsSig = msgsSig; MSG.msgsBox.replaceChildren(msgs()); }
+}
+function rootOf(M, t) {
+  const seen = new Set();
+  while (t.context && M.threads.has(t.context) && !seen.has(t.id)) { seen.add(t.id); t = M.threads.get(t.context); }
+  return t;
+}
+function messageCard(M, m, now) {
+  const auto = m.automatic || m.from === 'office' || m.kind === 'follow-up';
+  const obls = [...M.obl.values()].filter((o) => o.message === m.id);
+  const late = obls.some((o) => overdue(o, now));
+  return el('div', { class: 'msg' + (auto ? ' auto' : '') + (m.from === BOARD ? ' board' : '') },
+    el('div', { class: 'mh' },
+      miniAvatar(m.from),
+      el('span', { class: 'who' }, m.from === BOARD ? boardName() + ' (board)' : m.from === 'office' ? 'post office' : m.from),
+      el('span', { class: 'to' }, '→ ' + m.to.join(', ') + (m.cc.length ? ' · cc ' + m.cc.join(', ') : '')),
+      pill(m.kind, m.kind),
+      m.expects && m.expects !== 'nothing' ? pill('', 'expects ' + m.expects) : '',
+      m.due ? pill(late ? 'overdue' : '', 'due ' + fmtDate(m.due)) : '',
+      auto ? pill('', 'automatic') : '',
+      m.close ? pill('closed', 'closes the thread') : '',
+      el('span', { class: 'when', title: m.id }, fmtDate(m.ts))),
+    m.subject && M.threads.get(m.thread) && M.threads.get(m.thread).first !== m.id ? el('div', { class: 'small muted', style: 'margin-top:4px' }, 'Subject: ' + m.subject) : '',
+    m.attachments.length ? el('div', { class: 'chips', style: 'margin-top:8px' }, m.attachments.map((ref) => {
+      const d = parseDriveRef(ref);
+      const a = d && M.artifacts.get(d.artifact);
+      return d ? el('button', { class: 'chip', type: 'button', title: ref, onclick: () => openDrive(d.artifact, d.version, d.path) }, '📎 ' + (a ? clip(a.title, 40) + ' ' : '') + ref) : el('span', { class: 'chip' }, ref);
+    })) : '',
+    el('div', { style: 'margin-top:8px' }, renderMarkdown(m.body, { breaks: true })));
+}
+function delegationTree(M, rootId, now) {
+  const root = rootId && M.threads.get(rootId);
+  if (!root) return el('div', { class: 'empty card' }, 'Choose a thread of the board on the left.');
+  const kids = new Map();
+  for (const t of M.threads.values()) if (t.context) { if (!kids.has(t.context)) kids.set(t.context, []); kids.get(t.context).push(t); }
+  const seen = new Set();
+  const node = (t, depth) => {
+    seen.add(t.id);
+    const first = M.mails.get(t.first);
+    const st = threadState(M, t, now);
+    const li = el('li', {}, el('div', { class: 'tn' }, pill(st, st),
+      el('button', { class: 'linkish', type: 'button', onclick: () => openThread(t.id) }, clip(t.subject || '(no subject)', 70)),
+      first ? el('span', { class: 'muted small' }, first.from + ' → ' + first.to.join(', ')) : '',
+      first ? pill(first.kind, first.kind) : '',
+      el('span', { class: 'muted small' }, t.mails.length + ' msg · ' + ago(t.last))));
+    const ks = (kids.get(t.id) || []).filter((k) => !seen.has(k.id)).sort((a, b) => a.started - b.started);
+    if (ks.length && depth < 12) li.append(el('ul', { class: 'tree' }, ks.map((k) => node(k, depth + 1))));
+    return li;
+  };
+  return el('div', { class: 'card' },
+    el('h2', { class: 'sec' }, 'How "' + clip(root.subject || root.id, 60) + '" was split up'),
+    el('div', { class: 'muted small' }, 'Threads started while working on this one, recursively, with the state of each branch.'),
+    el('ul', { class: 'tree', style: 'border-left:0;padding-left:0' }, node(root, 0)));
+}
+
+// ───────────────────────────── security ─────────────────────────────
+
+const SEC = { cards: new Map(), logSig: null, stSig: null, open: new Set(), timer: null, traffic: [], trafficAt: 0 };
+
+function mountSecurity() {
+  const root = $('tab-security');
+  const fw = el('select', { id: 'sf-worker', onchange: () => { SEC.logSig = null; updateSecurity(); } });
+  const fo = el('select', { id: 'sf-officer', onchange: () => { SEC.logSig = null; updateSecurity(); } });
+  const fh = el('input', { type: 'search', id: 'sf-host', placeholder: 'host', oninput: () => { SEC.logSig = null; updateSecurity(); } });
+  const fr = selectOf([['', 'any outcome'], 'allowed', 'denied', 'escalated', 'pending'], '', { id: 'sf-out', onchange: () => { SEC.logSig = null; updateSecurity(); } });
+  root.replaceChildren(
+    el('h2', { class: 'sec' }, 'Escalations waiting for the board'), el('div', { id: 'sec-esc', class: 'list' }),
+    el('h2', { class: 'sec' }, 'Standing approvals'), el('div', { id: 'sec-standing' }),
+    el('h2', { class: 'sec' }, 'Decision log'), el('div', { class: 'bar' }, fw, fo, fh, fr, el('span', { class: 'muted small', id: 'sf-count' })), el('div', { id: 'sec-log' }),
+    el('h2', { class: 'sec' }, 'Traffic'), el('div', { id: 'sec-traffic' }));
+  SEC.cards.clear(); SEC.logSig = null; SEC.stSig = null; SEC.open.clear();
+}
+const reqWhat = (r) => (r ? (r.method ? r.method + ' ' : r.methods ? arr(r.methods).join(',') + ' ' : '') + str(r.host) + (r.port && r.port !== 443 ? ':' + r.port : '') + str(r.path || '') : '');
+const ruleWhat = (rule) => {
+  if (!rule) return '';
+  const ports = arr(rule.ports).length ? ':' + arr(rule.ports).join(',') : '';
+  const methods = arr(rule.methods).length ? arr(rule.methods).join(',') + ' ' : '';
+  return methods + str(rule.host) + ports + str(rule.path || '');
+};
+function updateSecurity() {
+  const M = S.M;
+  if (!M) return;
+  const now = T();
+  // Escalations.
+  const esc = escalationsWaiting(M);
+  const box = $('sec-esc');
+  const ids = new Set(esc.map((r) => r.id));
+  for (const [id, c] of SEC.cards) if (!ids.has(id)) { c.el.remove(); SEC.cards.delete(id); }
+  for (const r of esc) {
+    let c = SEC.cards.get(r.id);
+    if (!c) {
+      const scope = selectOf([['once', 'once'], ['worker', 'this worker'], ['role', 'this role']], 'once');
+      const reason = el('input', { placeholder: 'Reason (shown to the worker)', style: 'flex:1;min-width:200px', maxlength: 500 });
+      const allow = el('button', { class: 'btn ok', type: 'button', onclick: () => decide(r.id, true, scope.value, reason.value) }, 'Allow');
+      const deny = el('button', { class: 'btn danger', type: 'button', onclick: () => decide(r.id, false, scope.value, reason.value) }, 'Deny');
+      const info = el('div');
+      c = { el: el('div', { class: 'card' }, info, el('div', { class: 'bar', style: 'margin:10px 0 0' }, scope, reason, allow, deny)), info, ctl: [scope, reason, allow, deny] };
+      SEC.cards.set(r.id, c);
+      box.append(c.el);
+    }
+    const rec = r.decision && r.decision.recommendation;
+    c.info.replaceChildren(
+      el('div', { style: 'display:flex;gap:8px;align-items:center;flex-wrap:wrap' }, pill('escalated', r.state === 'escalated' ? 'escalated' : 'unanswered'),
+        el('b', {}, r.worker), el('span', { class: 'mono' }, reqWhat(r)), el('span', { class: 'muted small', style: 'margin-left:auto' }, r.id + ' · ' + ago(r.created))),
+      r.title ? el('div', { style: 'margin-top:6px' }, r.title) : '',
+      el('div', { class: 'small', style: 'margin-top:4px' }, el('span', { class: 'muted' }, 'Reason: '), r.reason),
+      r.assignment ? el('div', { class: 'small' }, el('span', { class: 'muted' }, 'Working on: '), threadLink(r.assignment)) : '',
+      rec ? el('div', { class: 'small', style: 'margin-top:6px' }, el('span', { class: 'muted' }, 'Recommendation from ' + str(r.decision.escalated_by || r.officer || 'the officer') + ':'), renderMarkdown(rec, { breaks: true })) : r.officer ? el('div', { class: 'small muted' }, 'Officer: ' + r.officer) : '');
+    for (const x of c.ctl) x.disabled = !canWrite();
+  }
+  if (!esc.length && !box.querySelector('.empty')) box.replaceChildren(el('div', { class: 'empty card' }, 'Nothing waits for the board.'));
+  else if (esc.length) { const e = box.querySelector('.empty'); if (e) e.remove(); }
+  // Standing approvals.
+  const fromApi = live() && S.security && Array.isArray(S.security.standing);
+  const standing = fromApi ? S.security.standing : [...M.standing.values()].filter((s) => !s.ended);
+  const ended = [...M.standing.values()].filter((s) => s.ended);
+  const stSig = JSON.stringify([standing, ended.length, canWrite(), Math.floor(now / 30)]);
+  if (stSig !== SEC.stSig) {
+    SEC.stSig = stSig;
+    const rows = standing.map((s) => {
+      const rule = s.rule || {};
+      const action = str(rule.action || 'allow');
+      return el('tr', {},
+        el('td', { class: 'mono' }, str(s.id)),
+        el('td', {}, pill(action === 'allow' ? 'allow' : 'deny', action), ' ', el('span', { class: 'mono' }, ruleWhat(rule))),
+        el('td', {}, str(s.scope)),
+        el('td', {}, s.expires ? (s.expires < now ? 'expired' : 'in ' + fmtDur(s.expires - now)) : 'never'),
+        el('td', {}, str(s.by)),
+        el('td', {}, clip(s.reason, 160)),
+        el('td', { class: 'small' }, fmtDate(s.created)),
+        el('td', {}, fromApi ? String(s.uses ?? 0) : String(s.uses || 0)),
+        el('td', {}, live() ? el('span', { style: 'display:flex;gap:6px' },
+          el('button', { class: 'btn small danger', type: 'button', disabled: !canWrite(), onclick: () => revoke(s.id) }, 'Revoke'),
+          el('button', { class: 'btn small', type: 'button', disabled: !canWrite(), title: 'Copy into the running config at the role\'s profile', onclick: () => promote(s.id) }, 'Promote to config')) : ''));
+    });
+    $('sec-standing').replaceChildren(
+      rows.length ? el('table', { class: 't' }, el('thead', {}, el('tr', {}, ['rule', 'what', 'scope', 'expires', 'officer', 'reason', 'added', 'uses', ''].map((h) => el('th', {}, h)))), el('tbody', {}, rows))
+        : el('div', { class: 'empty card' }, 'No standing approvals.'),
+      ended.length ? el('details', { style: 'margin-top:8px' }, el('summary', { class: 'muted small' }, ended.length + ' revoked or expired'),
+        el('div', { class: 'desk' }, ended.map((s) => el('div', { class: 'item' }, el('span', { class: 'mono' }, s.id), ruleWhat(s.rule), el('span', { class: 'muted small' }, s.ended.how + ' ' + fmtDate(s.ended.ts) + (s.ended.by ? ' by ' + s.ended.by : '')))))) : '');
+  }
+  // Decision log.
+  const workers = [...new Set(M.access.map((a) => a.request && a.request.worker).filter(Boolean))].sort();
+  const officers = [...new Set(M.access.flatMap((a) => [a.request && a.request.decision && a.request.decision.by, a.request && a.request.officer, a.by]).filter(Boolean))].sort();
+  for (const [id, list, label] of [['sf-worker', workers, 'any worker'], ['sf-officer', officers, 'any officer']]) {
+    const s = $(id);
+    if (s.dataset.sig !== list.join(',')) { const cur = s.value; s.dataset.sig = list.join(','); s.replaceChildren(opt('', label), ...list.map((x) => opt(x, x, x === cur))); }
+  }
+  const logSig = M.access.length + '|' + SEC.open.size;
+  if (logSig !== SEC.logSig) { SEC.logSig = logSig; renderDecisionLog(M); }
+  renderTraffic(M);
+}
+function threadLink(id) {
+  const t = S.M.threads.get(str(id));
+  return t ? el('button', { class: 'linkish', type: 'button', onclick: () => openThread(t.id) }, clip(t.subject || t.id, 60)) : el('span', { class: 'mono' }, str(id));
+}
+function renderDecisionLog(M) {
+  const fw = $('sf-worker').value, fo = $('sf-officer').value, fh = $('sf-host').value.trim().toLowerCase(), fr = $('sf-out').value;
+  const rows = [];
+  let shown = 0, total = 0;
+  for (let k = M.access.length - 1; k >= 0; k--) {
+    const a = M.access[k], r = a.request, d = r && r.decision;
+    const officer = (d && d.by) || a.by || (r && r.officer) || '';
+    if (fw && (!r || r.worker !== fw)) continue;
+    if (fo && officer !== fo) continue;
+    if (fh && !(r && str(r.host).toLowerCase().includes(fh))) continue;
+    if (fr && !(r && r.state === fr)) continue;
+    total++;
+    if (shown >= 500) continue;
+    shown++;
+    const decided = a.event === 'decided' && d && d.allow != null;
+    const out = decided ? pill(d.allow ? 'allow' : 'deny', d.allow ? 'allowed' : 'denied') : a.event === 'escalated' || a.event === 'board_asked' ? pill('escalated', a.event === 'escalated' ? 'escalated' : 'to the board') : a.event === 'requested' ? pill('pending', 'requested') : pill('', a.event);
+    const key = a.seq != null ? 's' + a.seq : 'k' + k;
+    const tr = el('tr', { class: 'click', onclick: () => { if (SEC.open.has(key)) SEC.open.delete(key); else SEC.open.add(key); SEC.logSig = null; updateSecurity(); } },
+      el('td', { class: 'small' }, fmtDate(a.ts)),
+      el('td', {}, out),
+      el('td', {}, r ? r.worker : ''),
+      el('td', { class: 'mono wrap' }, r ? reqWhat(r) : a.rule ? 'rule ' + a.rule : ''),
+      el('td', {}, r ? clip(r.reason, 100) : ''),
+      el('td', {}, r && r.assignment ? threadLink(r.assignment) : ''),
+      el('td', {}, officer),
+      el('td', {}, decided ? str(d.scope) : ''),
+      el('td', {}, clip((decided && d.reason) || a.reason || '', 120)),
+      el('td', {}, decided && d.at && r.created ? fmtDur(d.at - r.created) : ''));
+    rows.push(tr);
+    if (SEC.open.has(key)) {
+      rows.push(el('tr', {}, el('td', { colspan: 10 },
+        el('pre', { class: 'json' }, JSON.stringify(a.raw, null, 2)),
+        r && workerSession(r.worker) ? el('div', { class: 'small muted' }, 'The request in the network view: ', sessionsLink('Sessions'), ', session ', el('span', { class: 'mono' }, workerSession(r.worker))) : '',
+        officer && S.M.workers.has(officer) ? el('div', { class: 'small' }, el('button', { class: 'linkish', type: 'button', onclick: (ev) => { ev.stopPropagation(); openPanel(officer); } }, 'Open ' + officer + '\'s transcript')) : '')));
+    }
+  }
+  $('sf-count').textContent = total + ' event' + (total === 1 ? '' : 's') + (total > shown ? ', showing ' + shown : '');
+  $('sec-log').replaceChildren(rows.length
+    ? el('table', { class: 't' }, el('thead', {}, el('tr', {}, ['time', 'event', 'worker', 'request', 'worker\'s reason', 'assignment', 'officer', 'scope', 'decision reason', 'took'].map((h) => el('th', {}, h)))), el('tbody', {}, rows))
+    : el('div', { class: 'empty card' }, 'No access decisions yet.'));
+}
+function renderTraffic(M) {
+  const box = $('sec-traffic');
+  const dig = M.digests.slice(-20).reverse();
+  const digests = dig.length ? el('details', { style: 'margin-bottom:10px' }, el('summary', { class: 'muted' }, 'Officers\' digests (' + M.digests.length + ')'),
+    el('div', { class: 'desk' }, dig.map((d) => el('div', { class: 'item' }, el('span', { class: 'muted small' }, fmtDate(d.ts)), d.requests + ' requests, ' + d.allowed + ' allowed', d.new_hosts.length ? el('span', { class: 'mono small' }, 'new: ' + clip(d.new_hosts.join(', '), 200)) : '')))) : '';
+  if (!live()) { box.replaceChildren(digests, el('div', { class: 'empty card' }, 'Live traffic is shown for the running firm only.')); return; }
+  const sig = SEC.trafficAt + '|' + M.digests.length;
+  if (box.dataset.sig === sig) return;
+  box.dataset.sig = sig;
+  const rows = SEC.traffic.slice(0, 500).map((r) => el('tr', {},
+    el('td', { class: 'small' }, typeof r.ts === 'number' ? fmtTime(r.ts) : str(r.ts)),
+    el('td', {}, r.worker),
+    el('td', {}, str(r.method)),
+    el('td', { class: 'mono wrap' }, clip(r.url, 200)),
+    el('td', {}, r.status != null ? String(r.status) : r.error ? clip(r.error, 60) : r.done ? '' : '…'),
+    el('td', {}, pill(r.action === 'allow' ? 'allow' : r.action === 'deny' ? 'deny' : 'ask', str(r.action))),
+    el('td', { class: 'mono small' }, str(r.rule)),
+    el('td', { class: 'small' }, fmtBytes(r.req_size) + ' / ' + fmtBytes(r.resp_size)),
+    el('td', { class: 'small' }, r.total_ms != null ? Math.round(r.total_ms) + ' ms' : ''),
+    el('td', { class: 'small' }, r.inspected ? 'inspected' : '')));
+  box.replaceChildren(digests, rows.length
+    ? el('table', { class: 't' }, el('thead', {}, el('tr', {}, ['time', 'worker', 'method', 'url', 'status', 'action', 'rule', 'size', 'time', ''].map((h) => el('th', {}, h)))), el('tbody', {}, rows))
+    : el('div', { class: 'empty card' }, SEC.trafficAt ? 'No requests yet.' : 'Loading…'));
+}
+async function pollSecurity() {
+  if (!live() || S.tab !== 'security' || !S.info || !S.info.run) return;
+  const gen = S.gen;
+  try { S.security = await api(F() + '/security'); } catch (e) { S.security = null; }
+  const sessions = [];
+  for (const w of arr(S.info.run.workers)) if (w.session) sessions.push([w.name, w.session]);
+  const lists = await Promise.all(sessions.map(([name, id]) => api('/sessions/' + enc(id) + '/requests').then((l) => arr(l).map((r) => Object.assign({}, r, { worker: name })), () => [])));
+  if (gen !== S.gen) return;
+  SEC.traffic = lists.flat().sort((a, b) => (Number(b.ts) || 0) - (Number(a.ts) || 0)).slice(0, 1000);
+  SEC.trafficAt = Date.now();
+  SEC.stSig = null;
+  scheduleRender();
+}
+async function decide(id, allow, scope, reason) {
+  try {
+    await write('POST', F() + '/security/requests/' + enc(id), { allow, scope, reason: reason.trim() || (allow ? 'allowed by the board' : 'denied by the board') });
+    toast((allow ? 'Allowed ' : 'Denied ') + id);
+    pollSecurity();
+  } catch (e) { toast(e.message, true); }
+}
+async function revoke(id) {
+  if (!confirm('Revoke standing approval ' + id + '?')) return;
+  try { await write('DELETE', F() + '/security/rules/' + enc(id)); toast('Revoked ' + id); pollSecurity(); } catch (e) { toast(e.message, true); }
+}
+async function promote(id) {
+  if (!confirm('Copy ' + id + ' into the running config? `zapper config save` keeps it.')) return;
+  try { const r = await write('POST', F() + '/security/rules/' + enc(id) + '/promote'); toast('Promoted ' + id + ' to ' + str(r && r.scope)); pollSecurity(); } catch (e) { toast(e.message, true); }
+}
+
+// A link to a loopback address from the config; anything else is no link.
+function localLink(addr, label) {
+  if (!/^(127\.0\.0\.1|localhost|\[::1\]):\d{1,5}$/.test(str(addr))) return null;
+  const a = el('a', { target: '_blank', rel: 'noopener noreferrer', class: 'btn small' }, label);
+  a.href = 'http://' + addr + '/';
+  return a;
+}
+// The cluster's dashboard (Headlamp) and the token to sign in with.
+function dashboardInfo() {
+  const live = S.mode === 'live' && S.info && S.info.run && S.info.run.state !== 'ended';
+  const f = live ? S.info.run.facilities || {} : {};
+  return { addr: S.info && S.info.dashboard_port, on: !!f.dashboard, token: f.dashboard_token || null };
+}
+function dashboardSig() { const d = dashboardInfo(); return [d.addr, d.on, !!d.token].join(','); }
+function dashboardButtons() {
+  const d = dashboardInfo();
+  if (!d.on || !d.addr) return [];
+  const a = localLink(d.addr, 'Kubernetes dashboard ↗');
+  if (!a) return [];
+  if (!d.token) return [a, el('span', { class: 'muted small' }, 'starting…')];
+  const copy = el('button', { class: 'btn small', type: 'button', title: 'Headlamp asks for a token: paste this one (cluster-admin, this run only)',
+    onclick: async () => {
+      try { await navigator.clipboard.writeText(dashboardInfo().token); toast('Token copied: paste it into the dashboard\'s sign-in'); }
+      catch (e) { window.prompt('Copy the sign-in token:', dashboardInfo().token); }
+    } }, 'Copy token');
+  return [a, copy];
+}
+
+// ──────────────────────────────── VMs ────────────────────────────────
+//
+// Every running session of the daemon, now, whatever run is shown: the
+// firms' workers and facilities, and other sandboxes. Terminals open
+// read-only in their own window (/terminal), as in the Sessions view.
+
+const VM = { list: [], terms: new Map(), at: 0, sig: null, error: null };
+const SESSION_ID = /^[a-z2-9]{6}$/;
+
+function mountVms() {
+  $('tab-vms').replaceChildren(
+    el('div', { class: 'ovhead' }, el('h2', { class: 'sec', style: 'margin:0' }, 'VMs'), el('span', { class: 'muted', id: 'vm-sub' }, 'every running session of this daemon')),
+    el('div', { id: 'vm-body' }, el('div', { class: 'empty card' }, 'Loading…')));
+  VM.sig = null;
+}
+async function pollVms() {
+  if (S.tab !== 'vms') return;
+  try {
+    const list = arr(await api('/sessions')).filter((x) => x.state === 'running' || x.state === 'starting');
+    const terms = await Promise.all(list.map((x) => api('/sessions/' + enc(x.id) + '/terminals').then(arr, () => [])));
+    VM.list = list;
+    VM.terms = new Map(list.map((x, i) => [x.id, terms[i]]));
+    VM.error = null;
+  } catch (e) { VM.error = e.message; }
+  VM.at = Date.now();
+  VM.sig = null;
+  scheduleRender();
+}
+setInterval(() => { if (S.tab === 'vms' && !document.hidden) pollVms(); }, 4000);
+function watchTerminal(id, n) {
+  if (!SESSION_ID.test(str(id)) || !/^\d+$/.test(str(n))) return;
+  window.open('/terminal?session=' + enc(id) + '&n=' + enc(n), 'zapper-term-' + id + '-' + n, 'width=960,height=640');
+}
+function vmMeter(label, used, total, unit) {
+  const frac = total > 0 ? Math.min(1, used / total) : 0;
+  return el('div', { class: 'vm-meter' },
+    el('div', { class: 'vm-ml' }, el('span', {}, label), el('span', { class: 'muted' }, used == null ? '–' : unit(used) + (total ? ' / ' + unit(total) : ''))),
+    el('div', { class: 'vm-bar' }, el('div', { class: 'vm-fill' + (frac > 0.85 ? ' hot' : ''), style: 'width:' + (frac * 100).toFixed(1) + '%' })));
+}
+function vmCard(x) {
+  // The run's own chart (from its journal), not the config's: the config may
+  // have changed since the run started.
+  const rw = x.firm && x.firm === S.firm && S.M ? S.M.workers.get(x.member) : null;
+  const chart = rw && rw.inChart ? rw : x.firm && x.firm === S.firm && S.info ? arr(S.info.chart).find((w) => w.name === x.member) : null;
+  const facility = x.firm && !chart;
+  const u = x.usage && typeof x.usage === 'object' ? x.usage : null;
+  const memMiB = u ? Number(u.mem_used_kib) / 1024 : null;
+  const k = x.counters || {};
+  const terms = VM.terms.get(x.id) || [];
+  const mib = (v) => (v >= 1024 ? (v / 1024).toFixed(1) + ' GiB' : Math.round(v) + ' MiB');
+  const head = el('div', { class: 'vm-head' },
+    chart ? avatar((chart.avatar && chart.avatar.figure) || 'plain', chart.avatar && chart.avatar.color, (S.M && S.M.workers.get(x.member) || {}).state || 'idle')
+      : el('div', { class: 'vm-icon' + (facility ? ' fac' : '') }, facility ? '⎈' : '▣'),
+    el('div', { class: 'vm-name' },
+      el('div', { class: 'serif' }, x.member || x.id),
+      el('div', { class: 'muted small' }, chart ? (chart.title || chart.role) + (chart.model ? ' · ' + modelName(chart.model) : '') + ' · firm ' + x.firm : facility ? 'facility · firm ' + x.firm : 'profile ' + x.profile)),
+    pill(x.state, x.state));
+  const spec = el('div', { class: 'vm-spec small' },
+    el('span', {}, x.vcpus + ' vCPU'), el('span', {}, mib(Number(x.memory_mib) || 0)), el('span', {}, x.image), el('span', {}, x.kernel),
+    el('span', { title: x.network === 'vsock' ? 'loopback only; the proxy over vsock' : 'a NIC captured outside the VM' }, x.network === 'vsock' ? 'vsock' : 'NIC'),
+    x.root ? el('span', { class: 'warn' }, 'root') : '');
+  const meters = el('div', { class: 'vm-meters' },
+    vmMeter('memory', memMiB, Number(x.memory_mib) || 0, mib),
+    el('div', { class: 'vm-stats small' },
+      el('span', {}, 'load ' + (u ? Number(u.load1).toFixed(2) : '–')),
+      el('span', {}, (u ? u.procs : '–') + ' procs'),
+      el('span', {}, 'disk ' + (u ? mib(Number(u.disk_used_kib) / 1024) : '–')),
+      el('span', {}, 'net ' + (k.net_allowed || 0) + '/' + (k.net_denied || 0)),
+      el('span', {}, 'exec ' + (k.exec_allowed || 0) + '/' + (k.exec_denied || 0)),
+      el('span', {}, 'up ' + fmtDur(nowSec() - (Number(x.created) || nowSec())))));
+  const tl = el('div', { class: 'vm-terms' });
+  for (const t of terms) {
+    const argv = arr(t.argv).map(str).join(' ');
+    tl.append(el('div', { class: 'vm-term' },
+      el('span', { class: 'mono' }, '#' + t.id), el('span', { class: 'mono vm-argv', title: argv }, clip(argv, 48)),
+      t.open ? pill('running', 'open') : pill('', 'closed'),
+      el('button', { class: 'btn small', type: 'button', onclick: () => watchTerminal(x.id, t.id) }, 'Watch')));
+  }
+  const actions = el('div', { class: 'vm-actions' });
+  if (chart) actions.append(el('button', { class: 'btn small', type: 'button', onclick: () => openPanel(x.member) }, 'Claude transcript'));
+  if (facility && x.firm === S.firm) actions.append(el('span', { class: 'vm-dash' }, dashboardButtons()));
+  actions.append(el('span', { class: 'mono muted small', title: 'session id; zapper attach ' + x.id }, x.id));
+  return el('div', { class: 'vm card' + (facility ? ' facility' : '') }, head, spec, meters, terms.length ? [el('div', { class: 'vm-sub' }, 'Terminals'), tl] : '', actions);
+}
+function updateVms() {
+  const body = $('vm-body');
+  if (!body) return;
+  const sig = String(VM.at) + S.firm + (S.M ? S.M.seq || 0 : 0) + dashboardSig();
+  if (sig === VM.sig) return;
+  VM.sig = sig;
+  if (!VM.at) return;
+  if (VM.error) { body.replaceChildren(el('div', { class: 'empty card' }, 'Could not load the sessions: ' + VM.error)); return; }
+  const total = VM.list.reduce((a, x) => [a[0] + (Number(x.vcpus) || 0), a[1] + (Number(x.memory_mib) || 0)], [0, 0]);
+  $('vm-sub').textContent = VM.list.length + ' running · ' + total[0] + ' vCPUs · ' + (total[1] / 1024).toFixed(1) + ' GiB · updated ' + fmtTime(VM.at / 1000);
+  const host = el('div', { class: 'vm-host card' },
+    el('div', { class: 'vm-host-t' }, el('span', { class: 'serif' }, 'Host'), el('span', { class: 'muted small' }, 'all VM traffic goes through the daemon: policy, proxy, DNS, post office')));
+  const groups = new Map();
+  for (const x of VM.list) {
+    const g = x.firm ? 'firm:' + x.firm : '';
+    if (!groups.has(g)) groups.set(g, []);
+    groups.get(g).push(x);
+  }
+  const keys = [...groups.keys()].sort((a, b) => (a === 'firm:' + S.firm ? -1 : b === 'firm:' + S.firm ? 1 : a === '' ? 1 : b === '' ? -1 : a.localeCompare(b)));
+  const out = [host];
+  if (!VM.list.length) out.push(el('div', { class: 'empty card' }, 'No VMs are running.'));
+  for (const g of keys) {
+    const list = groups.get(g);
+    const order = (x) => (x.firm && !(S.M && (S.M.workers.get(x.member) || {}).inChart) && !(S.info && arr(S.info.chart).some((w) => w.name === x.member)) ? 0 : 1);
+    list.sort((a, b) => order(a) - order(b) || str(a.member || a.id).localeCompare(str(b.member || b.id)));
+    out.push(el('div', { class: 'vm-group' },
+      el('div', { class: 'vm-gh' }, el('span', { class: 'serif' }, g ? 'Firm ' + g.slice(5) : 'Sessions'), el('span', { class: 'muted small' }, list.length + (list.length === 1 ? ' VM' : ' VMs'))),
+      el('div', { class: 'vm-grid' }, list.map(vmCard))));
+  }
+  body.replaceChildren(...out);
+}
+
+// ──────────────────────────── shared drive ────────────────────────────
+
+const DRV = { sel: null, sig: null, mainSig: null, viewKey: null };
+
+function mountDrive() {
+  const root = $('tab-drive');
+  const fk = selectOf([['', 'any kind'], 'document', 'report', 'code', 'dataset', 'deck', 'board-pack'], '', { id: 'df-kind', onchange: () => { DRV.sig = null; updateDrive(); } });
+  const fa = el('select', { id: 'df-author', onchange: () => { DRV.sig = null; updateDrive(); } });
+  const fq = el('input', { type: 'search', id: 'df-q', placeholder: 'Search titles', oninput: () => { DRV.sig = null; updateDrive(); } });
+  root.replaceChildren(el('div', { class: 'split' },
+    el('div', {}, el('div', { class: 'bar' }, fk, fa, fq), el('div', { class: 'list', id: 'drv-list' })),
+    el('div', { id: 'drv-main' })));
+  DRV.sig = null; DRV.mainSig = null; DRV.viewKey = null;
+}
+function openDrive(artifact, version, path) {
+  DRV.sel = { artifact: str(artifact), version: version ? Number(version) : null, path: path || null };
+  DRV.mainSig = null; DRV.sig = null;
+  if (S.tab !== 'drive') showTab('drive'); else updateDrive();
+}
+function updateDrive() {
+  const M = S.M;
+  if (!M) return;
+  const arts = [...M.artifacts.values()];
+  const authors = [...new Set(arts.map((a) => a.author))].sort();
+  const fa = $('df-author');
+  if (fa.dataset.sig !== authors.join(',')) { const cur = fa.value; fa.dataset.sig = authors.join(','); fa.replaceChildren(opt('', 'any author'), ...authors.map((x) => opt(x, x, x === cur))); }
+  const sig = M.published.length + '|' + (DRV.sel && DRV.sel.artifact) + '|' + Math.floor(T() / 60);
+  if (sig !== DRV.sig) {
+    DRV.sig = sig;
+    const k = $('df-kind').value, au = fa.value, q = $('df-q').value.trim().toLowerCase();
+    const list = arts.filter((a) => (!k || a.kind === k) && (!au || a.author === au) && (!q || (a.title + ' ' + a.id).toLowerCase().includes(q))).sort((a, b) => b.last - a.last);
+    $('drv-list').replaceChildren(...(list.length ? list.map((a) => {
+      const it = artifactItem(a);
+      if (DRV.sel && DRV.sel.artifact === a.id) it.classList.add('sel');
+      return it;
+    }) : [el('div', { class: 'empty' }, arts.length ? 'Nothing matches.' : 'Nothing published yet.')]));
+  }
+  renderDriveMain(M);
+}
+function renderDriveMain(M) {
+  const main = $('drv-main');
+  const sel = DRV.sel;
+  const a = sel && M.artifacts.get(sel.artifact);
+  const sig = sel ? sel.artifact + '|' + sel.version + '|' + sel.path + '|' + (a ? a.versions.length : -1) : 'none';
+  if (sig === DRV.mainSig) return;
+  DRV.mainSig = sig;
+  if (!sel) { main.replaceChildren(el('div', { class: 'empty card' }, 'Choose an artifact.')); DRV.viewKey = null; return; }
+  if (!a) { main.replaceChildren(el('div', { class: 'empty card' }, sel.artifact + (S.mode === 'replay' ? ' isn\'t published yet at this point of the run.' : ' isn\'t in this run.'))); DRV.viewKey = null; return; }
+  const ver = a.versions.find((v) => v.version === sel.version) || a.versions[a.versions.length - 1];
+  const files = ver.files;
+  const isMd = (p) => /\.(md|markdown)$/i.test(p);
+  const path = (sel.path && files.some((f) => f.path === sel.path) && sel.path) || (files.find((f) => isMd(f.path)) || files[0] || {}).path || null;
+  const t = a.thread && M.threads.get(a.thread);
+  const viewer = el('div', { class: 'viewer' });
+  main.replaceChildren(el('div', { class: 'card' },
+    el('div', { style: 'display:flex;gap:10px;align-items:center;flex-wrap:wrap' }, el('h2', { class: 'sec', style: 'margin:0' }, a.title || a.id), pill(a.kind, a.kind)),
+    el('div', { class: 'muted small', style: 'margin:4px 0 8px' }, a.id + ' · by ' + a.author + ' · v' + ver.version + ' published ' + fmtDate(ver.ts) + (a.audience ? ' · for ' + (Array.isArray(a.audience) ? a.audience.join(', ') : str(a.audience)) : '')),
+    a.versions.length > 1 ? el('div', { class: 'vers' }, a.versions.map((v) => el('button', { class: 'btn small' + (v === ver ? ' primary' : ''), type: 'button', onclick: () => openDrive(a.id, v.version, null) }, 'v' + v.version))) : '',
+    ver.summary ? el('p', {}, ver.summary) : '',
+    t ? el('div', { class: 'small' }, 'For: ', threadLink(t.id)) : '',
+    el('div', { class: 'files' }, files.map((f) => el('button', { class: 'chip' + (f.path === path ? ' sel' : ''), type: 'button', style: f.path === path ? 'border-color:var(--accent)' : '', onclick: () => openDrive(a.id, ver.version, f.path) }, f.path + ' · ' + fmtBytes(f.size))))),
+  el('div', { style: 'margin-top:14px' }, viewer));
+  if (path) showFile(viewer, a, ver, path);
+}
+const IMG_EXT = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'avif', 'bmp', 'ico'];
+async function showFile(box, a, ver, path) {
+  const key = S.run + '|' + a.id + '|' + ver.version + '|' + path;
+  DRV.viewKey = key;
+  const url = driveUrl(a.id, ver.version, path);
+  if (!url) { box.replaceChildren(el('div', { class: 'empty card' }, 'This file has an unusual path and isn\'t shown.')); return; }
+  const f = ver.files.find((x) => x.path === path) || {};
+  const ext = (path.split('.').pop() || '').toLowerCase();
+  const name = path.split('/').pop();
+  const dl = () => { const x = el('a', { class: 'btn small', download: name }, 'Download ' + name); x.href = url; return x; };
+  if (IMG_EXT.includes(ext)) { const img = el('img', { alt: path, style: 'max-width:100%;border-radius:10px;background:var(--card)' }); img.src = url; box.replaceChildren(el('div', { class: 'card' }, img), el('div', { style: 'margin-top:8px' }, dl())); return; }
+  if (f.size > 3 * 1024 * 1024) { box.replaceChildren(el('div', { class: 'card' }, el('p', { class: 'muted' }, 'This file is ' + fmtBytes(f.size) + '; download it to read it.'), dl())); return; }
+  box.replaceChildren(el('div', { class: 'muted' }, 'Loading…'));
+  let text;
+  try {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    text = await r.text();
+  } catch (e) { if (DRV.viewKey === key) box.replaceChildren(el('div', { class: 'empty card' }, 'Could not load the file: ' + e.message)); return; }
+  if (DRV.viewKey !== key) return;
+  let view;
+  if (text.slice(0, 8000).includes('\u0000')) view = el('div', { class: 'card' }, el('p', { class: 'muted' }, 'A binary file.'), dl());
+  else if (/^(md|markdown)$/.test(ext)) {
+    const dir = path.includes('/') ? path.slice(0, path.lastIndexOf('/') + 1) : '';
+    const ctx = { artifact: a.id, version: ver.version, files: new Set(ver.files.map((x) => x.path)), base: dir };
+    view = a.kind === 'deck' || a.kind === 'board-pack' ? slideViewer(text, ctx) : el('div', { class: 'card' }, renderMarkdown(text, ctx));
+  } else if (ext === 'csv' || ext === 'tsv') view = el('div', { class: 'card csv' }, csvTable(text, ext === 'tsv' ? '\t' : ','));
+  else if (ext === 'json') {
+    let pretty = text;
+    try { if (text.length < 1e6) pretty = JSON.stringify(JSON.parse(text), null, 2); } catch (e) { /* show as is */ }
+    view = el('pre', { class: 'file' }, pretty);
+  } else view = el('pre', { class: 'file' }, text);
+  box.replaceChildren(view, el('div', { style: 'margin-top:8px' }, dl()));
+  if (view.classList.contains('slides')) view.focus({ preventScroll: true });
+}
+function parseCsv(text, sep, maxRows) {
+  const rows = [];
+  let row = [], cell = '', q = false, i = 0;
+  const n = text.length;
+  while (i < n && rows.length < maxRows) {
+    const c = text[i];
+    if (q) {
+      if (c === '"') { if (text[i + 1] === '"') { cell += '"'; i += 2; continue; } q = false; i++; continue; }
+      cell += c; i++; continue;
+    }
+    if (c === '"' && cell === '') { q = true; i++; continue; }
+    if (c === sep) { row.push(cell); cell = ''; i++; continue; }
+    if (c === '\n' || c === '\r') { row.push(cell); rows.push(row); row = []; cell = ''; if (c === '\r' && text[i + 1] === '\n') i++; i++; continue; }
+    cell += c; i++;
+  }
+  if ((cell || row.length) && rows.length < maxRows) { row.push(cell); rows.push(row); }
+  return { rows, more: i < n };
+}
+function csvTable(text, sep) {
+  const { rows, more } = parseCsv(text, sep, 501);
+  if (!rows.length) return el('div', { class: 'muted' }, 'Empty.');
+  const [head, ...body] = rows;
+  return el('div', {},
+    el('table', {}, el('thead', {}, el('tr', {}, head.slice(0, 200).map((h) => el('th', {}, clip(h, 200))))),
+      el('tbody', {}, body.slice(0, 500).map((r) => el('tr', {}, head.slice(0, 200).map((_, k) => el('td', {}, clip(r[k] || '', 300))))))),
+    more || body.length > 500 ? el('div', { class: 'muted small', style: 'margin-top:6px' }, 'Showing the first 500 rows.') : '');
+}
+// ──────────────────────────────── git ────────────────────────────────
+//
+// The run's repository: branches, the selected branch's files and commits,
+// a file's text and a commit's diff. Everything is text from workers.
+
+const GIT = { branch: 'main', path: '', file: null, commit: null, branches: [], tree: null, log: [], view: null, run: null, at: 0, busy: false, err: null };
+
+function mountGit() {
+  $('tab-git').replaceChildren(el('div', { class: 'git-empty hidden', id: 'git-empty' }), el('div', { class: 'split', id: 'git-split' },
+    el('div', {},
+      el('div', { class: 'bar' }, el('select', { id: 'git-branch', onchange: (e) => gitOpen({ branch: e.target.value, path: '', file: null, commit: null }) })),
+      el('h2', { class: 'sec' }, 'Commits'), el('div', { class: 'card commits', id: 'git-log' }, el('span', { class: 'muted' }, 'Loading…'))),
+    el('div', {}, el('div', { class: 'git-crumbs', id: 'git-crumbs' }), el('div', { id: 'git-main' }))));
+  GIT.run = null;
+}
+async function gitFetch(path) { return api(runPath() + '/git' + path); }
+// Loads branches and the branch's log and tree; the view (file or commit)
+// separately.
+async function loadGitTab(force) {
+  if (!S.run || GIT.busy) return;
+  const fresh = GIT.run === S.run && !force && (S.mode === 'replay' || Date.now() - GIT.at < 15000);
+  if (fresh) return;
+  GIT.busy = true;
+  const run = S.run;
+  try {
+    GIT.branches = arr(await gitFetch('/branches'));
+    if (GIT.branches.length && !GIT.branches.some((b) => b.name === GIT.branch)) GIT.branch = GIT.branches[0].name;
+    if (GIT.branches.length) {
+      const q = '?ref=' + enc(GIT.branch);
+      [GIT.log, GIT.tree] = await Promise.all([gitFetch('/log' + q + '&limit=200').then(arr), gitFetch('/tree' + q + '&path=' + enc(GIT.path)).then(arr)]);
+    } else { GIT.log = []; GIT.tree = []; }
+    GIT.err = null;
+  } catch (e) { GIT.err = e.message; }
+  GIT.busy = false;
+  if (run !== S.run) return;
+  GIT.run = run; GIT.at = Date.now();
+  renderGit();
+}
+async function gitOpen(o) {
+  Object.assign(GIT, o);
+  GIT.view = null;
+  if ('branch' in o || 'path' in o) { GIT.run = null; await loadGitTab(true); }
+  if (GIT.file) {
+    try { GIT.view = { file: await gitFetch('/blob?ref=' + enc(GIT.branch) + '&path=' + enc(GIT.file)) }; } catch (e) { GIT.view = { error: e.message }; }
+  } else if (GIT.commit) {
+    try { GIT.view = { commit: await gitFetch('/commits/' + enc(GIT.commit)) }; } catch (e) { GIT.view = { error: e.message }; }
+  }
+  renderGit();
+}
+function updateGit() { loadGitTab(false); }
+function renderGit() {
+  const sel = $('git-branch');
+  if (!sel) return;
+  if (GIT.err) { $('git-main').replaceChildren(el('div', { class: 'empty card' }, 'No repository: ' + GIT.err)); return; }
+  // Nothing pushed yet: one calm page instead of empty panes.
+  const empty = !GIT.branches.length;
+  $('git-split').classList.toggle('hidden', empty);
+  $('git-empty').classList.toggle('hidden', !empty);
+  if (empty) { $('git-empty').replaceChildren(gitEmptyView()); return; }
+  sel.replaceChildren(...(GIT.branches.length ? GIT.branches.map((b) => opt(b.name, b.name + ' · ' + str(b.commit).slice(0, 7), b.name === GIT.branch)) : [opt('', 'no branches yet')]));
+  sel.disabled = !GIT.branches.length;
+  // Commits of the branch.
+  const commits = S.mode === 'replay' ? GIT.log.filter((c) => !c.ts || Number(c.ts) <= T()) : GIT.log;
+  $('git-log').replaceChildren(...(commits.length ? commits.map((c) => el('div', { class: 'c' + (GIT.commit === c.commit ? ' sel' : ''), style: 'cursor:pointer', onclick: () => gitOpen({ commit: c.commit, file: null }) },
+    el('span', { class: 'mono muted' }, str(c.commit).slice(0, 8)), el('span', { style: 'flex:1' }, clip(c.subject, 100)),
+    el('span', { class: 'muted small' }, str(c.author) + (c.ts ? ' · ' + fmtDate(Number(c.ts)) : '')))) : [el('span', { class: 'muted' }, GIT.branches.length ? 'No commits.' : 'Nothing pushed yet. Engineers push to https://git.' + str(S.info && S.info.run && S.info.run.domain) + '/product.git')]));
+  // Breadcrumbs: branch / dir / dir / file.
+  const crumbs = [el('a', { class: 'link', onclick: () => gitOpen({ path: '', file: null, commit: null }) }, GIT.branch || 'repository')];
+  const parts = GIT.path ? GIT.path.split('/') : [];
+  parts.forEach((p, i) => crumbs.push(' / ', el('a', { class: 'link', onclick: () => gitOpen({ path: parts.slice(0, i + 1).join('/'), file: null, commit: null }) }, p)));
+  if (GIT.file) crumbs.push(' / ', el('b', {}, GIT.file.split('/').pop()));
+  if (GIT.commit) crumbs.push(' · commit ', el('span', { class: 'mono' }, GIT.commit.slice(0, 8)));
+  $('git-crumbs').replaceChildren(...crumbs);
+  const main = $('git-main');
+  if (GIT.view && GIT.view.error) { main.replaceChildren(el('div', { class: 'empty card' }, GIT.view.error)); return; }
+  if (GIT.view && GIT.view.file) { main.replaceChildren(gitFileView(GIT.view.file)); return; }
+  if (GIT.view && GIT.view.commit) { main.replaceChildren(gitCommitView(GIT.view.commit)); return; }
+  // The directory.
+  const rows = arr(GIT.tree).map((e) => {
+    const dir = e.type === 'tree';
+    const full = (GIT.path ? GIT.path + '/' : '') + str(e.name);
+    return el('div', { class: 'git-row', onclick: () => (dir ? gitOpen({ path: full, file: null, commit: null }) : gitOpen({ file: full, commit: null })) },
+      el('span', { class: 'git-ic' }, dir ? '▸' : '·'), el('span', { class: dir ? 'git-dir' : '' }, str(e.name) + (dir ? '/' : '')),
+      el('span', { class: 'muted small' }, dir || e.size == null ? '' : fmtBytes(e.size)));
+  });
+  if (GIT.path) {
+    const up = GIT.path.includes('/') ? GIT.path.slice(0, GIT.path.lastIndexOf('/')) : '';
+    rows.unshift(el('div', { class: 'git-row', title: 'Up to ' + (up || GIT.branch), onclick: () => gitOpen({ path: up, file: null, commit: null }) },
+      el('span', { class: 'git-ic' }, '▴'), el('span', { class: 'git-dir' }, '..'), el('span', {})));
+  }
+  const readme = arr(GIT.tree).find((e) => e.type === 'blob' && /^readme(\.md)?$/i.test(str(e.name)));
+  main.replaceChildren(el('div', { class: 'card git-tree' }, rows.length ? rows : el('span', { class: 'muted' }, GIT.branches.length ? 'Empty directory.' : 'The repository is empty.')),
+    readme ? el('div', { class: 'muted small', style: 'margin-top:8px' }, 'Open ', el('a', { class: 'link', onclick: () => gitOpen({ file: (GIT.path ? GIT.path + '/' : '') + readme.name, commit: null }) }, readme.name), ' to read it.') : '');
+}
+function gitEmptyView() {
+  const domain = str(S.info && S.info.run && S.info.run.domain) || (S.firm + '.internal');
+  const url = 'https://git.' + domain + '/product.git';
+  const local = '~/.local/state/zapper/firms/' + S.firm + '/runs/' + S.run + '/git/product.git';
+  // A branch drawing: main, a side branch, and a merge, in the firm's colours.
+  const art = sv('svg', { class: 'git-art', viewBox: '0 0 160 90', 'aria-hidden': 'true' },
+    sv('path', { d: 'M14 64 H146', class: 'gl main' }),
+    sv('path', { d: 'M46 64 C 60 64 62 30 80 30 H 104 C 120 30 122 64 136 64', class: 'gl side' }),
+    sv('circle', { cx: 14, cy: 64, r: 6, class: 'gd main' }), sv('circle', { cx: 46, cy: 64, r: 6, class: 'gd main' }),
+    sv('circle', { cx: 92, cy: 30, r: 6, class: 'gd side' }), sv('circle', { cx: 136, cy: 64, r: 6, class: 'gd main' }),
+    sv('circle', { cx: 92, cy: 64, r: 6, class: 'gd ghost' }));
+  const copy = (text) => el('button', { class: 'btn small', type: 'button', onclick: async () => { try { await navigator.clipboard.writeText(text); toast('Copied'); } catch (e) { window.prompt('Copy:', text); } } }, 'Copy');
+  return el('div', { class: 'card git-empty-card' }, art,
+    el('h2', { class: 'serif' }, 'Nothing pushed yet'),
+    el('p', { class: 'muted' }, S.mode === 'replay' ? 'This run\'s repository has no commits.' : 'The firm\'s repository is empty. Engineers and designers push to it as they build; branches, files and commits appear here as they do.'),
+    el('div', { class: 'git-empty-rows' },
+      el('div', { class: 'muted small' }, 'Workers push to'), el('code', {}, url), copy(url),
+      el('div', { class: 'muted small' }, 'Clone it here'), el('code', {}, 'git clone ' + local), copy('git clone ' + local)));
+}
+function gitFileView(f) {
+  if (f.text == null) return el('div', { class: 'empty card' }, str(f.path) + ': ' + str(f.note || 'not shown') + ' (' + fmtBytes(f.size) + ')');
+  const md = /\.(md|markdown)$/i.test(str(f.path));
+  return el('div', { class: 'card', style: 'padding:16px 20px' },
+    el('div', { class: 'muted small', style: 'margin-bottom:8px' }, str(f.path) + ' · ' + fmtBytes(f.size)),
+    md ? renderMarkdown(f.text) : el('pre', { class: 'mono git-pre' }, f.text));
+}
+function gitCommitView(c) {
+  const diff = el('pre', { class: 'mono git-pre git-diff' });
+  for (const line of str(c.diff).split('\n')) {
+    const cls = line.startsWith('+++') || line.startsWith('---') || line.startsWith('diff ') || line.startsWith('index ') ? 'dh'
+      : line.startsWith('@@') ? 'dhunk' : line.startsWith('+') ? 'dadd' : line.startsWith('-') ? 'ddel' : '';
+    diff.append(el('span', { class: cls }, line + '\n'));
+  }
+  return el('div', { class: 'card', style: 'padding:16px 20px' },
+    el('div', { class: 'serif', style: 'font-size:17px' }, firstLine(c.message)),
+    el('div', { class: 'muted small' }, str(c.author) + ' · ' + fmtDate(Number(c.ts)) + ' · ' + str(c.commit)),
+    str(c.message).includes('\n') ? el('pre', { class: 'git-msg' }, str(c.message).split('\n').slice(1).join('\n').trim()) : '',
+    el('div', { class: 'git-files small' }, arr(c.files).map((x) => el('div', {}, el('span', { class: 'dadd' }, '+' + str(x.added)), ' ', el('span', { class: 'ddel' }, '−' + str(x.removed)), ' ', el('span', { class: 'mono' }, str(x.path))))),
+    diff, c.truncated ? el('div', { class: 'muted small' }, 'Diff cut at 1 MB.') : '');
+}
+
+// ──────────────────────────── statistics ────────────────────────────
+
+const STAT = { period: 'run', sig: null };
+const STATE_ORDER = ['working', 'reviewing', 'idle', 'waiting', 'queued', 'booting', 'over-budget', 'error', 'off'];
+
+function mountStats() {
+  const seg = el('div', { class: 'seg', id: 'st-period' });
+  for (const [v, l] of [['today', 'Today'], ['7d', '7 days'], ['run', 'Whole run']]) {
+    const b = el('button', { type: 'button', onclick: () => { STAT.period = v; STAT.sig = null; updateStats(); } }, l);
+    b.dataset.v = v; seg.append(b);
+  }
+  $('tab-stats').replaceChildren(el('div', { class: 'bar' }, seg, el('span', { class: 'muted small', id: 'st-range' })), el('div', { id: 'st-body' }));
+  STAT.sig = null;
+}
+function statRange(M) {
+  const to = live() ? nowSec() : T();
+  const start = M.started || to;
+  let from = start;
+  if (STAT.period === '7d') from = Math.max(start, to - 7 * 86400);
+  if (STAT.period === 'today') { const d = new Date(to * 1000); d.setHours(0, 0, 0, 0); from = Math.max(start, d.getTime() / 1000); }
+  return [from, Math.max(to, from + 1)];
+}
+function hbars(rows, opts) {
+  opts = opts || {};
+  const H = rows.length * 24 + 8, W = 720, L = 230, BW = 400;
+  const max = Math.max(1, opts.budget || 0, ...rows.map((r) => r.value));
+  const s = sv('svg', { class: 'chart bars', viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': opts.label || 'bar chart' });
+  rows.forEach((r, i) => {
+    const y = 4 + i * 24;
+    const lbl = sv('text', { class: 'lbl', x: L - 8, y: y + 15, 'text-anchor': 'end' }); lbl.textContent = clip(r.label, 32);
+    const w = (r.value / max) * BW;
+    const val = sv('text', { x: L + Math.max(w, 0) + 6, y: y + 15 }); val.textContent = opts.fmt ? opts.fmt(r.value) : String(r.value);
+    s.append(lbl, sv('rect', { class: 'track', x: L, y: y + 4, width: BW, height: 14, rx: 4 }), sv('rect', { class: opts.cls || 'barf', x: L, y: y + 4, width: Math.max(w, r.value ? 2 : 0), height: 14, rx: 4 }), val);
+  });
+  if (opts.budget) { const x = L + (opts.budget / max) * BW; s.append(sv('line', { class: 'budget', x1: x, y1: 0, x2: x, y2: H })); }
+  return s;
+}
+function kpi(k, v, sub) { return el('div', { class: 'card kpi' }, el('div', { class: 'k' }, k), el('div', { class: 'v' }, v), sub ? el('div', { class: 'muted small' }, sub) : ''); }
+// "barbara · CEO": a name with the worker's title, for tables and charts.
+function who(M, n) {
+  if (n === BOARD) return boardName() + ' · board';
+  const w = M.workers.get(n);
+  const t = w && (w.title || w.role);
+  return t ? n + ' · ' + t : n;
+}
+function updateStats() {
+  const M = S.M;
+  if (!M) return;
+  for (const b of $('st-period').children) b.classList.toggle('on', b.dataset.v === STAT.period);
+  const [from, to] = statRange(M);
+  const sig = STAT.period + '|' + M.count + '|' + Math.floor(to / 15);
+  if (sig === STAT.sig) return;
+  STAT.sig = sig;
+  $('st-range').textContent = fmtDate(from) + ' – ' + fmtDate(to);
+  const inR = (ts) => ts >= from && ts <= to;
+  const ws = chartWorkers();
+  const body = [];
+  if (!M.started) { $('st-body').replaceChildren(el('div', { class: 'empty card' }, 'No run yet.')); return; }
+
+  // Activity.
+  body.push(el('h2', { class: 'sec' }, 'Activity'));
+  const span = to - from, W = 900, L = 250, BW = 630, RH = 24;
+  const act = sv('svg', { class: 'chart', viewBox: `0 0 ${W} ${ws.length * RH + 26}`, role: 'img', 'aria-label': 'worker states over time' });
+  const shares = [];
+  ws.forEach((w, i) => {
+    const y = i * RH + 4;
+    const lbl = sv('text', { class: 'lbl', x: L - 8, y: y + 14, 'text-anchor': 'end' }); lbl.textContent = clip(who(M, w.name), 34);
+    act.append(lbl, sv('rect', { class: 's-off', x: L, y: y + 3, width: BW, height: 14, rx: 3 }));
+    const tot = {};
+    for (const s of w.segs) {
+      const a = Math.max(from, s.from), b = Math.min(to, s.to == null ? to : s.to);
+      if (b <= a) continue;
+      tot[s.state] = (tot[s.state] || 0) + (b - a);
+      const r = sv('rect', { class: 's-' + s.state, x: L + ((a - from) / span) * BW, y: y + 3, width: Math.max(0.5, ((b - a) / span) * BW), height: 14 });
+      const tt = sv('title'); tt.textContent = who(M, w.name) + ': ' + s.state + ' ' + fmtTime(a) + '–' + fmtTime(b) + ' (' + fmtDur(b - a) + ')';
+      r.append(tt); act.append(r);
+    }
+    shares.push([w.name, tot]);
+  });
+  const yAxis = ws.length * RH + 20;
+  for (let k = 0; k <= 4; k++) {
+    const x = L + (k / 4) * BW;
+    const t = sv('text', { x, y: yAxis, 'text-anchor': k === 0 ? 'start' : k === 4 ? 'end' : 'middle' });
+    t.textContent = span > 86400 ? fmtDate(from + (k / 4) * span) : fmtTime(from + (k / 4) * span);
+    act.append(t);
+  }
+  const used = STATE_ORDER.filter((s) => shares.some(([, t]) => t[s]));
+  body.push(el('div', { class: 'card' }, act,
+    el('div', { class: 'legend' }, used.map((s) => el('span', {}, sv('svg', { width: 10, height: 10 }, sv('rect', { class: 's-' + s, width: 10, height: 10, rx: 3 })), ' ', s))),
+    el('table', { class: 't', style: 'margin-top:12px' }, el('thead', {}, el('tr', {}, el('th', {}, 'share of time'), used.map((s) => el('th', {}, s)))),
+      el('tbody', {}, shares.map(([n, t]) => { const sum = Object.values(t).reduce((x, y) => x + y, 0) || 1; return el('tr', {}, el('td', {}, who(M, n)), used.map((s) => el('td', {}, t[s] ? Math.round((100 * t[s]) / sum) + '%' : '–'))); })))));
+
+  // Usage.
+  const turns = M.turns.filter((t) => inR(t.ts));
+  const per = new Map(ws.map((w) => [w.name, { turns: 0, tokens: 0 }]));
+  for (const t of turns) { const p = per.get(t.worker) || { turns: 0, tokens: 0 }; p.turns++; p.tokens += t.tokens; per.set(t.worker, p); }
+  const totTurns = turns.length, totTokens = turns.reduce((x, t) => x + t.tokens, 0);
+  const b = M.budget || (S.info && S.info.run && S.info.run.budget) || {};
+  const usage = live() && S.info && S.info.run && S.info.run.usage;
+  const rl = [...M.workers.values()].reduce((x, w) => x + w.rateLimited, 0), intr = [...M.workers.values()].reduce((x, w) => x + w.interrupted, 0);
+  body.push(el('h2', { class: 'sec' }, 'Usage'));
+  body.push(el('div', { class: 'cards' },
+    kpi('Turns', fmtNum(totTurns), b.daily_turns ? 'daily budget ' + b.daily_turns : 'no daily budget'),
+    kpi('Tokens', fmtNum(totTokens), b.daily_tokens ? 'daily budget ' + fmtNum(b.daily_tokens) : ''),
+    usage ? kpi('Today (budget day)', usage.turns + (b.daily_turns ? ' / ' + b.daily_turns : ''), fmtNum(usage.tokens) + ' tokens' + (b.daily_tokens ? ' / ' + fmtNum(b.daily_tokens) : '')) : '',
+    kpi('Rate-limit retries', String(rl), intr ? intr + ' interrupted turns' : ''),
+    kpi('Over budget', M.overBudget ? 'yes' : 'no', b.max_concurrent ? 'max ' + b.max_concurrent + ' in a turn at once' : '')));
+  const urows = [...per.entries()].map(([n, p]) => ({ label: who(M, n), value: p.turns }));
+  body.push(el('div', { class: 'grid2' },
+    el('div', { class: 'card' }, el('h3', { style: 'margin:0 0 6px' }, 'Turns per worker'), hbars(urows, { budget: STAT.period === 'today' ? b.worker_daily_turns : 0, label: 'turns per worker' }),
+      STAT.period === 'today' && b.worker_daily_turns ? el('div', { class: 'muted small' }, 'Dashed line: the per-worker daily budget.') : ''),
+    el('div', { class: 'card' }, el('h3', { style: 'margin:0 0 6px' }, 'Tokens per worker'), hbars([...per.entries()].map(([n, p]) => ({ label: who(M, n), value: p.tokens })), { fmt: fmtNum, cls: 'barf2', label: 'tokens per worker' }))));
+  const roles = new Map();
+  for (const [n, p] of per) { const r = (M.workers.get(n) || {}).role || '?'; const x = roles.get(r) || 0; roles.set(r, x + p.turns); }
+  if (roles.size > 1) body.push(el('div', { class: 'card', style: 'margin-top:16px' }, el('h3', { style: 'margin:0 0 6px' }, 'Turns per role'), hbars([...roles].map(([r, v]) => ({ label: r, value: v })), { label: 'turns per role' })));
+
+  // Mail.
+  const mails = [...M.mails.values()].filter((m) => inR(m.ts));
+  const sent = new Map(), recv = new Map();
+  for (const m of mails) { sent.set(m.from, (sent.get(m.from) || 0) + 1); for (const r of new Set([...m.to, ...m.cc])) recv.set(r, (recv.get(r) || 0) + 1); }
+  const assignObl = [...M.obl.values()].filter((o) => o.kind === 'assignment');
+  const opened = assignObl.filter((o) => inR(o.created)).length, closed = assignObl.filter((o) => o.settled && inR(o.settled.ts)).length;
+  const replyTimes = M.settled.filter((s) => inR(s.ts)).map((s) => s.ts - s.o.created);
+  const nowOverdue = openObl(M).filter((o) => overdue(o, to)).length;
+  const followUps = mails.filter((m) => m.kind === 'follow-up').length;
+  const escal = M.escalations.filter((e) => inR(e.ts)).length;
+  body.push(el('h2', { class: 'sec' }, 'Mail'));
+  body.push(el('div', { class: 'cards' }, kpi('Messages', String(mails.length)), kpi('Assignments opened', String(opened)), kpi('Assignments closed', String(closed)),
+    kpi('Median time to answer', fmtDur(median(replyTimes)), replyTimes.length + ' answered'), kpi('Overdue now', String(nowOverdue)), kpi('Follow-ups', String(followUps)), kpi('Escalations', String(escal))));
+  const people = [...new Set([...ws.map((w) => w.name), ...sent.keys(), ...recv.keys()])].filter((n) => n !== 'office');
+  body.push(el('table', { class: 't' }, el('thead', {}, el('tr', {}, ['', 'sent', 'received', 'owes now', 'waits on now'].map((h) => el('th', {}, h)))),
+    el('tbody', {}, people.map((n) => { const d = desk(M, n, to); return el('tr', {}, el('td', {}, who(M, n)), el('td', {}, String(sent.get(n) || 0)), el('td', {}, String(recv.get(n) || 0)), el('td', {}, String(d.owes.length)), el('td', {}, String(d.waits.length))); }))));
+
+  // Output.
+  const pubs = M.published.filter((p) => inR(p.ts));
+  const kinds = [...new Set(pubs.map((p) => p.kind))].sort();
+  const authors = [...new Set(pubs.map((p) => p.author))].sort();
+  body.push(el('h2', { class: 'sec' }, 'Output'));
+  body.push(el('div', { class: 'cards' }, kpi('Artifacts', String(new Set(pubs.map((p) => p.artifact)).size)), kpi('Versions', String(pubs.length))));
+  if (pubs.length) body.push(el('table', { class: 't' }, el('thead', {}, el('tr', {}, el('th', {}, 'versions'), kinds.map((k) => el('th', {}, k)), el('th', {}, 'total'))),
+    el('tbody', {}, authors.map((a) => el('tr', {}, el('td', {}, who(M, a)), kinds.map((k) => el('td', {}, String(pubs.filter((p) => p.author === a && p.kind === k).length || '–'))), el('td', {}, String(pubs.filter((p) => p.author === a).length)))))));
+
+  // Security.
+  const reqs = [...M.requests.values()].filter((r) => inR(Number(r.created) || 0));
+  const cnt = (st) => reqs.filter((r) => r.state === st).length;
+  const decisions = M.access.filter((a) => a.event === 'decided' && inR(a.ts) && a.request && a.request.decision);
+  const byOfficer = new Map();
+  for (const a of decisions) { const o = str(a.request.decision.by); byOfficer.set(o, (byOfficer.get(o) || 0) + 1); }
+  const times = decisions.map((a) => Number(a.request.decision.at) - Number(a.request.created)).filter((x) => isFinite(x) && x >= 0);
+  const added = decisions.filter((a) => a.request.decision.rule && a.request.decision.scope !== 'once').length;
+  const revoked = M.access.filter((a) => a.event === 'revoked' && inR(a.ts)).length;
+  body.push(el('h2', { class: 'sec' }, 'Security'));
+  body.push(el('div', { class: 'cards' }, kpi('Requests', String(reqs.length)), kpi('Allowed', String(cnt('allowed'))), kpi('Denied', String(cnt('denied'))),
+    kpi('Waiting', String(cnt('pending') + cnt('escalated'))), kpi('Median time to decide', fmtDur(median(times))), kpi('Standing added / revoked', added + ' / ' + revoked)));
+  if (byOfficer.size) body.push(el('div', { class: 'card' }, el('h3', { style: 'margin:0 0 6px' }, 'Decisions per officer'), hbars([...byOfficer].map(([o, v]) => ({ label: who(M, o), value: v })), { label: 'decisions per officer' })));
+  $('st-body').replaceChildren(...body);
+}
+
+// ───────────────────────────── header ─────────────────────────────
+
+const HDR = { ctl: null, runs: null };
+
+function buildHeader() {
+  const nav = $('tabs');
+  nav.replaceChildren();
+  for (const [t, l] of TABS) {
+    const b = el('button', { type: 'button', onclick: () => showTab(t) }, l, el('span', { class: 'badge warn hidden', id: 'tb-' + t }));
+    b.dataset.t = t;
+    nav.append(b);
+  }
+  // The sessions UI is another page: a plain link (the CSP forbids framing).
+  const a = el('a', { class: 'right', title: 'zapper\'s sessions, network, terminals and approvals' }, 'Sessions ↗');
+  a.href = '/sessions';
+  nav.append(a);
+  HDR.ctl = el('span', { style: 'display:flex;gap:8px;align-items:center' });
+  const pop = el('div', { class: 'pop' });
+  HDR.runs = el('details', { class: 'menu', ontoggle: () => { if (HDR.runs.open) loadRuns(pop); } }, el('summary', { class: 'btn' }, 'Runs ▾'), pop);
+  $('hctl').replaceChildren(HDR.ctl, HDR.runs);
+  document.addEventListener('click', (ev) => { if (HDR.runs.open && !HDR.runs.contains(ev.target)) HDR.runs.open = false; });
+}
+async function loadRuns(pop) {
+  pop.replaceChildren(el('div', { class: 'muted', style: 'padding:8px' }, 'Loading…'));
+  try {
+    const runs = arr(await api(F() + '/runs'));
+    pop.replaceChildren(...(runs.length ? runs.map((r) => el('div', { class: 'item', onclick: () => { HDR.runs.open = false; enterReplay(str(r.run)); } },
+      el('span', {}, el('span', { class: 'mono' }, str(r.run)), el('div', { class: 'muted small' }, r.started ? fmtDate(Number(r.started)) : '', ' · ', fmtBytes(r.journal_bytes))),
+      r.state ? pill(str(r.state), str(r.state)) : el('span', { class: 'muted small' }, 'replay'))) : [el('div', { class: 'muted', style: 'padding:8px' }, 'No runs yet.')]));
+  } catch (e) { pop.replaceChildren(el('div', { class: 'muted', style: 'padding:8px' }, e.message)); }
+}
+function renderHeader() {
+  const M = S.M;
+  const pick = $('firmpick');
+  if (S.firms.length > 1) {
+    const sig = S.firms.map((f) => f.name).join(',');
+    if (pick.dataset.sig !== sig || !pick.firstChild) {
+      pick.dataset.sig = sig;
+      pick.replaceChildren(selectOf(S.firms.map((f) => [f.name, f.name]), S.firm, { onchange: (ev) => switchFirm(ev.target.value), 'aria-label': 'Firm' }));
+    } else if (pick.firstChild.value !== S.firm) pick.firstChild.value = S.firm;
+    $('firmname').classList.add('hidden');
+  } else { pick.replaceChildren(); $('firmname').classList.remove('hidden'); }
+  $('firmname').textContent = S.firm || 'office';
+  $('firmdesc').textContent = (S.info && S.info.description) || (M && M.description) || '';
+  document.title = (S.firm ? S.firm + ' · ' : '') + 'zapper office';
+  const st = live() ? (S.info && S.info.run ? str(S.info.run.state) : 'off') : (M && M.runState) || 'starting';
+  const stats = [pill(st, st)];
+  if (live() && S.info && S.info.run) {
+    const u = S.info.run.usage || {}, b = S.info.run.budget || {};
+    stats.push(el('span', { class: 'muted small' }, 'turns today ', el('b', {}, String(u.turns || 0)), b.daily_turns ? ' / ' + b.daily_turns : ''));
+  } else if (M && M.started) stats.push(el('span', { class: 'muted small' }, 'turns ', el('b', {}, String(M.turns.length))));
+  if (M && M.overBudget && (S.mode === 'replay' || (S.info && S.info.run))) stats.push(pill('error', 'budget reached'));
+  const esc = M ? escalationsWaiting(M).length : 0;
+  if (esc) stats.push(el('button', { class: 'btn small', type: 'button', onclick: () => showTab('security') }, el('span', { class: 'badge warn' }, String(esc)), ' waiting for the board'));
+  if (live() && S.boardUnread.size) stats.push(el('button', { class: 'btn small', type: 'button', onclick: () => { MSG.view = 'inbox'; MSG.sig = null; showTab('messages'); } }, el('span', { class: 'badge' }, String(S.boardUnread.size)), ' unread'));
+  $('hstats').replaceChildren(...stats);
+  const tbSec = $('tb-security');
+  if (tbSec) { tbSec.textContent = String(esc); tbSec.classList.toggle('hidden', !esc); }
+  const tbMsg = $('tb-messages');
+  if (tbMsg) { const n = live() ? S.boardUnread.size : 0; tbMsg.textContent = String(n); tbMsg.className = 'badge' + (n ? '' : ' hidden'); }
+  // Controls.
+  const ctl = [];
+  if (live() && S.firm) {
+    const rs = S.info && S.info.run ? str(S.info.run.state) : null;
+    const active = rs && !['ended', 'failed'].includes(rs);
+    if (!active) ctl.push(el('button', { class: 'btn primary', type: 'button', onclick: () => firmOp('up') }, 'Up'));
+    if (rs === 'running') ctl.push(el('button', { class: 'btn', type: 'button', onclick: () => firmOp('pause', { paused: true }) }, 'Pause'));
+    if (rs === 'paused') ctl.push(el('button', { class: 'btn', type: 'button', onclick: () => firmOp('pause', { paused: false }) }, 'Resume'));
+    if (active) ctl.push(el('button', { class: 'btn danger', type: 'button', onclick: () => { if (confirm('Take ' + S.firm + ' down? Workers stop and the run ends; the next Up starts a fresh run.')) firmOp('down'); } }, 'Down'));
+  }
+  HDR.ctl.replaceChildren(...ctl);
+}
+async function firmOp(op, body) {
+  try {
+    await write('POST', F() + '/' + op, body === undefined ? {} : body);
+    toast(op === 'up' ? 'Starting ' + S.firm + '…' : op === 'down' ? S.firm + ' is going down' : body && body.paused ? 'Paused' : 'Resumed');
+  } catch (e) { toast(e.message, true); }
+  loadFirm();
+}
+
+// ────────────────────────────── tabs ──────────────────────────────
+
+function showTab(t) {
+  if (!TABS.some(([x]) => x === t)) t = 'overview';
+  S.tab = t;
+  for (const s of document.querySelectorAll('section.tab')) s.classList.toggle('on', s.id === 'tab-' + t);
+  for (const b of $('tabs').querySelectorAll('button')) b.classList.toggle('on', b.dataset.t === t);
+  setHash();
+  if (t === 'overview') { OV.sig = null; }
+  if (t === 'security') pollSecurity();
+  if (t === 'vms') { VM.sig = null; pollVms(); }
+  render();
+  if (t === 'overview') requestAnimationFrame(fitOverview);
+}
+function mountAll() {
+  mountOverview(); mountMessages(); mountSecurity(); mountDrive(); mountGit(); mountStats(); mountVms();
+  MSG.thread = null; MSG.treeRoot = null; MSG.compose = false; MSG.reply = null;
+  DRV.sel = null; SEC.traffic = []; SEC.trafficAt = 0; S.security = null;
+}
+let renderQueued = false;
+function scheduleRender() {
+  if (renderQueued) return;
+  renderQueued = true;
+  requestAnimationFrame(() => { renderQueued = false; render(); });
+}
+function render() {
+  renderHeader();
+  // The VMs are the daemon's, not the firm's: shown with or without a run.
+  if (S.tab === 'vms') { try { updateVms(); } catch (e) { console.error(e); } }
+  if (!S.M) return;
+  try {
+    if (S.tab === 'overview') updateOverview();
+    else if (S.tab === 'messages') updateMessages();
+    else if (S.tab === 'security') updateSecurity();
+    else if (S.tab === 'drive') updateDrive();
+    else if (S.tab === 'git') updateGit();
+    else if (S.tab === 'stats') updateStats();
+    updatePanel();
+  } catch (e) { console.error(e); toast('page error: ' + e.message, true); }
+  if (S.mode === 'replay') updateReplayBar();
+}
+
+// ─────────────────────────── URL hash ───────────────────────────
+
+function readHash() {
+  const p = new URLSearchParams(location.hash.slice(1));
+  return { firm: p.get('firm'), tab: p.get('tab'), replay: p.get('replay') };
+}
+function setHash() {
+  const p = new URLSearchParams();
+  if (S.firm) p.set('firm', S.firm);
+  if (S.tab !== 'overview') p.set('tab', S.tab);
+  if (S.mode === 'replay' && S.run) p.set('replay', S.run);
+  const h = '#' + p.toString();
+  if (location.hash !== h) history.replaceState(null, '', h);
+}
+async function applyHash() {
+  const h = readHash();
+  if (h.firm && h.firm !== S.firm && S.firms.some((f) => f.name === h.firm)) await switchFirm(h.firm, true);
+  if (h.replay && (S.mode !== 'replay' || S.run !== h.replay)) enterReplay(h.replay);
+  else if (!h.replay && S.mode === 'replay') backToLive();
+  if (h.tab && h.tab !== S.tab) showTab(h.tab);
+}
+window.addEventListener('hashchange', applyHash);
+
+// ───────────────────────────── live ─────────────────────────────
+
+function stopLive() {
+  if (S.es) { S.es.close(); S.es = null; }
+}
+function modelFromInfo(info) {
+  const M = newModel();
+  setChart(M, { board: info.board, description: info.description, workers: arr(info.chart) });
+  return M;
+}
+async function startLive(run) {
+  stopLive();
+  const gen = ++S.gen;
+  closePanel();
+  S.run = run; S.seen = new Set(); S.boardUnread = new Set();
+  S.M = S.info ? modelFromInfo(S.info) : newModel();
+  mountAll();
+  let bytes = 0;
+  try {
+    const text = await api(runPath(run) + '/journal');
+    if (gen !== S.gen) return;
+    const c = completeBytes(typeof text === 'string' ? text : '');
+    bytes = c.bytes;
+    for (const e of parseLines(c.text)) ingest(e, false);
+  } catch (e) { /* not written yet: follow from the start */ }
+  if (gen !== S.gen) return;
+  S.es = new EventSource('/api' + runPath(run) + '/journal?follow=true&from=' + bytes);
+  S.es.onmessage = (ev) => {
+    if (gen !== S.gen) return;
+    let e;
+    try { e = JSON.parse(ev.data); } catch (x) { return; }
+    ingest(e, true);
+  };
+  scheduleRender();
+  refreshUnread();
+}
+function ingest(e, fresh) {
+  if (!e || typeof e !== 'object') return;
+  if (e.seq != null) { if (S.seen.has(e.seq)) return; S.seen.add(e.seq); }
+  apply(S.M, e);
+  if (!fresh) return;
+  if (e.type === 'mail') {
+    const m = S.M.mails.get(e.id);
+    if (m) { flyMail(m); if (m.to.includes(BOARD) || m.cc.includes(BOARD)) S.boardUnread.add(m.id); }
+  }
+  if (e.type === 'access' && S.tab === 'security') pollSecurity();
+  scheduleRender();
+}
+async function refreshUnread() {
+  if (!live() || !S.info || !S.info.run) return;
+  const gen = S.gen;
+  try {
+    const list = arr(await api(F() + '/mail?for=board&unread=true'));
+    if (gen === S.gen) S.boardUnread = new Set(list.map((m) => str(m.id)));
+  } catch (e) { /* no run */ }
+}
+async function loadFirm() {
+  if (!S.firm) return;
+  const firm = S.firm, gen = S.gen;
+  let info;
+  try { info = await api(F()); } catch (e) { toast(e.message, true); return; }
+  if (firm !== S.firm) return;
+  S.info = info;
+  if (S.mode === 'live' && gen === S.gen) {
+    const run = info.run ? str(info.run.run) : null;
+    if (run && run !== S.run) { startLive(run); return; }
+    if (!run && (S.run || !S.M)) { stopLive(); S.gen++; S.run = null; closePanel(); S.M = modelFromInfo(info); mountAll(); }
+    if (run) await refreshUnread();
+  }
+  scheduleRender();
+}
+async function loadFirms() {
+  try { S.firms = arr(await api('/firms')); } catch (e) { toast(e.message, true); S.firms = []; }
+}
+async function switchFirm(name, fromHash) {
+  stopLive(); stopReplay();
+  S.gen++;
+  S.firm = name; S.info = null; S.run = null; S.M = null; S.mode = 'live'; S.boardUnread = new Set();
+  closePanel();
+  $('replaybar').classList.add('hidden');
+  mountAll();
+  if (!fromHash) setHash();
+  await loadFirm();
+}
+
+// ───────────────────────────── replay ─────────────────────────────
+//
+// The whole journal is loaded and folded up to the timeline position;
+// moving back starts the fold over. Writes are off.
+
+function stopReplay() {
+  if (S.rp && S.rp.timer) clearInterval(S.rp.timer);
+  if (S.rp) S.rp.timer = null;
+}
+async function enterReplay(run) {
+  stopLive(); stopReplay();
+  const gen = ++S.gen;
+  closePanel();
+  S.mode = 'replay'; S.run = run; S.M = newModel(); S.seen = new Set(); S.rp = null;
+  mountAll();
+  setHash();
+  let text;
+  try { text = await api(runPath(run) + '/journal'); } catch (e) { toast('Can\'t open run ' + run + ': ' + e.message, true); if (gen === S.gen) backToLive(); return; }
+  if (gen !== S.gen) return;
+  const events = parseLines(typeof text === 'string' ? text : '').filter((e) => isFinite(Number(e.ts)))
+    .map((e, i) => [e, i]).sort((a, b) => Number(a[0].ts) - Number(b[0].ts) || a[1] - b[1]).map(([e]) => Object.assign(e, { ts: Number(e.ts) }));
+  if (!events.length) { toast('Run ' + run + ' has no events.', true); backToLive(); return; }
+  S.rp = { events, idx: 0, t0: events[0].ts, t1: events[events.length - 1].ts, pos: events[0].ts, playing: false, speed: 10, timer: null, skip: true, last: 0 };
+  buildReplayBar();
+  seek(S.rp.t0, false);
+}
+function backToLive() {
+  stopReplay();
+  S.gen++;
+  S.mode = 'live'; S.rp = null; S.run = null; S.M = null;
+  closePanel();
+  $('replaybar').classList.add('hidden');
+  mountAll();
+  setHash();
+  loadFirm();
+}
+function seek(t, animate) {
+  const rp = S.rp;
+  if (!rp) return;
+  t = Math.max(rp.t0, Math.min(rp.t1, t));
+  if (t < rp.pos || !S.M || rp.idx === 0) { S.M = newModel(); rp.idx = 0; }
+  const mails = [];
+  while (rp.idx < rp.events.length && rp.events[rp.idx].ts <= t) {
+    const e = rp.events[rp.idx++];
+    apply(S.M, e);
+    if (animate && e.type === 'mail') mails.push(e.id);
+  }
+  rp.pos = t;
+  for (const id of mails.slice(-12)) { const m = S.M.mails.get(id); if (m) flyMail(m); }
+  scheduleRender();
+}
+function play(on) {
+  const rp = S.rp;
+  if (!rp) return;
+  if (on && rp.pos >= rp.t1) seek(rp.t0, false);
+  rp.playing = on;
+  if (rp.timer) { clearInterval(rp.timer); rp.timer = null; }
+  if (on) {
+    rp.last = performance.now();
+    rp.timer = setInterval(() => {
+      const now = performance.now(), dt = (now - rp.last) / 1000;
+      rp.last = now;
+      let target = rp.pos + dt * rp.speed;
+      const next = rp.events[rp.idx];
+      // Long quiet stretches are skipped: jump to a second before the next event.
+      if (rp.skip && next && (next.ts - rp.pos) / rp.speed > 3) target = Math.max(target, next.ts - rp.speed);
+      seek(target, true);
+      if (rp.pos >= rp.t1) play(false);
+    }, 100);
+  }
+  updateReplayBar();
+}
+function buildReplayBar() {
+  const rp = S.rp, bar = $('replaybar');
+  const playBtn = el('button', { class: 'btn primary', type: 'button', id: 'rp-play', onclick: () => play(!rp.playing) }, 'Play');
+  const speeds = el('div', { class: 'seg' });
+  for (const s of [1, 10, 60]) {
+    const b = el('button', { type: 'button', onclick: () => { rp.speed = s; updateReplayBar(); } }, s + '×');
+    b.dataset.s = String(s);
+    speeds.append(b);
+  }
+  const slider = el('input', { type: 'range', id: 'rp-range', min: String(rp.t0), max: String(Math.max(rp.t1, rp.t0 + 1)), step: 'any', 'aria-label': 'Timeline',
+    oninput: (ev) => seek(Number(ev.target.value), false) });
+  bar.replaceChildren(
+    el('span', { class: 'title' }, 'Replay of run ', el('span', { class: 'mono' }, S.run)),
+    playBtn, speeds,
+    el('button', { class: 'btn', type: 'button', title: 'Jump to the next event', onclick: () => { const n = rp.events[rp.idx]; if (n) seek(n.ts, true); } }, 'Next event ⏭'),
+    slider,
+    el('span', { class: 'mono small', id: 'rp-time' }),
+    el('label', { class: 'small muted', style: 'display:flex;gap:4px;align-items:center' }, el('input', { type: 'checkbox', checked: true, onchange: (ev) => { rp.skip = ev.target.checked; } }), 'skip quiet stretches'),
+    el('button', { class: 'btn', type: 'button', onclick: backToLive }, 'Back to live'));
+  bar.classList.remove('hidden');
+  updateReplayBar();
+}
+function updateReplayBar() {
+  const rp = S.rp;
+  if (!rp) return;
+  const b = $('rp-play');
+  if (!b) return;
+  b.textContent = rp.playing ? 'Pause' : 'Play';
+  for (const x of b.parentElement.querySelectorAll('.seg button')) x.classList.toggle('on', x.dataset.s === String(rp.speed));
+  const r = $('rp-range');
+  if (document.activeElement !== r) r.value = String(rp.pos);
+  $('rp-time').textContent = fmtDate(rp.pos) + ':' + pad2(new Date(rp.pos * 1000).getSeconds()) + ' · ' + fmtDur(rp.pos - rp.t0) + ' of ' + fmtDur(rp.t1 - rp.t0) + ' · ' + rp.idx + '/' + rp.events.length + ' events';
+}
+document.addEventListener('keydown', (ev) => {
+  if (S.mode !== 'replay' || !S.rp || ev.target.closest('input,textarea,select,.slides')) return;
+  if (ev.key === ' ') { ev.preventDefault(); play(!S.rp.playing); }
+});
+
+// ───────────────────────────── start ─────────────────────────────
+
+async function start() {
+  buildHeader();
+  mountAll();
+  await loadFirms();
+  const h = readHash();
+  S.tab = TABS.some(([t]) => t === h.tab) ? h.tab : 'overview';
+  S.firm = (h.firm && S.firms.some((f) => f.name === h.firm) && h.firm) || (S.firms[0] && S.firms[0].name) || null;
+  showTab(S.tab);
+  if (!S.firm) {
+    $('tab-overview').replaceChildren(el('div', { class: 'empty card' }, 'No firms are configured. Add one under `firms:` in the config; see docs/office.md.'));
+    renderHeader();
+    return;
+  }
+  if (h.replay) enterReplay(h.replay);
+  else await loadFirm();
+  setInterval(() => {
+    if (document.hidden) return;
+    if (live()) loadFirm();
+    if (S.tab === 'security') pollSecurity();
+    scheduleRender();
+  }, 5000);
+  setInterval(() => { if (!document.hidden) loadFirms().then(renderHeader); }, 30000);
+}
+start();
+</script>
+</body>
+</html>

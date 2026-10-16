@@ -87,6 +87,18 @@ struct Verdict {
     decision: Decision,
     effects: NetEffects,
     allowed: bool,
+    /// In a firm: the access request an `ask` became.
+    pending: Option<String>,
+}
+
+impl Verdict {
+    /// Why a request was refused, for the guest.
+    fn denial(&self, what: &str) -> String {
+        match &self.pending {
+            Some(id) => format!("access to {what} requested from security (request {id}); you'll get mail with the decision, then retry"),
+            None => format!("{what} denied by {}", self.decision.rule.as_deref().unwrap_or("default")),
+        }
+    }
 }
 
 async fn decide(d: &Daemon, s: &Session, req: &NetRequest) -> Verdict {
@@ -95,9 +107,25 @@ async fn decide(d: &Daemon, s: &Session, req: &NetRequest) -> Verdict {
         let layers = s.layers(&c);
         evaluate_net(&spec::layers_of(&layers), req)
     };
+    let mut pending = None;
+    let firm = s.firm.as_ref().and_then(|f| f.run().map(|r| (r, f.member.clone())));
     let allowed = match decision.action {
-        Action::Allow => true,
+        Action::Allow => {
+            if let (Some((run, _)), Some(rule)) = (&firm, &decision.rule) {
+                super::office::security::used(run, rule);
+            }
+            true
+        }
         Action::Deny => false,
+        // In a firm an `ask` doesn't hold the request: officers take minutes.
+        Action::Ask if firm.is_some() => {
+            let (run, member) = firm.unwrap();
+            match super::office::security::ask(&run, &member, req, None, None, "") {
+                Ok(id) => pending = Some(id),
+                Err(e) => tracing::warn!(session = %s.id, "access request: {e:#}"),
+            }
+            false
+        }
         Action::Ask => {
             let subject = match (&req.method, &req.path) {
                 (Some(m), Some(p)) => format!("{m} https://{}:{}{p}", req.host, req.port),
@@ -118,7 +146,7 @@ async fn decide(d: &Daemon, s: &Session, req: &NetRequest) -> Verdict {
             d.ask(s, Kind::Net, subject, suggestion).await
         }
     };
-    Verdict { decision, effects, allowed }
+    Verdict { decision, effects, allowed, pending }
 }
 
 /// Copies a verdict into a request record.
@@ -127,6 +155,15 @@ fn note_verdict(rec: &httplog::Shared, v: &Verdict) {
     r.action = if v.allowed { Action::Allow } else { Action::Deny };
     r.rule = v.decision.rule.clone();
     r.scope = v.decision.scope.as_ref().map(|s| s.to_string());
+}
+
+/// Records a connection refused before anything was sent, so the request
+/// log (and a firm's security officers) see refusals too.
+fn note_refused(s: &Session, scheme: &'static str, req: &NetRequest, v: &Verdict) {
+    let rec = s.requests.lock().unwrap().start(scheme, "CONNECT", &req.host, req.port, None, vec![]);
+    note_verdict(&rec, v);
+    let why = v.pending.as_ref().map(|id| format!("access requested from security ({id})"));
+    note_failure(s, &rec, 403, why);
 }
 
 /// Ends a record that got no upstream response.
@@ -187,6 +224,32 @@ fn log(d: &Daemon, s: &Session, l: NetLog<'_>) {
     );
 }
 
+/// Where a connection goes: an address on the network, or one of the firm's
+/// own services, which the daemon routes itself.
+#[derive(Clone)]
+enum Target {
+    Addr(SocketAddr),
+    Firm(Arc<super::office::FirmRun>, super::office::facility::Internal),
+}
+
+/// The target for `host:port`: the firm's services by name, anything else
+/// resolved on the host and checked against the address policy.
+async fn target(d: &Daemon, s: &Session, host: &str, port: u16) -> Result<Target, String> {
+    if let Some(run) = s.firm.as_ref().and_then(|f| f.run()) {
+        if let Some(r) = super::office::facility::route(&run, host, port) {
+            return r.map(|i| Target::Firm(run.clone(), i)).map_err(|e| e.to_string());
+        }
+    }
+    resolve(d, host, port).await.map(Target::Addr)
+}
+
+async fn dial_target(s: &Arc<Session>, t: &Target) -> std::io::Result<Box<dyn super::office::facility::Io>> {
+    match t {
+        Target::Addr(a) => Ok(Box::new(dial(*a).await?)),
+        Target::Firm(run, i) => super::office::facility::connect(run, s, *i).await.map_err(|e| std::io::Error::other(format!("{e:#}"))),
+    }
+}
+
 /// Resolves on the host and returns the first address sessions may reach.
 async fn resolve(d: &Daemon, host: &str, port: u16) -> Result<SocketAddr, String> {
     let addrs: Vec<SocketAddr> = match tokio::time::timeout(Duration::from_secs(10), tokio::net::lookup_host((host, port))).await {
@@ -227,10 +290,11 @@ async fn connect(d: Arc<Daemon>, s: Arc<Session>, req: Request<Incoming>) -> Res
     if let Some(v) = &verdict {
         if !v.allowed {
             log(&d, &s, NetLog { req: &endpoint, verdict: Some(v), inspected: false, status: None, secrets: vec![], error: None });
-            return text(StatusCode::FORBIDDEN, format!("{host}:{port} denied by {}", v.decision.rule.as_deref().unwrap_or("default")));
+            note_refused(&s, "connect", &endpoint, v);
+            return text(StatusCode::FORBIDDEN, v.denial(&format!("{host}:{port}")));
         }
     }
-    let addr = match resolve(&d, &host, port).await {
+    let addr = match target(&d, &s, &host, port).await {
         Ok(a) => a,
         Err(e) => {
             log(&d, &s, NetLog { req: &endpoint, verdict: verdict.as_ref(), inspected: inspect, status: None, secrets: vec![], error: Some(e.clone()) });
@@ -259,10 +323,11 @@ pub async fn transparent(d: Arc<Daemon>, s: Arc<Session>, io: UnixStream, ip: Ip
     if let Some(v) = &verdict {
         if !v.allowed {
             log(&d, &s, NetLog { req: &endpoint, verdict: Some(v), inspected: false, status: None, secrets: vec![], error: None });
+            note_refused(&s, "tcp", &endpoint, v);
             return;
         }
     }
-    let addr = match resolve(&d, &host, port).await {
+    let addr = match target(&d, &s, &host, port).await {
         Ok(a) => a,
         Err(e) => {
             log(&d, &s, NetLog { req: &endpoint, verdict: verdict.as_ref(), inspected: inspect, status: None, secrets: vec![], error: Some(e) });
@@ -274,14 +339,14 @@ pub async fn transparent(d: Arc<Daemon>, s: Arc<Session>, io: UnixStream, ip: Ip
 
 /// Serves an allowed or to-be-inspected stream to `endpoint`. `verdict` is
 /// `None` when requests are decided one by one.
-async fn stream<S>(d: Arc<Daemon>, s: Arc<Session>, mut io: S, endpoint: NetRequest, addr: SocketAddr, verdict: Option<Verdict>)
+async fn stream<S>(d: Arc<Daemon>, s: Arc<Session>, mut io: S, endpoint: NetRequest, addr: Target, verdict: Option<Verdict>)
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
     let Some(first) = peek(&mut io).await else { return };
     let is_tls = first.first() == Some(&0x16);
     match verdict {
-        Some(v) => tunnel(&d, &s, io, first, &endpoint, addr, v).await,
+        Some(v) => tunnel(&d, &s, io, first, &endpoint, &addr, v).await,
         None if is_tls => mitm(d, s, Prefixed::new(first, io), endpoint.host, endpoint.port, addr).await,
         None => plain_inspected(d, s, Prefixed::new(first, io), endpoint.host, endpoint.port).await,
     }
@@ -318,7 +383,7 @@ async fn peek<S: AsyncRead + Unpin>(io: &mut S) -> Option<Vec<u8>> {
 
 /// Passes a stream through. A TLS ClientHello must name the checked host, so
 /// an allowed host cannot front for another.
-async fn tunnel<S: AsyncRead + AsyncWrite + Unpin>(d: &Daemon, s: &Session, mut io: S, first: Vec<u8>, endpoint: &NetRequest, addr: SocketAddr, v: Verdict) {
+async fn tunnel<S: AsyncRead + AsyncWrite + Unpin>(d: &Daemon, s: &Arc<Session>, mut io: S, first: Vec<u8>, endpoint: &NetRequest, addr: &Target, v: Verdict) {
     let scheme = if first.first() == Some(&0x16) { "tls" } else { "tcp" };
     let rec = s.requests.lock().unwrap().start(scheme, "CONNECT", &endpoint.host, endpoint.port, None, vec![]);
     note_verdict(&rec, &v);
@@ -336,7 +401,7 @@ async fn tunnel<S: AsyncRead + AsyncWrite + Unpin>(d: &Daemon, s: &Session, mut 
             return;
         }
     }
-    let mut upstream = match dial(addr).await {
+    let mut upstream = match dial_target(s, addr).await {
         Ok(u) => u,
         Err(e) => {
             log(d, s, NetLog { req: endpoint, verdict: Some(&v), inspected: false, status: None, secrets: vec![], error: Some(e.to_string()) });
@@ -396,7 +461,7 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for Prefixed<S> {
 
 type Upstream = Arc<tokio::sync::Mutex<Option<SendRequest<Body>>>>;
 
-async fn mitm<S>(d: Arc<Daemon>, s: Arc<Session>, io: S, host: String, port: u16, addr: SocketAddr)
+async fn mitm<S>(d: Arc<Daemon>, s: Arc<Session>, io: S, host: String, port: u16, addr: Target)
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
@@ -425,7 +490,7 @@ where
     }
     let upstream: Upstream = Default::default();
     let svc = service_fn(move |req| {
-        let (d, s, host, upstream) = (d.clone(), s.clone(), host.clone(), upstream.clone());
+        let (d, s, host, upstream, addr) = (d.clone(), s.clone(), host.clone(), upstream.clone(), addr.clone());
         async move { Ok::<_, Infallible>(inspected(d, s, req, host, port, addr, upstream).await) }
     });
     let _ = http1().serve_connection(TokioIo::new(tls), svc).await;
@@ -504,7 +569,7 @@ fn clean_headers(headers: &mut hyper::HeaderMap, host: &str, port: u16, default_
     headers.insert(HOST, HeaderValue::from_str(&host_header).unwrap_or(HeaderValue::from_static("invalid")));
 }
 
-async fn inspected(d: Arc<Daemon>, s: Arc<Session>, req: Request<Incoming>, host: String, port: u16, addr: SocketAddr, upstream: Upstream) -> Response<Body> {
+async fn inspected(d: Arc<Daemon>, s: Arc<Session>, req: Request<Incoming>, host: String, port: u16, addr: Target, upstream: Upstream) -> Response<Body> {
     let path = req.uri().path_and_query().map(|p| p.as_str().to_string()).unwrap_or_else(|| "/".into());
     let net = NetRequest { host: host.clone(), port, method: Some(req.method().to_string()), path: Some(path.clone()) };
     // Headers as the guest sent them: before secrets are added.
@@ -514,7 +579,7 @@ async fn inspected(d: Arc<Daemon>, s: Arc<Session>, req: Request<Incoming>, host
     if !v.allowed {
         log(&d, &s, NetLog { req: &net, verdict: Some(&v), inspected: true, status: None, secrets: vec![], error: None });
         note_failure(&s, &rec, 403, None);
-        return text(StatusCode::FORBIDDEN, format!("{} {host}{path} denied by {}", net.method.as_deref().unwrap_or(""), v.decision.rule.as_deref().unwrap_or("default")));
+        return text(StatusCode::FORBIDDEN, v.denial(&format!("{} {host}{path}", net.method.as_deref().unwrap_or(""))));
     }
     let (mut parts, body) = req.into_parts();
     clean_headers(&mut parts.headers, &host, port, 443);
@@ -537,7 +602,7 @@ async fn inspected(d: Arc<Daemon>, s: Arc<Session>, req: Request<Incoming>, host
         None => false,
     };
     if !ready {
-        match open_tls(&host, addr).await {
+        match open_tls(&host, &addr).await {
             Ok(sender) => *guard = Some(sender),
             Err(e) => {
                 log(&d, &s, NetLog { req: &net, verdict: Some(&v), inspected: true, status: None, secrets: used, error: Some(e.clone()) });
@@ -561,8 +626,11 @@ async fn inspected(d: Arc<Daemon>, s: Arc<Session>, req: Request<Incoming>, host
     }
 }
 
-async fn open_tls(host: &str, addr: SocketAddr) -> Result<SendRequest<Body>, String> {
-    let tcp = dial(addr).await.map_err(|e| format!("connecting to {host}: {e}"))?;
+async fn open_tls(host: &str, addr: &Target) -> Result<SendRequest<Body>, String> {
+    let Target::Addr(addr) = addr else {
+        return Err(format!("{host} is one of the firm's services; rules with methods, paths or secrets don't apply to it"));
+    };
+    let tcp = dial(*addr).await.map_err(|e| format!("connecting to {host}: {e}"))?;
     let name = rustls::pki_types::ServerName::try_from(host.to_string()).map_err(|e| format!("{host}: {e}"))?;
     let tls = TlsConnector::from(tls::client_config()).connect(name, tcp).await.map_err(|e| format!("TLS to {host}: {e}"))?;
     let (sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(tls)).await.map_err(|e| e.to_string())?;
@@ -603,9 +671,9 @@ async fn forward_plain(d: Arc<Daemon>, s: Arc<Session>, req: Request<Incoming>, 
     if !v.allowed {
         log(&d, &s, NetLog { req: &net, verdict: Some(&v), inspected: true, status: None, secrets: vec![], error: None });
         note_failure(&s, &rec, 403, None);
-        return text(StatusCode::FORBIDDEN, format!("{} http://{host}{path} denied", req.method()));
+        return text(StatusCode::FORBIDDEN, v.denial(&format!("{} http://{host}{path}", req.method())));
     }
-    let addr = match resolve(&d, &host, port).await {
+    let addr = match target(&d, &s, &host, port).await {
         Ok(a) => a,
         Err(e) => {
             log(&d, &s, NetLog { req: &net, verdict: Some(&v), inspected: true, status: None, secrets: vec![], error: Some(e.clone()) });
@@ -627,7 +695,7 @@ async fn forward_plain(d: Arc<Daemon>, s: Arc<Session>, req: Request<Incoming>, 
     let body = httplog::Tee::wrap(body.boxed(), rec.clone(), s.requests.clone(), httplog::Side::Request);
     let out = Request::from_parts(parts, body);
     let result = async {
-        let tcp = dial(addr).await.map_err(|e| e.to_string())?;
+        let tcp = dial_target(&s, &addr).await.map_err(|e| e.to_string())?;
         let (mut sender, conn) = hyper::client::conn::http1::handshake::<_, Body>(TokioIo::new(tcp)).await.map_err(|e| e.to_string())?;
         tokio::spawn(conn);
         sender.send_request(out).await.map_err(|e| e.to_string())

@@ -10,6 +10,7 @@ pub mod api;
 mod dns;
 pub mod httplog;
 mod nic;
+pub mod office;
 mod proxy;
 pub mod session;
 mod spec;
@@ -175,9 +176,10 @@ pub struct Daemon {
     seq: AtomicU64,
     approvals: Mutex<HashMap<String, Pending>>,
     pub ui_token: String,
+    pub office: office::Office,
 }
 
-const ID_CHARS: &[u8] = b"abcdefghijkmnpqrstuvwxyz23456789";
+pub const ID_CHARS: &[u8] = b"abcdefghijkmnpqrstuvwxyz23456789";
 
 /// Whether `s` has the form of a session id, as `random_id(6)` makes them.
 pub fn is_session_id(s: &str) -> bool {
@@ -231,7 +233,7 @@ impl Daemon {
             Config::default()
         };
         if let Ok(meta) = std::fs::metadata(&startup_path) {
-            if meta.permissions().mode() & 0o077 != 0 {
+            if meta.permissions().mode() & 0o077 != 0 && config.has_inline_secrets() {
                 tracing::warn!("{} is readable by others; it may hold secrets (chmod 600)", startup_path.display());
             }
         }
@@ -244,6 +246,7 @@ impl Daemon {
         for dir in std::fs::read_dir(state.join("sessions"))?.flatten() {
             let _ = std::fs::remove_dir_all(vm::vm_dir(&dir.path()));
         }
+        office::close_orphans(&state);
         let initrd = state.join("initrd.cpio");
         vm::build_initrd(&find_agent(&d.agent)?, &initrd)?;
         let paths = Paths {
@@ -269,6 +272,7 @@ impl Daemon {
             seq: AtomicU64::new(1),
             approvals: Mutex::new(HashMap::new()),
             ui_token: random_id(24),
+            office: office::Office::default(),
         }))
     }
 

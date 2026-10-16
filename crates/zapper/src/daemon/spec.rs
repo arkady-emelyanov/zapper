@@ -34,7 +34,7 @@ fn render_secrets(config: &Config, template: &str) -> Result<String> {
     }
 }
 
-pub fn build(config: &Config, profile: &ResolvedProfile, session: &str, ca_pem: &str, disks: Vec<GuestDisk>) -> Result<GuestSpec> {
+pub fn build(config: &Config, profile: &ResolvedProfile, session: &str, ca_pem: &str, disks: Vec<GuestDisk>, extra_files: Vec<GuestFile>, forwards: Vec<zapper_policy::proto::Forward>) -> Result<GuestSpec> {
     let agent = &profile.agent;
     let home = format!("/home/{}", agent.user);
     let nic = profile.engine.network == NetworkMode::Nic;
@@ -76,6 +76,7 @@ pub fn build(config: &Config, profile: &ResolvedProfile, session: &str, ca_pem: 
         let content = render_secrets(config, content).with_context(|| format!("agent.files.{path}"))?;
         files.push(GuestFile { path, content, mode, user_owned });
     }
+    files.extend(extra_files);
     // All fs rules, most specific layer first; the guest applies them all.
     let mut fs: Vec<FsRule> = Vec::new();
     for (_, p) in &profile.layers {
@@ -97,6 +98,7 @@ pub fn build(config: &Config, profile: &ResolvedProfile, session: &str, ca_pem: 
         setup: profile.setup.clone(),
         ca_pem: ca_pem.into(),
         supervise_exec: true,
+        forwards,
     })
 }
 
@@ -167,7 +169,7 @@ mod tests {
     fn permission_mode_goes_to_managed_settings() {
         let config = Config::from_yaml("profiles:\n  c:\n    agent: { kind: claude-code, permission_mode: bypassPermissions, model: m }\n").unwrap();
         let profile = config.resolve("c").unwrap();
-        let spec = build(&config, &profile, "s", "", vec![]).unwrap();
+        let spec = build(&config, &profile, "s", "", vec![], vec![], vec![]).unwrap();
         let file = |p: &str| spec.files.iter().find(|f| f.path == p).map(|f| serde_json::from_str::<Value>(&f.content).unwrap());
         let user = file("/home/agent/.claude/settings.json").unwrap();
         assert_eq!(user["model"], "m");

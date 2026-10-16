@@ -247,17 +247,10 @@ pub fn reach(layers: &Layers<'_>, name: &str) -> Reach {
     }
 }
 
-/// Whether the DNS server may answer for `name` at all.
+/// Whether the DNS server looks `name` up: some request to it could be
+/// allowed, outright or after an `ask`.
 pub fn resolvable(layers: &Layers<'_>, name: &str) -> bool {
     reach(layers, name) != Reach::Never
-}
-
-/// Whether the DNS server may look `name` up on the host without asking: a
-/// request to it would be allowed outright. Names that are only asked about
-/// aren't looked up before an approval, so queries can't carry data out
-/// through the host's resolver.
-pub fn lookup_allowed(layers: &Layers<'_>, name: &str) -> bool {
-    reach(layers, name) == Reach::Allow
 }
 
 pub fn evaluate_exec(layers: &Layers<'_>, req: &ExecRequest) -> Decision {
@@ -358,19 +351,6 @@ profiles:
         let dev = &c.profiles["dev"].policy;
         let layers = [(Scope::Profile("dev".into()), dev), (Scope::Global, &c.policy)];
         assert!(resolvable(&layers, "example.com"), "dev defaults to ask");
-    }
-
-    #[test]
-    fn dns_lookup_allowed() {
-        let c = Config::from_yaml(CONFIG).unwrap();
-        let base = &c.profiles["base"].policy;
-        let layers = [(Scope::Profile("base".into()), base), (Scope::Global, &c.policy)];
-        assert!(lookup_allowed(&layers, "api.github.com"), "allow rule");
-        assert!(!lookup_allowed(&layers, "gist.github.com"), "ask rule: no lookup before approval");
-        assert!(!lookup_allowed(&layers, "example.com"), "default deny");
-        let dev = &c.profiles["dev"].policy;
-        let layers = [(Scope::Profile("dev".into()), dev), (Scope::Global, &c.policy)];
-        assert!(!lookup_allowed(&layers, "example.com"), "default ask: no lookup");
     }
 
     #[test]

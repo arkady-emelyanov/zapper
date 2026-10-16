@@ -184,13 +184,6 @@ post() { curl -s -o /dev/null -w '%{http_code}' -X POST -H 'content-type: applic
 [ "$(post -b "zapper_token=$token" -H 'x-zapper-ui: 1' -H 'Origin: http://evil.example')" = 403 ] && pass "UI write from another origin is refused" || fail "UI write from another origin is refused" "not 403"
 [ "$(curl -s -o /dev/null -w '%{http_code}' -X POST -b "zapper_token=$token" -H 'x-zapper-ui: 1' -H "Origin: $base" "$base/api/config/save")" = 404 ] && pass "the UI has no other writes" || fail "the UI has no other writes" "config/save reachable"
 [ "$(post -b "zapper_token=$token" -H 'x-zapper-ui: 1' -H "Origin: $base")" = 200 ] && pass "the UI answers an approval" || fail "the UI answers an approval" "not 200"
-# The first approval was for resolving the name; the connection asks again.
-for _ in 1 2 3 4 5 6 7 8 9 10; do
-    pending=$("$Z" --json approvals | grep -o '"id": "[^"]*"' | head -1 | cut -d'"' -f4)
-    [ -n "$pending" ] && break
-    sleep 0.5
-done
-[ -n "$pending" ] && post -b "zapper_token=$token" -H 'x-zapper-ui: 1' -H "Origin: $base" > /dev/null
 wait "$asker"
 expect "the request approved in the UI goes through" "$(cat "$T/ask.out")" "301"
 terms=$(curl -s -b "zapper_token=$token" "$base/api/sessions/$id/terminals")

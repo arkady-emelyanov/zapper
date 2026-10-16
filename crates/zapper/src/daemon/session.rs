@@ -12,9 +12,10 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::process::Child;
 use tokio::sync::{mpsc, watch, Semaphore};
-use zapper_policy::proto::{Frame, GuestDisk, GuestMsg, HostMsg, ShellRequest, CONTROL_PORT, MAX_FRAME, MAX_LINE, PROXY_PORT, SHELL_PORT};
+use zapper_policy::proto::{Forward, Frame, GuestDisk, GuestFile, GuestMsg, HostMsg, ShellRequest, CONTROL_PORT, MAX_FRAME, MAX_LINE, OFFICE_PORT, PROXY_PORT, SHELL_PORT};
 use zapper_policy::{evaluate_exec, Action, AnyRule, Config, ExecRequest, ExecRule, Kind, MountMode, Policy, ResolvedProfile, Scope};
 
+use super::office::FirmLink;
 use super::{now, proxy, spec, tls, vm, Daemon, Event, EventBody};
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -66,6 +67,10 @@ pub struct Session {
     /// Bounds concurrent proxy connections from the guest.
     pub conns: Arc<Semaphore>,
     exec_checks: Arc<Semaphore>,
+    /// The firm the session works for, if any.
+    pub firm: Option<FirmLink>,
+    extra_files: Vec<GuestFile>,
+    forwards: Vec<Forward>,
 }
 
 #[derive(Serialize)]
@@ -79,12 +84,19 @@ pub struct SessionInfo {
     pub image: String,
     pub vcpus: u8,
     pub memory_mib: u32,
+    pub kernel: String,
+    /// `nic` or `vsock`.
+    pub network: zapper_policy::NetworkMode,
     pub user: String,
     pub root: bool,
     pub workdir: String,
     pub counters: serde_json::Value,
     pub usage: Option<zapper_policy::proto::GuestEvent>,
     pub rules: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub firm: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub member: Option<String>,
 }
 
 impl Session {
@@ -100,6 +112,8 @@ impl Session {
             image: self.resolved.engine.image.clone(),
             vcpus: self.resolved.engine.vcpus,
             memory_mib: self.resolved.engine.memory_mib,
+            kernel: self.resolved.engine.kernel.clone(),
+            network: self.resolved.engine.network,
             user: self.resolved.agent.user.clone(),
             root: self.resolved.agent.root,
             workdir: self.workdir.display().to_string(),
@@ -110,6 +124,8 @@ impl Session {
             }),
             usage: self.usage.lock().unwrap().clone(),
             rules: self.policy.read().unwrap().rules().len(),
+            firm: self.firm.as_ref().map(|f| f.firm.clone()),
+            member: self.firm.as_ref().map(|f| f.member.clone()),
         }
     }
 
@@ -134,6 +150,9 @@ impl Session {
     /// running config falls back to its layers at session start.
     pub fn layers(&self, config: &Config) -> Vec<(Scope, Policy)> {
         let mut v = vec![(Scope::Session(self.id.clone()), self.policy.read().unwrap().clone())];
+        if let Some((role, policy)) = self.firm.as_ref().and_then(|f| f.role.as_ref().map(|r| (format!("{}/{}", f.firm, r.0), r.1.clone()))) {
+            v.push((Scope::Role(role), policy.read().unwrap().clone()));
+        }
         match config.resolve(&self.profile) {
             Ok(p) => v.extend(p.layers),
             Err(_) => v.extend(self.resolved.layers.iter().cloned()),
@@ -196,14 +215,34 @@ pub struct NewSession {
     pub profile: String,
     pub workdir: PathBuf,
     pub policy: Policy,
+    pub firm: Option<FirmLink>,
+    /// Files written in the guest besides the profile's.
+    pub files: Vec<GuestFile>,
+    /// Disks besides the profile's mounts.
+    pub mounts: Vec<zapper_policy::Mount>,
+    /// Merged over the profile's `agent`.
+    pub agent_overlay: Option<serde_json::Value>,
+    pub forwards: Vec<Forward>,
+}
+
+impl NewSession {
+    pub fn plain(profile: String, workdir: PathBuf, policy: Policy) -> Self {
+        NewSession { profile, workdir, policy, firm: None, files: vec![], mounts: vec![], agent_overlay: None, forwards: vec![] }
+    }
 }
 
 /// Creates a session and boots its VM; returns once the guest is ready.
 pub async fn create(daemon: Arc<Daemon>, new: NewSession) -> Result<Arc<Session>> {
-    let (resolved, max) = {
+    let (mut resolved, max) = {
         let c = daemon.config.read().unwrap();
         (c.resolve(&new.profile)?, c.daemon.max_sessions)
     };
+    if let Some(overlay) = &new.agent_overlay {
+        let mut agent = serde_json::to_value(&resolved.agent)?;
+        zapper_policy::merge(&mut agent, overlay);
+        resolved.agent = serde_json::from_value(agent).context("agent overlay")?;
+    }
+    resolved.mounts.extend(new.mounts.iter().cloned());
     let running = daemon.sessions.read().unwrap().values().filter(|s| matches!(*s.status.borrow(), Status::Starting | Status::Running)).count();
     if running >= max {
         bail!("{running} sessions running; daemon.max_sessions is {max}");
@@ -238,6 +277,9 @@ pub async fn create(daemon: Arc<Daemon>, new: NewSession) -> Result<Arc<Session>
         next_shell: AtomicU64::new(1),
         conns: Arc::new(Semaphore::new(256)),
         exec_checks: Arc::new(Semaphore::new(64)),
+        firm: new.firm.clone(),
+        extra_files: new.files.clone(),
+        forwards: new.forwards.clone(),
     });
     for rule in new.policy.rules() {
         session.add_rule(rule, None);
@@ -302,7 +344,7 @@ async fn boot(daemon: &Arc<Daemon>, session: &Arc<Session>) -> Result<()> {
     }
     let spec = {
         let c = daemon.config.read().unwrap();
-        spec::build(&c, &session.resolved, &session.id, &session.ca.pem, guest_disks)?
+        spec::build(&c, &session.resolved, &session.id, &session.ca.pem, guest_disks, session.extra_files.clone(), session.forwards.clone())?
     };
 
     // Guest-initiated vsock connections arrive on `<uds>_<port>`.
@@ -311,6 +353,10 @@ async fn boot(daemon: &Arc<Daemon>, session: &Arc<Session>) -> Result<()> {
     let proxy_path = PathBuf::from(format!("{}_{PROXY_PORT}", vsock.display()));
     let control = UnixListener::bind(&control_path)?;
     let proxy = UnixListener::bind(&proxy_path)?;
+    if let Some(link) = session.firm.as_ref().filter(|f| f.worker) {
+        let office = UnixListener::bind(PathBuf::from(format!("{}_{OFFICE_PORT}", vsock.display())))?;
+        tokio::spawn(super::office::ops::serve(daemon.clone(), session.clone(), link.clone(), office));
+    }
     let nic = engine.network == zapper_policy::NetworkMode::Nic;
     if nic {
         let listener = UnixListener::bind(vmdir.join(crate::netns::SOCKET))?;

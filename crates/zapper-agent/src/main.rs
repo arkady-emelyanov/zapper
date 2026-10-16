@@ -9,8 +9,10 @@
 
 mod acct;
 mod control;
+mod fake;
 mod forward;
 mod init;
+mod office;
 mod shell;
 mod sys;
 
@@ -23,8 +25,15 @@ fn main() {
         }));
         init::run();
     }
-    match std::env::args().nth(1).as_deref() {
+    let args: Vec<String> = std::env::args().collect();
+    // Installed in guests as `office` too.
+    if args.first().is_some_and(|a| a.rsplit('/').next() == Some("office")) {
+        std::process::exit(office::cli(&args[1..]));
+    }
+    match args.get(1).map(String::as_str) {
         Some("--version") => println!("zapper-agent {}", env!("CARGO_PKG_VERSION")),
+        Some("office") => std::process::exit(office::cli(&args[2..])),
+        Some("fake-claude") => std::process::exit(fake::run(args.get(2).map(String::as_str).unwrap_or("/dev/null"))),
         _ => {
             eprintln!("zapper-agent runs as PID 1 of a zapper microVM");
             std::process::exit(2);

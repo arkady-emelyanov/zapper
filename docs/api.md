@@ -4,13 +4,45 @@
 
 ## Overview
 
-The daemon serves the API on its unix socket, mode 0600 in a 0700 directory; whoever can open the socket can use the API. Request bodies are YAML or JSON, and responses are JSON unless noted. Errors are `{"error": "…"}` with status 400 or 404. The UI serves the routes marked **ui** under `/api` on its TCP address, behind its token: the reads, and answering approvals ([instrumentation: the UI](instrumentation.md#the-ui)).
+The zapper daemon serves the API, for The Office and the sessions under it, on its unix socket, mode 0600 in a 0700 directory; whoever can open the socket can use the API. Request bodies are YAML or JSON, and responses are JSON unless noted. Errors are `{"error": "…"}` with status 400 or 404. The UI serves the routes marked **ui** under `/api` on its TCP address, behind its token: the reads, answering approvals, and the board's writes to firms ([instrumentation: the UI](instrumentation.md#the-ui)).
 
 ```
 curl --unix-socket $XDG_RUNTIME_DIR/zapper/api.sock http://zapper/v1/status
 ```
 
-## Endpoints
+## Firms
+
+The office's routes ([office](office.md)), for the board. F is a firm, RUN a run id or `current` (the firm's current or last run). The UI serves the reads and the board's writes (marked **ui**) under `/api`.
+
+| Method and path | ui | Purpose |
+|---|---|---|
+| `GET /v1/firms` | ✓ | Firms with their runs' states |
+| `GET /v1/firms/F` | ✓ | The chart, and the run: workers' states, usage, budget |
+| `POST /v1/firms/F/up` · `/down` · `/pause {paused}` | ✓ | Start a fresh run, stop it, pause or resume it |
+| `GET /v1/firms/F/runs` | ✓ | Past runs, newest first |
+| `DELETE /v1/firms/F/runs/RUN` | | Delete a past run |
+| `GET /v1/firms/F/runs/RUN/journal[?follow=true&from=OFFSET]` | ✓ | The journal (`application/x-ndjson`), or followed as server-sent events, one entry per `data:` |
+| `GET /v1/firms/F/runs/RUN/transcripts/WORKER[?follow=true]` | ✓ | A worker's Claude stream-json events and wake prompts |
+| `GET /v1/firms/F/runs/RUN/drive/ARTIFACT/VERSION/PATH` | ✓ | A published file, with its own content type and `Content-Security-Policy: sandbox` |
+| `GET /v1/firms/F/runs/RUN/git` | ✓ | The run's commits on all branches, newest first |
+| `GET /v1/firms/F/runs/RUN/git/branches` | ✓ | Branches, `main` first, with their last commit |
+| `GET /v1/firms/F/runs/RUN/git/log?ref=R` | ✓ | A branch's commits |
+| `GET /v1/firms/F/runs/RUN/git/tree?ref=R&path=P` | ✓ | A directory's entries at a branch |
+| `GET /v1/firms/F/runs/RUN/git/blob?ref=R&path=P` | ✓ | A file's text (up to 1 MiB) |
+| `GET /v1/firms/F/runs/RUN/git/commits/ID` | ✓ | A commit's message, files changed and diff |
+| `GET /v1/firms/F/mail[?for=WORKER&unread=true]` | ✓ | The board's (or a worker's) inbox |
+| `POST /v1/firms/F/mail` | ✓ | The board sends `{to, cc?, subject, body, kind, due?, in_reply_to?, attachments?}` |
+| `POST /v1/firms/F/mail/read` | ✓ | `{ids}` the board has read |
+| `GET /v1/firms/F/threads/T` | ✓ | A thread with its messages |
+| `GET /v1/firms/F/drive` | ✓ | The shared drive's artifacts |
+| `GET /v1/firms/F/security` | ✓ | Access requests and standing approvals |
+| `POST /v1/firms/F/security/requests/R` | ✓ | The board decides `{allow, scope, reason}` |
+| `DELETE /v1/firms/F/security/rules/RULE` | ✓ | Revoke a standing approval |
+| `POST /v1/firms/F/security/rules/RULE/promote` | ✓ | Copy it into the running config, at the role's profile |
+
+## Sessions, rules and config
+
+The layer workers run on: zapper's sessions, policy and config.
 
 | Method and path | ui | Purpose |
 |---|---|---|

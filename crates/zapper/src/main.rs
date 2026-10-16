@@ -4,6 +4,7 @@
 
 mod client;
 mod daemon;
+mod firm_cli;
 mod image;
 mod netns;
 mod term;
@@ -23,9 +24,10 @@ use client::Client;
 #[derive(Parser)]
 #[command(name = "zapper", version, about = "Run agents and people in policy-bound Firecracker microVMs")]
 struct Cli {
-    /// Startup config file.
-    #[arg(long, global = true, env = "ZAPPER_CONFIG", default_value = "~/.config/zapper/zapper.yaml")]
-    config: String,
+    /// Startup config file. Default: `config/zapper.yaml` when run in a
+    /// zapper checkout, else `~/.config/zapper/zapper.yaml`.
+    #[arg(long, global = true, env = "ZAPPER_CONFIG")]
+    config: Option<String>,
     /// Print API responses as JSON.
     #[arg(long, global = true)]
     json: bool,
@@ -64,6 +66,10 @@ enum Cmd {
     /// Run a command in a session without a terminal.
     Exec {
         id: String,
+        /// As root, without exec supervision: for the operator's own
+        /// maintenance (e.g. a firm's cluster VM).
+        #[arg(long)]
+        system: bool,
         #[arg(last = true, required = true)]
         command: Vec<String>,
     },
@@ -136,6 +142,21 @@ enum Cmd {
         #[command(subcommand)]
         cmd: ImageCmd,
     },
+    /// Firms of workers: start, stop, watch, replay.
+    Firm {
+        #[command(subcommand)]
+        cmd: firm_cli::FirmCmd,
+    },
+    /// Mail as the board.
+    Mail {
+        #[command(subcommand)]
+        cmd: firm_cli::MailCmd,
+    },
+    /// A firm's shared drive.
+    Drive {
+        #[command(subcommand)]
+        cmd: firm_cli::DriveCmd,
+    },
 }
 
 #[derive(Subcommand)]
@@ -205,7 +226,7 @@ enum ImageCmd {
     Ls,
 }
 
-const EXAMPLE: &str = include_str!("../../../config/zapper.example.yaml");
+const EXAMPLE: &str = include_str!("../../../config/zapper.yaml");
 
 fn load_config(path: &Path) -> Result<Config> {
     if !path.exists() {
@@ -224,6 +245,10 @@ fn main() {
         };
         std::process::exit(code);
     }
+    // Commands whose output is piped into `head` end quietly.
+    if args.get(1).map(String::as_str) != Some("serve") {
+        unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) };
+    }
     tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("tokio runtime").block_on(async_main());
 }
 
@@ -237,6 +262,33 @@ async fn async_main() {
             std::process::exit(1);
         }
     }
+}
+
+/// The config file: the one given, else the checkout's, else the user's.
+/// Relative paths in it resolve against its directory.
+fn config_path(given: Option<&str>) -> PathBuf {
+    let path = match given {
+        Some(p) => PathBuf::from(expand_home(p)),
+        None => {
+            let local = PathBuf::from("config/zapper.yaml");
+            if local.is_file() {
+                local
+            } else {
+                PathBuf::from(expand_home("~/.config/zapper/zapper.yaml"))
+            }
+        }
+    };
+    let path = std::path::absolute(&path).unwrap_or(path);
+    if let Some(dir) = path.parent() {
+        zapper_policy::set_config_dir(dir);
+    }
+    path
+}
+
+/// The daemon's state directory, from the config.
+fn daemon_state_dir() -> Result<PathBuf> {
+    let path = config_path(std::env::var("ZAPPER_CONFIG").ok().as_deref());
+    Ok(PathBuf::from(expand_home(&load_config(&path)?.daemon.state)))
 }
 
 fn print_json(v: &Value) {
@@ -270,7 +322,7 @@ fn s(v: &Value) -> String {
 }
 
 async fn run(cli: Cli) -> Result<i32> {
-    let config_path = PathBuf::from(expand_home(&cli.config));
+    let config_path = config_path(cli.config.as_deref());
     let c = Client::new();
     match cli.cmd {
         Cmd::Init => {
@@ -304,8 +356,8 @@ async fn run(cli: Cli) -> Result<i32> {
             return code;
         }
         Cmd::Attach { id, command } => return attach(&c, &id, &command, false).await,
-        Cmd::Exec { id, command } => {
-            let io = c.attach(&id, None, &command, false).await?;
+        Cmd::Exec { id, system, command } => {
+            let io = c.attach(&id, None, &command, system).await?;
             return term::run(io, false).await;
         }
         Cmd::Cp { from, to } => {
@@ -504,6 +556,9 @@ async fn run(cli: Cli) -> Result<i32> {
                 println!("profile {name} removed");
             }
         },
+        Cmd::Firm { cmd } => return firm_cli::firm(&c, cmd, cli.json).await,
+        Cmd::Mail { cmd } => return firm_cli::mail(&c, cmd, cli.json).await,
+        Cmd::Drive { cmd } => return firm_cli::drive(&c, cmd, cli.json).await,
         Cmd::Image { cmd } => {
             let config = load_config(&config_path)?;
             let dir = PathBuf::from(expand_home(&config.daemon.images));
@@ -666,6 +721,10 @@ async fn serve(config_path: PathBuf) -> Result<()> {
                 _ = term.recv() => {}
             }
             eprintln!("zapper: stopping sessions");
+            let runs: Vec<_> = d.office.runs.read().unwrap().values().cloned().collect();
+            for r in runs {
+                daemon::office::down(&d, &r, "daemon shutdown").await;
+            }
             let sessions: Vec<_> = d.sessions.read().unwrap().values().cloned().collect();
             for s in sessions {
                 daemon::session::stop(&d, &s, "daemon shutdown").await;
@@ -747,7 +806,9 @@ async fn check(config_path: &Path) -> Result<i32> {
     report(mkfs, "mkfs.ext4 with -d (e2fsprogs ≥ 1.43)", "sudo apt install e2fsprogs");
     if let Ok(meta) = std::fs::metadata(config_path) {
         use std::os::unix::fs::PermissionsExt;
-        report(meta.permissions().mode() & 0o077 == 0, "config readable only by you", &format!("chmod 600 {}", config_path.display()));
+        if config.has_inline_secrets() {
+            report(meta.permissions().mode() & 0o077 == 0, "config with inline secrets readable only by you", &format!("chmod 600 {}", config_path.display()));
+        }
     }
     // Not a prerequisite: the daemon is started after setup.
     let socket = client::socket_path();
