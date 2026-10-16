@@ -40,7 +40,7 @@ These files stay after the session ends. The `vm/` directory, with the disks and
 
 ## The UI
 
-`zapper serve` prints `http://127.0.0.1:7878/?token=…` and writes the URL to `state/ui-url` (0600). The UI opens on the office: firms' org charts, mail, security, shared drives, statistics and replays, where the board writes to workers and decides access requests ([office: web UI](office.md#web-ui)). Its Sessions tab, at `/sessions`, shows the daemon's sessions; there, the one action is answering approvals. Its views:
+`zapper serve` prints `http://127.0.0.1:7878/?token=…` and writes the URL to `state/ui-url` (0600). The UI opens on the office: firms' org charts, mail, security, shared drives, statistics and replays, where the board writes to workers and decides access requests ([office: web UI](office.md#web-ui)). A link in its footer opens `/sessions`, which shows the daemon's sessions; there, the one action is answering approvals. Its views:
 
 - **sessions**, with counters
 - **session detail**: the session's details and terminals, its network traffic, exec history with decisions and wait times, process exits with CPU and memory

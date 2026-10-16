@@ -37,7 +37,7 @@ firms:
     board: { name: Board }                 # the operator; mail to `board` lands in the UI
     budget: { daily_turns: 400, max_concurrent: 3 }
     git: {}                                # an empty repository per run at https://git.acme.internal/product.git
-    product_port: 127.0.0.1:8080           # the board's browser → the cluster's ingress
+    product_port: 0.0.0.0:8080             # browsers on the LAN → the cluster's ingress; 127.0.0.1:8080 for this machine only
     facilities:
       cluster: { kind: k3s, profile: office-k3s }   # image k3s, kernel vmlinux-6.1-k8s
     landing: { name: "Acme Inc.", motto: "Building digital worlds!" }   # served until the product is
@@ -359,14 +359,15 @@ A bare repository in the run directory, `runs/<id>/git/product.git`, empty at th
 
 ### Ports on the host
 
-Two local ports for the board, both on `127.0.0.1` only:
+Ports on the host:
 
 | Port | What |
 |---|---|
-| `daemon.ui` (7878) | The firm: the web UI |
-| `product_port` (8080) | The product: each connection is forwarded to the cluster's ingress on port 80 |
+| `daemon.ui` (7878) | The firm: the web UI, on loopback |
+| `product_port` (8080) | The product: each connection is forwarded to the cluster's ingress on port 80. Any address: `0.0.0.0:8080` serves it to the LAN, `127.0.0.1:8080` to this machine only |
+| `dashboard_port` (8081) | The cluster's dashboard; loopback only, as it signs in as cluster-admin |
 
-The product port forwards bytes and keeps the browser's `Host` header (`localhost:8080`), so the product must answer on the ingress's default route; the engineers' skill says so. Connections from the board's browser aren't checked against firm policy, as the board's own, but each one is logged.
+The product port forwards bytes and keeps the browser's `Host` header (`localhost:8080`), so the product must answer on the ingress's default route; the engineers' skill says so. Connections to it aren't checked against firm policy, as the board's own, but each one is logged with its peer address. On the LAN, anyone who can reach the host can use whatever the engineers deployed, so serve it there only on a network you trust; the host's firewall may also need to allow the port.
 
 ## Skills
 
@@ -382,7 +383,7 @@ Skills live in [config/skills/](../config/skills/). They are built into the bina
 
 ## Web UI
 
-The UI has a tab bar. The office's tabs come first; zapper's views of sessions (network, terminals, approvals) are the last tab, **Sessions**, and a worker's session links there.
+The UI has a tab bar for the office. zapper's own views of sessions (network, terminals, approvals) are a separate page, `/sessions`, linked from the footer and from each worker's panel; its footer leads back to the firm.
 
 | Tab | For |
 |---|---|
@@ -393,9 +394,10 @@ The UI has a tab bar. The office's tabs come first; zapper's views of sessions (
 | Git | The firm's repository: branches, files and commits |
 | Statistics | Activity, throughput and budgets |
 | VMs | Every running VM of the daemon, now: the host, each firm's workers and cluster, other sessions; size, usage and counters; terminals to watch read-only, and each worker's Claude transcript |
-| Sessions | zapper's session views, at `/sessions` |
 
-A header above the tabs shows the firm's name and state (off, starting, running, paused), budget used today, escalations waiting for the board, and the firm controls: up, down, pause. A **Runs** menu in the header opens a past run in [replay](#replay); the header then shows a timeline instead of the controls.
+A header above the tabs shows the firm's name and state (off, starting, running, paused), unread board mail, escalations waiting for the board, and the firm controls: up, down, pause. A **Runs** menu in the header opens a past run in [replay](#replay); the header then shows a timeline instead of the controls.
+
+A footer on every tab shows the run's vital numbers, and flashes one when it changes: workers working, waiting and idle; messages and open obligations (overdue in red); access requests pending and decided; artifacts and versions on the shared drive; commits on `main`; turns and tokens; time since the run started. Each opens its tab.
 
 The UI's state is built by folding the run's journal in the browser: live, it follows the journal as it grows; in replay, it folds up to the timeline's position. One code path serves both.
 
@@ -403,20 +405,20 @@ The UI's state is built by folding the run's journal in the browser: live, it fo
 
 - **Org chart**: the tree from the config, top to bottom. Each node is the worker's animated avatar, name, title and a one-line status ("drafting pricing.md", "waiting for ada", "overdue: 1"). Envelopes animate along the edges as mail is sent, also between workers who aren't directly connected; a badge shows unread mail. The board sits above the CEO as its own node.
 - **Click a worker** to open a side panel:
-  - **Write as the board**: subject, body, kind (`assignment`, `question`, `fyi`), `due`, attachments from the shared drive. Sent as `board` in a new thread, or as a reply in one of the worker's threads.
+  - **Write as the board**: subject, body, kind (`assignment`, `question`, `fyi`), `due`, attachments from the shared drive or small files from the board's computer (up to 10 files, 5 MiB together, stored on the shared drive as the board's artifact). Sent as `board` in a new thread, or as a reply in one of the worker's threads.
   - **Desk**: open assignments, threads waiting on others, overdue items, pending access requests.
   - **Now**: a live transcript of the current turn (text and tool calls, rendered as text), and earlier turns on demand.
-  - Recent mail, published work, and a link to its session in the Sessions tab.
+  - Recent mail, published work, and a link to its session in zapper's session views.
 - **Kickoff**: when the firm is idle and has no threads, the CEO's panel opens with an empty assignment ready to write.
 
 ### Messages
 
 A mail client over the whole firm, read-only except for the board's own mail.
 
-- **Threads list** with subject, participants, kind, state (open, waiting, overdue, closed), last activity.
+- **Threads list** with subject, participants, kind and last activity. A thread shows a state only while it needs something: **waiting for** whoever owes an answer, **overdue** when that is late, **paused** by the loop guard. When the answer comes, the tag goes, in the list, the thread and on the message that asked.
 - **Filters**: **from** (who wrote a message) and **to** (who received it, as recipient or in copy), each the board, a worker or the post office; kind, state and text search. From, to and kind have to match the same message: "from ada, to dennis" lists the threads where ada wrote to dennis. With these filters, each thread says how many of its messages match, opens at the first one, and the matching messages are highlighted.
-- **Thread view**: messages oldest first, with sender avatars, kinds, `due`, attachments that open in the Shared drive tab, and follow-ups marked as automatic. Assignment threads show who assigned what to whom and whether it was closed with a report.
-- **Board inbox**: the threads the board is in, first, with reply and compose. The latest board pack is pinned at the top.
+- **Thread view**: messages oldest first, with sender avatars, kinds, `due`, attachments that open in the Shared drive tab, and follow-ups marked as automatic. While someone owes an answer, the thread says who owes what to whom, and by when.
+- **Board inbox**: the threads the board is in, first, with reply and compose. Every live thread the board is in has a reply form, also before anyone has answered. The latest board pack is pinned at the top.
 - **Delegation tree**: for any thread from the board, the threads it spawned (CEO → CTO → engineers) as a tree, with each branch's state, so the board can see how its request was split up and where it is stuck.
 
 ### Security
@@ -432,11 +434,11 @@ Artifacts by kind, author and thread. An artifact shows its version history, new
 
 ### Git
 
-The run's repository, read-only: a branch picker (`main` first), the branch's commits (the subject, author and age, with the first line of the description under them), its files as a tree with breadcrumbs and the directory's README rendered under it, a file's text (Markdown rendered, code as text, up to 1 MiB), and a commit's message, files changed and diff. In replay, commits after the timeline's position are hidden. The repository itself is `state/firms/<firm>/runs/<run>/git/product.git` under `~/.local/state/zapper`, a bare repository you can clone.
+The run's repository, read-only: a branch picker (`main` first), the branch's commits (the subject, author and age, with the first line of the description under them), its files as a tree with breadcrumbs and the directory's README rendered under it, a file's text (Markdown rendered, code as text, up to 1 MiB), and a commit's message, files changed and diff. In replay, commits after the timeline's position are hidden. With the firm off there is no current repository, and the tab offers to open the last run. The repository itself is `state/firms/<firm>/runs/<run>/git/product.git` under `~/.local/state/zapper`, a bare repository you can clone.
 
 ### Statistics
 
-For the whole firm and per worker, over a chosen period (today, 7 days, since kickoff):
+For the whole firm and per worker, over the whole run (up to the timeline's position in replay):
 
 - **Activity**: a timeline per worker of idle, working, waiting and blocked, and the share of time in each.
 - **Usage**: turns and tokens per worker and per role, against the budgets; rate-limit retries.

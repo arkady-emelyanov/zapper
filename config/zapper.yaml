@@ -198,7 +198,7 @@ firms:
     board: { name: Board }
     budget: { daily_turns: 400, max_concurrent: 3 }
     git: {}
-    product_port: 127.0.0.1:8080
+    product_port: 0.0.0.0:8080           # the product, on your LAN too; 127.0.0.1:8080 keeps it on this machine
     dashboard_port: 127.0.0.1:8081       # the cluster's dashboard (Headlamp), for you
     # The workers' prompts, relative to this file: edit a SKILL.md and it
     # applies at the next `zapper firm up`. Skills missing here are built in.

@@ -11,12 +11,16 @@
   body { margin:0; font: 13px/1.45 ui-sans-serif, system-ui, sans-serif; background:var(--bg); color:var(--text); }
   header { display:flex; gap:16px; align-items:center; padding:10px 18px; border-bottom:1px solid var(--line); background:var(--panel); position:sticky; top:0; z-index:1; }
   header h1 { font-size:15px; margin:0; letter-spacing:.5px; }
+  /* footer: the way back to the office, where the office has its link here */
+  footer.foot { position:fixed; left:0; right:0; bottom:0; z-index:1; height:32px; display:flex; align-items:center; padding:0 24px; background:var(--panel); border-top:1px solid var(--line); font-size:12.5px; }
+  footer.foot a { margin-left:auto; color:var(--dim); text-decoration:none; }
+  footer.foot a:hover { color:var(--text); }
   header .ro { color:var(--dim); font-size:11px; border:1px solid var(--line); padding:1px 6px; border-radius:9px; }
   nav button { background:none; border:0; color:var(--dim); font:inherit; padding:6px 10px; cursor:pointer; border-radius:6px; }
   nav button.on { color:var(--text); background:var(--line); }
   .stat { margin-left:auto; display:flex; gap:14px; color:var(--dim); }
   .stat b { color:var(--text); }
-  main { padding:16px 18px; }
+  main { padding:16px 18px 56px; }
   section { display:none; } section.on { display:block; }
   table { width:100%; border-collapse:collapse; background:var(--panel); border:1px solid var(--line); border-radius:8px; overflow:hidden; }
   th, td { text-align:left; padding:6px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
@@ -88,6 +92,7 @@
     <pre id="cfg"></pre>
   </section>
 </main>
+<footer class="foot"><a id="back" href="/">← back to the office</a></footer>
 <script>
 // Everything shown comes from sessions that may be hostile: build the DOM
 // with textContent only, never innerHTML.
@@ -102,6 +107,11 @@ function el(tag, props = {}, ...kids) {
 }
 // JSON responses are parsed; everything else, the ndjson audit log included,
 // comes back as text.
+// Back to the firm the office came from (`/sessions?firm=acme`).
+{
+  const f = new URLSearchParams(location.search).get('firm');
+  if (f && /^[a-z0-9][a-z0-9-]{0,62}$/.test(f)) { $('back').textContent = '← back to ' + f; $('back').href = '/#firm=' + f; }
+}
 const api = (p) => fetch('/api' + p).then(r => { if (!r.ok) throw new Error(r.status); return (r.headers.get('content-type') || '').startsWith('application/json') ? r.json() : r.text(); });
 const time = (t) => new Date(t * 1000).toLocaleTimeString();
 const ago = (t) => { const s = Math.round(Date.now() / 1000 - t); return s < 90 ? s + 's' : s < 5400 ? Math.round(s / 60) + 'm' : Math.round(s / 3600) + 'h'; };

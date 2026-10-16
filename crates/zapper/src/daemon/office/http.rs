@@ -64,6 +64,8 @@ pub fn board_routes() -> Router<Arc<Daemon>> {
         .route("/firms/{f}/pause", post(pause))
         .route("/firms/{f}/mail", post(send))
         .route("/firms/{f}/mail/read", post(mark_read))
+        // Base64 grows a file by a third; leave room for the JSON around it.
+        .route("/firms/{f}/drive/upload", post(upload).layer(axum::extract::DefaultBodyLimit::max(drive::BOARD_UPLOAD_MAX / 3 * 4 + (64 << 10))))
         .route("/firms/{f}/security/requests/{id}", post(decide))
         .route("/firms/{f}/security/rules/{id}", delete(revoke))
         .route("/firms/{f}/security/rules/{id}/promote", post(promote))
@@ -297,6 +299,24 @@ async fn send(State(d): D, Path(f): Path<String>, text: String) -> R<Json<Value>
     let run = d.office.active(&f)?;
     let sent = super::board_send(&run, &v)?;
     Ok(Json(json!(sent)))
+}
+
+/// Files from the board's own computer, stored as a shared drive artifact
+/// by the board to attach to mail: `{title?, thread?, files: [{name, data}]}`
+/// with `data` in base64.
+async fn upload(State(d): D, Path(f): Path<String>, text: String) -> R<Json<Value>> {
+    use base64::Engine;
+    let v: Value = serde_json::from_str(&text).map_err(|e| bad(format!("body: {e}")))?;
+    let run = d.office.active(&f)?;
+    let mut files = Vec::new();
+    for x in v["files"].as_array().into_iter().flatten() {
+        let name = x["name"].as_str().ok_or_else(|| bad("each file needs a name"))?;
+        let data = base64::engine::general_purpose::STANDARD.decode(x["data"].as_str().unwrap_or("")).map_err(|_| bad(format!("{name}: data is not base64")))?;
+        files.push((name.to_string(), data));
+    }
+    let thread = v["thread"].as_str().map(str::to_string);
+    let out = drive::publish_board(&run, files, v["title"].as_str().unwrap_or(""), thread).map_err(|e| bad(e.to_string()))?;
+    Ok(Json(out))
 }
 
 async fn mark_read(State(d): D, Path(f): Path<String>, text: String) -> R<Json<Value>> {

@@ -361,10 +361,12 @@ impl Firm {
         if crate::names::hostname(&self.domain(name)).is_err() {
             err(format!("domain {:?} is not a valid host name", self.domain(name)));
         }
-        for (field, port) in [("product_port", &self.product_port), ("dashboard_port", &self.dashboard_port)] {
+        // The product may be served to the LAN (`0.0.0.0:8080`); the
+        // dashboard signs in as cluster-admin, so it stays on loopback.
+        for (field, port, lan) in [("product_port", &self.product_port, true), ("dashboard_port", &self.dashboard_port, false)] {
             let Some(p) = port else { continue };
             match p.parse::<std::net::SocketAddr>() {
-                Ok(a) if a.ip().is_loopback() => {}
+                Ok(a) if a.ip().is_loopback() || lan => {}
                 Ok(a) => err(format!("{field} must be a loopback address, not {a}")),
                 Err(_) => err(format!("{field} {p:?} is not an address like 127.0.0.1:8080")),
             }
@@ -563,6 +565,17 @@ firms:
     fn exec_ask_is_refused_in_firm_profiles() {
         let c = BASE.replace("eng: { profile: w", "eng: { profile: asks");
         assert!(firm(&c).unwrap_err().to_string().contains("exec rules that ask"));
+    }
+
+    #[test]
+    fn ports() {
+        let with = |ports: &str| BASE.replace("    security: { officers: [] }", &format!("    security: {{ officers: [] }}\n    facilities: {{ cluster: {{ kind: k3s, profile: w }} }}\n    {ports}"));
+        assert!(firm(&with("product_port: 127.0.0.1:8080")).is_ok());
+        // The product may be served to the LAN, the dashboard never.
+        assert!(firm(&with("product_port: 0.0.0.0:8080")).is_ok());
+        let e = firm(&with("dashboard_port: 0.0.0.0:8081")).unwrap_err().to_string();
+        assert!(e.contains("dashboard_port must be a loopback address"), "{e}");
+        assert!(firm(&with("product_port: lan:8080")).unwrap_err().to_string().contains("is not an address"));
     }
 
     #[test]

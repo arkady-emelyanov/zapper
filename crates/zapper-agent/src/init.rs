@@ -16,7 +16,7 @@ use zapper_policy::proto::{GuestEvent, GuestMsg, GuestSpec};
 use zapper_policy::FsAccess;
 
 use crate::control::Control;
-use crate::{acct, forward, shell, sys};
+use crate::{acct, forward, shell, sys, usage};
 
 pub const UID: u32 = 1000;
 const EMPTY_FILE: &str = "/run/zapper/empty";
@@ -126,6 +126,7 @@ fn setup(control: &Control, spec: &GuestSpec) -> Result<()> {
         }
     }
     acct::start(control.clone());
+    usage::start(control.clone());
     if !spec.nic {
         forward::start().context("proxy forwarder")?;
     }

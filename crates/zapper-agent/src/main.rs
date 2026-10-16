@@ -15,6 +15,7 @@ mod init;
 mod office;
 mod shell;
 mod sys;
+mod usage;
 
 fn main() {
     if std::process::id() == 1 {

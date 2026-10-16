@@ -52,7 +52,7 @@ Local endpoints, all on loopback only:
 |---|---|---|
 | `http://127.0.0.1:7878/?token=…` | The web UI: the office (org chart, messages, security, shared drive, statistics, VMs, replay). `zapper serve` prints the full URL with its token and writes it to `state/ui-url` | `daemon.ui` |
 | `http://127.0.0.1:7878/sessions` | The sessions view: sessions, network, terminals, approvals | `daemon.ui` |
-| `http://127.0.0.1:8080/` | The firm's product: the cluster's ingress (the landing page until the engineers deploy) | `firms.<firm>.product_port` |
+| `http://<host>:8080/` | The firm's product: the cluster's ingress (the landing page until the engineers deploy), on all interfaces so the LAN reaches it too | `firms.<firm>.product_port` |
 | `http://127.0.0.1:8081/` | The cluster's Kubernetes dashboard (Headlamp); the UI has the sign-in token | `firms.<firm>.dashboard_port` |
 | `$XDG_RUNTIME_DIR/zapper/api.sock` | The REST API for the CLI ([API](docs/api.md)) | `$ZAPPER_SOCKET` |
 

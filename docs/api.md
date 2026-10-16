@@ -33,6 +33,7 @@ The office's routes ([office](office.md)), for the board. F is a firm, RUN a run
 | `GET /v1/firms/F/mail[?for=WORKER&unread=true]` | ✓ | The board's (or a worker's) inbox |
 | `POST /v1/firms/F/mail` | ✓ | The board sends `{to, cc?, subject, body, kind, due?, in_reply_to?, attachments?}` |
 | `POST /v1/firms/F/mail/read` | ✓ | `{ids}` the board has read |
+| `POST /v1/firms/F/drive/upload` | ✓ | `{files: [{name, data}], title?, thread?}` with `data` in base64: files from the board (10 files, 5 MiB together) stored as one artifact by the board; returns its `ref` to attach to mail |
 | `GET /v1/firms/F/threads/T` | ✓ | A thread with its messages |
 | `GET /v1/firms/F/drive` | ✓ | The shared drive's artifacts |
 | `GET /v1/firms/F/security` | ✓ | Access requests and standing approvals |

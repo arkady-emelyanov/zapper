@@ -87,7 +87,17 @@
   .seg button { border: 0; background: var(--card); padding: 3px 10px; cursor: pointer; }
   .seg button.on { background: var(--accent); color: #fff; }
 
-  main { padding: 22px 24px 60px; }
+  main { padding: 22px 24px 70px; }
+  /* footer: the run's vital numbers, on every tab */
+  footer.foot { position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; height: 32px; display: flex; align-items: center; gap: 18px; padding: 0 24px; background: var(--panel); border-top: 1px solid var(--line); font-size: 12.5px; color: var(--muted); white-space: nowrap; overflow: hidden; }
+  footer.foot .fi { cursor: pointer; display: inline-flex; gap: 5px; align-items: baseline; border-radius: 6px; padding: 1px 4px; transition: background .6s ease; }
+  footer.foot .fi:hover { color: var(--text); }
+  footer.foot .fi b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+  footer.foot .fi.warn b { color: var(--bad); }
+  footer.foot .fi.bump { background: var(--accent-soft); transition: none; }
+  footer.foot .sep { color: var(--line2); }
+  footer.foot a.right { margin-left: auto; color: var(--muted); text-decoration: none; }
+  footer.foot a.right:hover { color: var(--text); }
   section.tab { display: none; } section.tab.on { display: block; }
   h2.sec { font-size: 18px; margin: 26px 0 10px; }
   h2.sec:first-child { margin-top: 0; }
@@ -103,10 +113,12 @@
   table.t tr.click { cursor: pointer; } table.t tr.click:hover td { background: var(--accent-soft); }
   table.t td.wrap { word-break: break-all; }
   pre.json { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; overflow: auto; max-height: 50vh; margin: 6px 0; white-space: pre-wrap; word-break: break-word; }
-  .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--card); border: 1px solid var(--line2); border-radius: 12px; padding: 10px 16px; box-shadow: var(--shadow); z-index: 100; max-width: 80vw; }
+  .toast { position: fixed; bottom: 48px; left: 50%; transform: translateX(-50%); background: var(--card); border: 1px solid var(--line2); border-radius: 12px; padding: 10px 16px; box-shadow: var(--shadow); z-index: 100; max-width: 80vw; }
   .toast.bad { border-color: var(--bad); color: var(--bad); }
-  .split { display:grid; grid-template-columns: minmax(300px, 380px) 1fr; gap: 18px; align-items: start; }
-  @media (max-width: 960px) { .split { grid-template-columns: 1fr; } }
+  /* Fixed columns: wide content (long lines, tables, diffs) scrolls inside its box instead of widening the page. */
+  .split { display:grid; grid-template-columns: 380px minmax(0, 1fr); gap: 18px; align-items: start; }
+  .split > * { min-width: 0; }
+  @media (max-width: 960px) { .split { grid-template-columns: minmax(0, 1fr); } }
   .list { display:flex; flex-direction: column; gap: 6px; }
   .li { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 9px 12px; cursor: pointer; }
   .li:hover { border-color: var(--line2); }
@@ -121,6 +133,7 @@
   .row2 { display:grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .hint { background: var(--accent-soft); border-radius: 10px; padding: 8px 12px; color: var(--accent-ink); }
   .chips { display:flex; flex-wrap: wrap; gap: 6px; }
+  .attach-row { display:flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 2px 0 6px; }
   .chip { border: 1px solid var(--line2); border-radius: 999px; padding: 1px 10px; font-size: 12px; cursor: pointer; background: var(--panel); }
   .chip:hover { border-color: var(--accent); }
   .picker { max-height: 140px; overflow: auto; border: 1px solid var(--line2); border-radius: 9px; padding: 6px 8px; background: var(--card); }
@@ -238,7 +251,7 @@
   .vm-term .vm-argv { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .vm-actions { display:flex; gap: 10px; align-items: center; justify-content: space-between; }
   .btn.small { padding: 2px 10px; font-size: 12px; }
-  aside.panel { position: fixed; right: 0; top: 0; bottom: 0; width: min(480px, 100vw); background: var(--panel); border-left: 1px solid var(--line); box-shadow: -8px 0 30px rgba(0,0,0,.08); z-index: 40; overflow-y: auto; padding: 18px 20px 40px; transform: translateX(100%); transition: transform .22s ease; }
+  aside.panel { position: fixed; right: 0; top: 0; bottom: 32px; width: min(480px, 100vw); background: var(--panel); border-left: 1px solid var(--line); box-shadow: -8px 0 30px rgba(0,0,0,.08); z-index: 40; overflow-y: auto; padding: 18px 20px 40px; transform: translateX(100%); transition: transform .22s ease; }
   aside.panel.open { transform: none; }
   aside.panel .ph { display:flex; gap: 12px; align-items: center; }
   aside.panel .ph h2 { margin: 0; font-size: 22px; }
@@ -284,6 +297,7 @@
   .md pre code { background: none; padding: 0; }
   .md blockquote { margin: .6em 0; padding: .1em 0 .1em 14px; border-left: 3px solid var(--line2); color: var(--muted); }
   .md table { border-collapse: collapse; margin: .6em 0; display: block; overflow-x: auto; }
+  .md table th, .md table td { overflow-wrap: normal; word-break: normal; min-width: 4em; }
   .md th, .md td { border: 1px solid var(--line); padding: 4px 9px; }
   .md th { background: var(--panel); }
   .md hr { border: 0; border-top: 1px solid var(--line2); margin: 1.2em 0; }
@@ -421,6 +435,7 @@
   <section class="tab" id="tab-stats"></section>
   <section class="tab" id="tab-vms"></section>
 </main>
+<footer class="foot" id="foot" aria-label="Run at a glance"></footer>
 <aside class="panel" id="panel" aria-label="Worker"></aside>
 <div class="toast hidden" id="toast" role="status"></div>
 <script>
@@ -757,14 +772,27 @@ function apply(M, e) {
 
 const openObl = (M) => [...M.obl.values()].filter((o) => !o.settled);
 const overdue = (o, now) => !o.settled && o.due && now > o.due;
+// A thread is waiting while someone owes an answer in it, overdue when one
+// is late, paused by the loop guard; otherwise it has no state to show.
 function threadState(M, t, now) {
   if (t.paused) return 'paused';
-  const obs = t.obl.map((k) => M.obl.get(k)).filter(Boolean);
-  const open = obs.filter((o) => !o.settled);
+  const open = t.obl.map((k) => M.obl.get(k)).filter((o) => o && !o.settled);
   if (open.some((o) => overdue(o, now))) return 'overdue';
   if (open.length) return 'waiting';
-  if (t.closed || obs.length) return 'closed';
-  return 'open';
+  return '';
+}
+const nameOf = (n) => (n === BOARD ? boardName() : n === 'office' ? 'post office' : n);
+// Who an open obligation waits for, as a pill: "waiting for ada".
+function waitPill(obs, now) {
+  const open = obs.filter((o) => o && !o.settled);
+  if (!open.length) return '';
+  const late = open.some((o) => overdue(o, now));
+  const who = [...new Set(open.map((o) => nameOf(o.debtor)))].join(', ');
+  return pill(late ? 'overdue' : 'waiting', (late ? 'overdue: ' : 'waiting for ') + clip(who, 40));
+}
+function threadPill(M, t, now) {
+  if (t.paused) return pill('paused', 'paused');
+  return waitPill(t.obl.map((k) => M.obl.get(k)), now);
 }
 function desk(M, name, now) {
   const owes = [], waits = [];
@@ -1069,14 +1097,13 @@ function updateOverview() {
   if (M.domain) sub.push(M.domain);
   if (M.started) sub.push((live() ? 'run started ' : 'run of ') + fmtDate(M.started));
   $('ov-sub').textContent = sub.join(' · ');
-  // The product: the cluster's ingress on the host, from the config; only a
-  // loopback address becomes a link.
+  // The product: the cluster's ingress on the host, from the config.
   const pp = str(S.info && S.info.product_port);
   const pbox = $('ov-product');
   const dsig = pp + '|' + dashboardSig();
   if (pbox.dataset.sig !== dsig) {
     pbox.dataset.sig = dsig;
-    const a = localLink(pp, 'Product ↗ ' + pp);
+    const a = productLink(pp);
     pbox.replaceChildren(...(a ? [a] : []), ...dashboardButtons());
   }
   for (const [name, n] of OV.nodes) {
@@ -1222,8 +1249,9 @@ function updatePanel() {
   PANEL.pub.replaceChildren(...(arts.length ? arts.map((a) => artifactItem(a)) : [el('div', { class: 'muted' }, 'Nothing published.')]));
   if (S.mode === 'replay') renderFeed();
 }
-// /sessions is a constant path: the sessions UI.
-function sessionsLink(text) { const a = el('a', {}, text); a.href = '/sessions'; return a; }
+// The sessions UI, with the firm to come back to.
+function sessionsHref() { return '/sessions' + (S.firm ? '?firm=' + enc(S.firm) : ''); }
+function sessionsLink(text) { const a = el('a', {}, text); a.href = sessionsHref(); return a; }
 function mailItem(m) {
   const t = S.M.threads.get(m.thread);
   return el('div', { class: 'li', onclick: () => openThread(m.thread) },
@@ -1269,6 +1297,26 @@ function composeForm(opts) {
   const due = el('input', { name: 'due', placeholder: 'e.g. 2h, 1d', maxlength: 10 });
   const attach = el('div', { class: 'picker' });
   const attachBox = el('details', {}, el('summary', { class: 'muted small' }, 'Attach from the shared drive'), attach);
+  // Small files from this computer: uploaded to the shared drive as the
+  // board's artifact when the message is sent, and attached to it.
+  let local = [], uploaded = null;
+  const fileInput = el('input', { type: 'file', multiple: true, class: 'hidden', onchange: () => { addFiles([...fileInput.files]); fileInput.value = ''; } });
+  const fileList = el('span', { class: 'chips' });
+  const fileBtn = el('button', { class: 'btn small', type: 'button', onclick: () => fileInput.click() }, '📎 Attach files');
+  const filesRow = el('div', { class: 'attach-row' }, fileBtn, fileInput, fileList);
+  const UPLOAD_MAX = 5 << 20;
+  function addFiles(list) {
+    uploaded = null;
+    for (const x of list) if (!local.some((y) => y.name === x.name)) local.push(x);
+    const total = local.reduce((n, x) => n + x.size, 0);
+    if (local.length > 10 || total > UPLOAD_MAX) { local = local.slice(0, local.length - list.length); toast('Up to 10 files and 5 MiB together.', true); }
+    showFiles();
+  }
+  function showFiles() {
+    fileList.replaceChildren(...local.map((x) => el('span', { class: 'chip' }, clip(x.name, 40) + ' · ' + fmtBytes(x.size) + ' ',
+      el('button', { class: 'linkish', type: 'button', title: 'Remove', onclick: () => { local = local.filter((y) => y !== x); uploaded = null; showFiles(); } }, '×'))));
+  }
+  const b64 = (file) => new Promise((ok, fail) => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(',')[1] || ''); r.onerror = () => fail(new Error('could not read ' + file.name)); r.readAsDataURL(file); });
   const btn = el('button', { class: 'btn primary', type: 'submit' }, 'Send');
   // Kind and due date are options: a new message is an assignment, an
   // answer in a thread a reply, unless the board picks otherwise.
@@ -1279,7 +1327,7 @@ function composeForm(opts) {
   const optBox = el('details', {}, optSummary,
     el('div', { class: 'row2' }, el('label', { class: 'f' }, 'Kind', kindSel), el('label', { class: 'f' }, 'Due (optional)', due)),
     el('div', { class: 'muted small' }, 'assignment: they owe you a report, with follow-ups when overdue · question: they owe you a reply · fyi: nothing is owed'));
-  f.append(subjLabel, el('label', { class: 'f' }, 'Message', body), optBox, attachBox, el('div', { style: 'display:flex;gap:10px;align-items:center' }, btn, note));
+  f.append(subjLabel, el('label', { class: 'f' }, 'Message', body), filesRow, optBox, attachBox, el('div', { style: 'display:flex;gap:10px;align-items:center' }, btn, note));
   syncSummary();
   function syncThread() {
     const reply = !!opts.replyIn || !!(threadSel && threadSel.value);
@@ -1344,9 +1392,18 @@ function composeForm(opts) {
     const attachments = [...attach.querySelectorAll('input:checked')].map((x) => x.value);
     btn.disabled = true;
     try {
+      // Uploaded once: if sending fails, a retry attaches the same artifact.
+      if (local.length && !uploaded) {
+        note.textContent = 'Uploading ' + local.length + ' file' + (local.length > 1 ? 's' : '') + '…';
+        const files = await Promise.all(local.map(async (x) => ({ name: x.name, data: await b64(x) })));
+        uploaded = str((await write('POST', F() + '/drive/upload', { files, thread: threadId, title: threadId ? '' : subj })).ref);
+        note.textContent = '';
+      }
+      if (local.length && uploaded) attachments.push(uploaded);
       const r = await write('POST', F() + '/mail', { to, cc, subject: subj, body: body.value, kind: kindSel.value, due: d ? d.replace(/\s+/g, '') : null, in_reply_to, attachments });
       toast('Sent ' + str(r && r.id) + (r && r.recipients ? ' to ' + arr(r.recipients).join(', ') : ''));
       body.value = ''; subject.value = ''; due.value = ''; syncSummary();
+      local = []; uploaded = null; showFiles();
       for (const x of attach.querySelectorAll('input:checked')) x.checked = false;
       if (toPick) for (const x of f.querySelectorAll('.picker input:checked')) x.checked = false;
       if (opts.onSent) opts.onSent(r);
@@ -1842,7 +1899,7 @@ function mountMessages() {
   const fFrom = el('select', { id: 'mf-from', title: 'Written by', onchange: () => { MSG.sig = null; updateMessages(); } });
   const fTo = el('select', { id: 'mf-to', title: 'Received by (to or cc)', onchange: () => { MSG.sig = null; updateMessages(); } });
   const fKind = selectOf([['', 'any kind'], 'assignment', 'question', 'fyi', 'report', 'reply', 'follow-up'], '', { id: 'mf-kind', onchange: () => { MSG.sig = null; updateMessages(); } });
-  const fState = selectOf([['', 'any state'], 'waiting', 'overdue', 'open', 'closed', 'paused'], '', { id: 'mf-state', onchange: () => { MSG.sig = null; updateMessages(); } });
+  const fState = selectOf([['', 'any state'], 'waiting', 'overdue', 'paused'], '', { id: 'mf-state', onchange: () => { MSG.sig = null; updateMessages(); } });
   const fBoard = el('label', { class: 'small muted', style: 'display:flex;gap:4px;align-items:center' }, el('input', { type: 'checkbox', id: 'mf-board', onchange: () => { MSG.sig = null; updateMessages(); } }), 'involves the board');
   const fq = el('input', { type: 'search', id: 'mf-q', placeholder: 'Search subject and text', oninput: () => { MSG.sig = null; updateMessages(); } });
   root.replaceChildren(el('div', { class: 'split' },
@@ -1932,11 +1989,10 @@ function threadUnread(M, t) {
   return t.mails.filter((id) => S.boardUnread.has(id)).length;
 }
 function threadItem(M, t, now, sel, onclick, hits) {
-  const st = threadState(M, t, now);
   const first = M.mails.get(t.first);
   const unread = threadUnread(M, t);
   return el('div', { class: 'li' + (sel ? ' sel' : ''), onclick },
-    el('div', { class: 'top' }, el('span', { class: 'subj' }, unread ? el('span', { class: 'dot', title: 'unread' }) : '', unread ? ' ' : '', clip(t.subject || '(no subject)', 80)), pill(st, st)),
+    el('div', { class: 'top' }, el('span', { class: 'subj' }, unread ? el('span', { class: 'dot', title: 'unread' }) : '', unread ? ' ' : '', clip(t.subject || '(no subject)', 80)), threadPill(M, t, now)),
     el('div', { class: 'meta' }, first ? pill(first.kind, first.kind) : '', clip([...t.people].join(', '), 70), el('span', {}, '· ' + (hits ? hits.length + ' of ' + t.mails.length + ' match' : t.mails.length) + ' · ' + ago(t.last))));
 }
 function openThread(id, focus) {
@@ -1984,27 +2040,33 @@ function renderMsgMain(M, now) {
   const sameThread = MSG.mainSig && MSG.mainSig.startsWith('thread|' + t.id + '|');
   MSG.mainSig = sig;
   markRead(M, t);
-  const st = threadState(M, t, now);
   const msgs = () => el('div', {}, t.mails.map((id) => M.mails.get(id)).filter(Boolean).map((m) => messageCard(M, m, now)));
-  const obls = t.obl.map((k) => M.obl.get(k)).filter(Boolean);
+  const obls = t.obl.map((k) => M.obl.get(k)).filter((o) => o && !o.settled);
   const kids = [...M.threads.values()].filter((x) => x.context === t.id);
   const ctxT = t.context && M.threads.get(t.context);
   const head = el('div', { class: 'card', style: 'margin-bottom:12px' },
-    el('div', { style: 'display:flex;gap:10px;align-items:center;flex-wrap:wrap' }, el('h2', { class: 'sec', style: 'margin:0' }, t.subject || '(no subject)'), pill(st, st)),
+    el('div', { style: 'display:flex;gap:10px;align-items:center;flex-wrap:wrap' }, el('h2', { class: 'sec', style: 'margin:0' }, t.subject || '(no subject)'), threadPill(M, t, now)),
     el('div', { class: 'muted small', style: 'margin-top:4px' }, [...t.people].map((p) => (p === BOARD ? boardName() + ' (board)' : p)).join(', ') + ' · ' + t.mails.length + ' message' + (t.mails.length > 1 ? 's' : '') + ' · started ' + fmtDate(t.started)),
     ctxT ? el('div', { class: 'small', style: 'margin-top:4px' }, 'Started while working on ', el('button', { class: 'linkish', type: 'button', onclick: () => openThread(ctxT.id) }, clip(ctxT.subject || ctxT.id, 60))) : '',
     kids.length ? el('div', { class: 'small', style: 'margin-top:4px' }, kids.length + ' thread' + (kids.length > 1 ? 's' : '') + ' spawned from this one: ', el('button', { class: 'linkish', type: 'button', onclick: () => { MSG.view = 'tree'; MSG.treeRoot = rootOf(M, t).id; MSG.sig = null; MSG.mainSig = null; updateMessages(); } }, 'delegation tree')) : '',
     obls.length ? el('div', { class: 'desk', style: 'margin-top:8px' }, obls.map((o) => el('div', { class: 'item' },
-      o.settled ? pill('closed', 'done') : overdue(o, now) ? pill('overdue', 'overdue') : pill('waiting', 'open'),
-      el('span', {}, o.debtor + ' owes ' + (o.creditor === BOARD ? boardName() : o.creditor) + ' ' + (o.expects === 'done' ? 'the work' : 'a reply') + ' (' + o.kind + ')'),
-      o.settled ? el('span', { class: 'muted small' }, 'settled by ' + o.settled.by + ' after ' + fmtDur(o.settled.ts - o.created)) : o.due ? el('span', { class: 'muted small' }, 'due ' + fmtDate(o.due)) : '',
+      overdue(o, now) ? pill('overdue', 'overdue') : pill('waiting', 'waiting'),
+      el('span', {}, nameOf(o.debtor) + ' owes ' + nameOf(o.creditor) + ' ' + (o.expects === 'done' ? 'the work' : 'a reply') + ' (' + o.kind + ')'),
+      o.due ? el('span', { class: 'muted small' }, 'due ' + fmtDate(o.due)) : '',
       o.escalated ? el('span', { class: 'muted small' }, 'escalated to ' + o.escalated) : ''))) : '');
   if (!sameThread) {
-    MSG.reply = t.board && live() && t.mails.some((id) => { const m = M.mails.get(id); return m && m.from !== BOARD && isWorker(M, m.from); })
-      ? composeForm({ replyIn: t.id, kinds: ['reply', 'question', 'fyi', 'assignment'], kind: 'reply' }) : null;
-    MSG.headBox = el('div'); MSG.msgsBox = el('div'); MSG.msgsSig = null;
-    main.replaceChildren(MSG.headBox, MSG.msgsBox, MSG.reply ? el('div', { class: 'card' }, el('h3', { style: 'margin:0 0 8px' }, 'Reply as the board'), MSG.reply) : '');
-  } else if (MSG.reply) MSG.reply.refresh();
+    MSG.reply = null;
+    MSG.headBox = el('div'); MSG.msgsBox = el('div'); MSG.replyBox = el('div'); MSG.msgsSig = null;
+    main.replaceChildren(MSG.headBox, MSG.msgsBox, MSG.replyBox);
+  }
+  // The board replies in any live thread it is in; the form appears as soon
+  // as it can (a new message, the run going live) and keeps what was typed.
+  const canReply = t.board && live();
+  if (canReply && !MSG.reply) {
+    MSG.reply = composeForm({ replyIn: t.id, kinds: ['reply', 'question', 'fyi', 'assignment'], kind: 'reply' });
+    MSG.replyBox.replaceChildren(el('div', { class: 'card' }, el('h3', { style: 'margin:0 0 8px' }, 'Reply as the board'), MSG.reply));
+  } else if (!canReply && MSG.reply) { MSG.reply = null; MSG.replyBox.replaceChildren(); }
+  else if (MSG.reply && sameThread) MSG.reply.refresh();
   MSG.headBox.replaceChildren(head);
   const msgsSig = [t.mails.length, Math.floor(now / 30), $('mf-from').value, $('mf-to').value, $('mf-kind').value].join('|');
   if (msgsSig !== MSG.msgsSig || MSG.focusShown !== MSG.focus) {
@@ -2029,10 +2091,10 @@ function messageCard(M, m, now) {
       el('span', { class: 'who' }, m.from === BOARD ? boardName() + ' (board)' : m.from === 'office' ? 'post office' : m.from),
       el('span', { class: 'to' }, '→ ' + m.to.join(', ') + (m.cc.length ? ' · cc ' + m.cc.join(', ') : '')),
       pill(m.kind, m.kind),
-      m.expects && m.expects !== 'nothing' ? pill('', 'expects ' + m.expects) : '',
-      m.due ? pill(late ? 'overdue' : '', 'due ' + fmtDate(m.due)) : '',
+      // While the message waits for an answer; gone once it came.
+      waitPill(obls, now),
+      m.due && obls.some((o) => !o.settled) ? pill(late ? 'overdue' : '', 'due ' + fmtDate(m.due)) : '',
       auto ? pill('', 'automatic') : '',
-      m.close ? pill('closed', 'closes the thread') : '',
       el('span', { class: 'when', title: m.id }, fmtDate(m.ts))),
     m.subject && M.threads.get(m.thread) && M.threads.get(m.thread).first !== m.id ? el('div', { class: 'small muted', style: 'margin-top:4px' }, 'Subject: ' + m.subject) : '',
     m.attachments.length ? el('div', { class: 'chips', style: 'margin-top:8px' }, m.attachments.map((ref) => {
@@ -2051,8 +2113,7 @@ function delegationTree(M, rootId, now) {
   const node = (t, depth) => {
     seen.add(t.id);
     const first = M.mails.get(t.first);
-    const st = threadState(M, t, now);
-    const li = el('li', {}, el('div', { class: 'tn' }, pill(st, st),
+    const li = el('li', {}, el('div', { class: 'tn' }, threadPill(M, t, now),
       el('button', { class: 'linkish', type: 'button', onclick: () => openThread(t.id) }, clip(t.subject || '(no subject)', 70)),
       first ? el('span', { class: 'muted small' }, first.from + ' → ' + first.to.join(', ')) : '',
       first ? pill(first.kind, first.kind) : '',
@@ -2267,6 +2328,17 @@ function localLink(addr, label) {
   if (!/^(127\.0\.0\.1|localhost|\[::1\]):\d{1,5}$/.test(str(addr))) return null;
   const a = el('a', { target: '_blank', rel: 'noopener noreferrer', class: 'btn small' }, label);
   a.href = 'http://' + addr + '/';
+  return a;
+}
+// The product's address from the config, as a link: an IP literal, and
+// for every interface (0.0.0.0, [::]) the host this page came from.
+function productLink(addr) {
+  const m = /^(\d{1,3}(?:\.\d{1,3}){3}|\[[0-9a-fA-F:]+\]):(\d{1,5})$/.exec(str(addr));
+  if (!m) return null;
+  const any = m[1] === '0.0.0.0' || m[1] === '[::]';
+  const hp = (any ? location.hostname : m[1]) + ':' + m[2];
+  const a = el('a', { target: '_blank', rel: 'noopener noreferrer', class: 'btn small', title: any ? 'Served on every interface: on your LAN at this machine\'s address, port ' + m[2] : 'The product on ' + addr }, 'Product ↗ ' + hp + (any ? ' · LAN' : ''));
+  a.href = 'http://' + hp + '/';
   return a;
 }
 // The cluster's dashboard (Headlamp) and the token to sign in with.
@@ -2555,7 +2627,8 @@ async function gitFetch(path) { return api(runPath() + '/git' + path); }
 // Loads branches and the branch's log and tree; the view (file or commit)
 // separately.
 async function loadGitTab(force) {
-  if (!S.run || GIT.busy) return;
+  if (!S.run) { gitShowEmpty(gitOffView()); return; }
+  if (GIT.busy) return;
   const fresh = GIT.run === S.run && !force && (S.mode === 'replay' || Date.now() - GIT.at < 15000);
   if (fresh) return;
   GIT.busy = true;
@@ -2597,12 +2670,10 @@ function gitReadme(tree) {
 function renderGit() {
   const sel = $('git-branch');
   if (!sel) return;
-  if (GIT.err) { $('git-main').replaceChildren(el('div', { class: 'empty card' }, 'No repository: ' + GIT.err)); return; }
+  if (GIT.err) { gitShowEmpty(null); $('git-main').replaceChildren(el('div', { class: 'empty card' }, 'No repository: ' + GIT.err)); return; }
   // Nothing pushed yet: one calm page instead of empty panes.
-  const empty = !GIT.branches.length;
-  $('git-split').classList.toggle('hidden', empty);
-  $('git-empty').classList.toggle('hidden', !empty);
-  if (empty) { $('git-empty').replaceChildren(gitEmptyView()); return; }
+  if (!GIT.branches.length) { gitShowEmpty(gitEmptyView()); return; }
+  gitShowEmpty(null);
   sel.replaceChildren(...(GIT.branches.length ? GIT.branches.map((b) => opt(b.name, b.name + ' · ' + str(b.commit).slice(0, 7), b.name === GIT.branch)) : [opt('', 'no branches yet')]));
   sel.disabled = !GIT.branches.length;
   GIT.logSig = null;
@@ -2648,6 +2719,28 @@ function renderGitLog() {
     el('span', { class: 's' }, clip(c.subject, 200)), el('span', { class: 'r' }, str(c.author) + (c.ts ? ' · ' + ago(Number(c.ts)) : '')),
     c.body ? el('span', { class: 'd' }, clip(c.body, 300)) : '')) : [el('span', { class: 'muted' }, later ? 'No commits yet at this point of the replay; ' + later + ' later.' : 'No commits.')]));
 }
+// One calm page in place of the panes, or the panes back with null.
+function gitShowEmpty(view) {
+  if (!$('git-split')) return;
+  $('git-split').classList.toggle('hidden', !!view);
+  $('git-empty').classList.toggle('hidden', !view);
+  if (view && $('git-empty').dataset.v !== view.dataset.v) $('git-empty').replaceChildren(view);
+  $('git-empty').dataset.v = view ? view.dataset.v : '';
+}
+// The firm is off: each run has its own repository, so offer the last one.
+function gitOffView() {
+  const v = el('div', { class: 'card git-empty-card' },
+    el('h2', { class: 'serif' }, 'The firm is off'),
+    el('p', { class: 'muted' }, 'Each run has its own repository, which starts empty. Start the firm with Up, or open a past run to browse what it pushed.'),
+    el('button', { class: 'btn', type: 'button', onclick: async () => {
+      try {
+        const runs = arr(await api(F() + '/runs')).map((r) => str(r.run)).sort();
+        if (runs.length) enterReplay(runs[runs.length - 1]); else toast('No runs yet');
+      } catch (e) { toast(e.message); }
+    } }, 'Open the last run'));
+  v.dataset.v = 'off:' + S.firm;
+  return v;
+}
 function gitEmptyView() {
   const domain = str(S.info && S.info.run && S.info.run.domain) || (S.firm + '.internal');
   const url = 'https://git.' + domain + '/product.git';
@@ -2660,12 +2753,14 @@ function gitEmptyView() {
     sv('circle', { cx: 92, cy: 30, r: 6, class: 'gd side' }), sv('circle', { cx: 136, cy: 64, r: 6, class: 'gd main' }),
     sv('circle', { cx: 92, cy: 64, r: 6, class: 'gd ghost' }));
   const copy = (text) => el('button', { class: 'btn small', type: 'button', onclick: async () => { try { await navigator.clipboard.writeText(text); toast('Copied'); } catch (e) { window.prompt('Copy:', text); } } }, 'Copy');
-  return el('div', { class: 'card git-empty-card' }, art,
+  const v = el('div', { class: 'card git-empty-card' }, art,
     el('h2', { class: 'serif' }, 'Nothing pushed yet'),
     el('p', { class: 'muted' }, S.mode === 'replay' ? 'This run\'s repository has no commits.' : 'The firm\'s repository is empty. Engineers and designers push to it as they build; branches, files and commits appear here as they do.'),
     el('div', { class: 'git-empty-rows' },
       el('div', { class: 'muted small' }, 'Workers push to'), el('code', {}, url), copy(url),
       el('div', { class: 'muted small' }, 'Clone it here'), el('code', {}, 'git clone ' + local), copy('git clone ' + local)));
+  v.dataset.v = 'empty:' + S.run;
+  return v;
 }
 function gitFileView(f) {
   if (f.text == null) return el('div', { class: 'empty card' }, str(f.path) + ': ' + str(f.note || 'not shown') + ' (' + fmtBytes(f.size) + ')');
@@ -2691,24 +2786,16 @@ function gitCommitView(c) {
 
 // ──────────────────────────── statistics ────────────────────────────
 
-const STAT = { period: 'run', sig: null };
+const STAT = { sig: null };
 const STATE_ORDER = ['working', 'reviewing', 'idle', 'waiting', 'queued', 'booting', 'over-budget', 'error', 'off'];
 
 function mountStats() {
-  const seg = el('div', { class: 'seg', id: 'st-period' });
-  for (const [v, l] of [['today', 'Today'], ['7d', '7 days'], ['run', 'Whole run']]) {
-    const b = el('button', { type: 'button', onclick: () => { STAT.period = v; STAT.sig = null; updateStats(); } }, l);
-    b.dataset.v = v; seg.append(b);
-  }
-  $('tab-stats').replaceChildren(el('div', { class: 'bar' }, seg, el('span', { class: 'muted small', id: 'st-range' })), el('div', { id: 'st-body' }));
+  $('tab-stats').replaceChildren(el('div', { class: 'bar' }, el('span', { class: 'muted small', id: 'st-range' })), el('div', { id: 'st-body' }));
   STAT.sig = null;
 }
 function statRange(M) {
   const to = live() ? nowSec() : T();
-  const start = M.started || to;
-  let from = start;
-  if (STAT.period === '7d') from = Math.max(start, to - 7 * 86400);
-  if (STAT.period === 'today') { const d = new Date(to * 1000); d.setHours(0, 0, 0, 0); from = Math.max(start, d.getTime() / 1000); }
+  const from = M.started || to;
   return [from, Math.max(to, from + 1)];
 }
 function hbars(rows, opts) {
@@ -2737,9 +2824,8 @@ function who(M, n) {
 function updateStats() {
   const M = S.M;
   if (!M) return;
-  for (const b of $('st-period').children) b.classList.toggle('on', b.dataset.v === STAT.period);
   const [from, to] = statRange(M);
-  const sig = STAT.period + '|' + M.count + '|' + Math.floor(to / 15);
+  const sig = M.count + '|' + Math.floor(to / 15);
   if (sig === STAT.sig) return;
   STAT.sig = sig;
   $('st-range').textContent = fmtDate(from) + ' – ' + fmtDate(to);
@@ -2798,8 +2884,7 @@ function updateStats() {
     kpi('Over budget', M.overBudget ? 'yes' : 'no', b.max_concurrent ? 'max ' + b.max_concurrent + ' in a turn at once' : '')));
   const urows = [...per.entries()].map(([n, p]) => ({ label: who(M, n), value: p.turns }));
   body.push(el('div', { class: 'grid2' },
-    el('div', { class: 'card' }, el('h3', { style: 'margin:0 0 6px' }, 'Turns per worker'), hbars(urows, { budget: STAT.period === 'today' ? b.worker_daily_turns : 0, label: 'turns per worker' }),
-      STAT.period === 'today' && b.worker_daily_turns ? el('div', { class: 'muted small' }, 'Dashed line: the per-worker daily budget.') : ''),
+    el('div', { class: 'card' }, el('h3', { style: 'margin:0 0 6px' }, 'Turns per worker'), hbars(urows, { label: 'turns per worker' })),
     el('div', { class: 'card' }, el('h3', { style: 'margin:0 0 6px' }, 'Tokens per worker'), hbars([...per.entries()].map(([n, p]) => ({ label: who(M, n), value: p.tokens })), { fmt: fmtNum, cls: 'barf2', label: 'tokens per worker' }))));
   const roles = new Map();
   for (const [n, p] of per) { const r = (M.workers.get(n) || {}).role || '?'; const x = roles.get(r) || 0; roles.set(r, x + p.turns); }
@@ -2859,10 +2944,6 @@ function buildHeader() {
     b.dataset.t = t;
     nav.append(b);
   }
-  // The sessions UI is another page: a plain link (the CSP forbids framing).
-  const a = el('a', { class: 'right', title: 'zapper\'s sessions, network, terminals and approvals' }, 'Sessions ↗');
-  a.href = '/sessions';
-  nav.append(a);
   HDR.ctl = el('span', { style: 'display:flex;gap:8px;align-items:center' });
   const pop = el('div', { class: 'pop' });
   HDR.runs = el('details', { class: 'menu', ontoggle: () => { if (HDR.runs.open) loadRuns(pop); } }, el('summary', { class: 'btn' }, 'Runs ▾'), pop);
@@ -2894,10 +2975,6 @@ function renderHeader() {
   document.title = (S.firm ? S.firm + ' · ' : '') + 'zapper office';
   const st = live() ? (S.info && S.info.run ? str(S.info.run.state) : 'off') : (M && M.runState) || 'starting';
   const stats = [pill(st, st)];
-  if (live() && S.info && S.info.run) {
-    const u = S.info.run.usage || {}, b = S.info.run.budget || {};
-    stats.push(el('span', { class: 'muted small' }, 'turns today ', el('b', {}, String(u.turns || 0)), b.daily_turns ? ' / ' + b.daily_turns : ''));
-  } else if (M && M.started) stats.push(el('span', { class: 'muted small' }, 'turns ', el('b', {}, String(M.turns.length))));
   if (M && M.overBudget && (S.mode === 'replay' || (S.info && S.info.run))) stats.push(pill('error', 'budget reached'));
   const esc = M ? escalationsWaiting(M).length : 0;
   if (esc) stats.push(el('button', { class: 'btn small', type: 'button', onclick: () => showTab('security') }, el('span', { class: 'badge warn' }, String(esc)), ' waiting for the board'));
@@ -2919,6 +2996,71 @@ function renderHeader() {
   }
   HDR.ctl.replaceChildren(...ctl);
 }
+// ────────────────────────────── footer ──────────────────────────────
+//
+// The numbers worth watching while on any tab; each opens its tab, and a
+// value that changed flashes.
+
+const FOOT = { prev: new Map(), log: null, logRun: null, logAt: 0, busy: false };
+
+function renderFooter() {
+  const foot = $('foot');
+  const M = S.M;
+  const items = [];
+  const item = (key, tab, parts, warn) => items.push({ key, tab, parts, warn });
+  if (M && S.run) {
+    const now = T();
+    const ws = [...M.workers.values()].filter((w) => w.inChart);
+    const count = (...st) => ws.filter((w) => st.includes(w.state)).length;
+    const trouble = count('error', 'over-budget');
+    const wparts = [[count('working', 'reviewing'), 'working'], [count('waiting', 'queued'), 'waiting'], [count('idle'), 'idle'], [count('booting'), 'booting'], [count('off'), 'off'], [trouble, 'in trouble']].filter(([n]) => n);
+    item('workers', 'overview', wparts.length ? wparts : [[ws.length, 'workers']], trouble > 0);
+    const open = openObl(M), late = open.filter((o) => overdue(o, now)).length;
+    item('mail', 'messages', [[M.mails.size, 'messages'], [open.length, 'open']].concat(late ? [[late, 'overdue']] : []), late > 0);
+    const pending = [...M.requests.values()].filter((r) => r.state === 'pending' || r.state === 'escalated').length;
+    item('access', 'security', [[pending, 'asks pending'], [M.access.filter((a) => a.event === 'decided').length, 'decided']], pending > 0);
+    item('drive', 'drive', [[M.artifacts.size, 'artifacts'], [M.published.length, 'versions']]);
+    if (FOOT.logRun === S.run && FOOT.log) item('git', 'git', [[S.mode === 'replay' ? FOOT.log.filter((c) => !c.ts || Number(c.ts) <= now).length : FOOT.log.length, 'commits']]);
+    const tok = ws.reduce((n, w) => n + w.tokens, 0);
+    item('turns', 'stats', [[M.turns.length, 'turns'], [fmtNum(tok), 'tokens']]);
+    if (M.started) item('time', 'stats', [[fmtDur(Math.max(0, now - M.started)), S.mode === 'replay' ? 'into the run' : 'running']]);
+    footCommits();
+  }
+  const els = [];
+  for (const it of items) {
+    if (els.length) els.push(el('span', { class: 'sep' }, '·'));
+    const kids = [];
+    it.parts.forEach(([v, l], i) => { if (i) kids.push(el('span', {}, ' ')); kids.push(el('b', {}, String(v)), el('span', {}, l)); });
+    const e = el('span', { class: 'fi' + (it.warn ? ' warn' : ''), title: 'Open ' + (TABS.find(([t]) => t === it.tab) || [, it.tab])[1], onclick: () => showTab(it.tab) }, ...kids);
+    const sig = it.parts.map(([v]) => v).join('|');
+    const was = FOOT.prev.get(it.key);
+    if (was != null && was !== sig && it.key !== 'time') { e.classList.add('bump'); setTimeout(() => e.classList.remove('bump'), 1200); }
+    FOOT.prev.set(it.key, sig);
+    els.push(e);
+  }
+  // zapper's own pages, under the office.
+  const a = el('a', { class: 'right', title: 'zapper, the sandbox the office runs on: every session, its network, terminals and approvals' }, 'zapper sessions ↗');
+  a.href = sessionsHref();
+  const sig = (S.firm || '') + '#' + items.map((it) => it.key + ':' + it.parts.map(([v]) => v).join('|') + (it.warn ? '!' : '')).join(',');
+  if (foot.dataset.sig === sig) return;
+  foot.dataset.sig = sig;
+  foot.replaceChildren(...els, a);
+}
+// The commits on main: polled while live, read once for a replay.
+async function footCommits() {
+  const run = S.run;
+  if (FOOT.busy || (FOOT.logRun === run && (S.mode === 'replay' || Date.now() - FOOT.logAt < 15000))) return;
+  FOOT.busy = true; FOOT.logAt = Date.now();
+  let log = [];
+  try {
+    if (arr(await gitFetch('/branches')).some((x) => x.name === 'main')) log = arr(await gitFetch('/log?ref=main&limit=1000'));
+  } catch (e) { /* no repository */ }
+  FOOT.busy = false;
+  if (run !== S.run) return;
+  FOOT.log = log.map((c) => ({ ts: c.ts })); FOOT.logRun = run;
+  scheduleRender();
+}
+
 async function firmOp(op, body) {
   try {
     await write('POST', F() + '/' + op, body === undefined ? {} : body);
@@ -2954,6 +3096,7 @@ function scheduleRender() {
 }
 function render() {
   renderHeader();
+  renderFooter();
   // The VMs are the daemon's, not the firm's: shown with or without a run.
   if (S.tab === 'vms') { try { updateVms(); } catch (e) { console.error(e); } }
   if (!S.M) return;

@@ -385,6 +385,80 @@ pub async fn publish(run: &Arc<FirmRun>, worker: &str, s: &Session, a: PublishAr
     Ok(json!({ "artifact": id, "version": version, "ref": format!("drive:{id}@v{version}"), "files": files.len(), "size": total }))
 }
 
+/// Largest upload from the board: files from the operator's own computer,
+/// attached to mail.
+pub const BOARD_UPLOAD_MAX: usize = 5 << 20;
+const BOARD_UPLOAD_FILES: usize = 10;
+
+/// A file name from the board's browser: one path component, printable.
+fn upload_name(name: &str) -> Result<String> {
+    let n = name.rsplit(['/', '\\']).next().unwrap_or("").trim();
+    if n.is_empty() || n.len() > 200 || n.starts_with('.') || n.chars().any(|c| c.is_control()) {
+        bail!("{name:?} is not a usable file name");
+    }
+    Ok(n.to_string())
+}
+
+/// Stores files the board uploaded as one artifact by the board, visible to
+/// the firm, for attaching to mail.
+pub fn publish_board(run: &Arc<FirmRun>, files: Vec<(String, Vec<u8>)>, title: &str, thread: Option<String>) -> Result<Value> {
+    if files.is_empty() || files.len() > BOARD_UPLOAD_FILES {
+        bail!("attach 1 to {BOARD_UPLOAD_FILES} files");
+    }
+    let total: usize = files.iter().map(|(_, d)| d.len()).sum();
+    if total > BOARD_UPLOAD_MAX {
+        bail!("attachments are limited to {} MiB together", BOARD_UPLOAD_MAX >> 20);
+    }
+    let mut names = std::collections::BTreeSet::new();
+    let mut entries = Vec::new();
+    for (name, data) in &files {
+        let name = upload_name(name)?;
+        if !names.insert(name.clone()) {
+            bail!("two files are named {name}");
+        }
+        let hash = hex(ring::digest::digest(&ring::digest::SHA256, data).as_ref());
+        let blob = run.dir.join("drive").join(&hash);
+        if !blob.exists() {
+            let tmp = run.dir.join("drive").join(format!("tmp-{}", crate::daemon::random_id(8)));
+            std::fs::write(&tmp, data)?;
+            std::fs::rename(&tmp, &blob)?;
+        }
+        entries.push(File { path: name, sha256: hash, size: data.len() as u64 });
+    }
+    entries.sort_by(|a, b| a.path.cmp(&b.path));
+    let title = if title.trim().is_empty() { entries.iter().map(|f| f.path.as_str()).collect::<Vec<_>>().join(", ") } else { title.trim().to_string() };
+    let title: String = title.chars().take(200).collect();
+    let mut d = run.drive.lock().unwrap();
+    let total = total as u64;
+    if d.used + total > d.drive_limit {
+        bail!("the shared drive is full ({} of {})", d.used, run.config.limits.drive_size);
+    }
+    d.used += total;
+    d.counter += 1;
+    let id = format!("a-{}", d.counter);
+    let summary = "Attached by the board.".to_string();
+    let changes = "First version.".to_string();
+    d.artifacts.insert(id.clone(), Artifact {
+        id: id.clone(),
+        title: title.clone(),
+        kind: "document".into(),
+        author: BOARD.into(),
+        audience: json!("firm"),
+        thread: thread.clone(),
+        versions: vec![Version { version: 1, created: now(), summary: summary.clone(), changes: changes.clone(), files: entries.clone() }],
+    });
+    drop(d);
+    run.journal.append("published", json!({
+        "artifact": id, "version": 1, "title": title, "kind": "document", "author": BOARD,
+        "audience": "firm", "thread": thread, "summary": summary, "changes": changes, "files": entries,
+    }));
+    Ok(json!({ "artifact": id, "version": 1, "ref": format!("drive:{id}@v1"), "files": entries.len(), "size": total }))
+}
+
+fn hex(b: &[u8]) -> String {
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
+
 /// Copies an artifact into the worker's VM.
 pub async fn fetch(run: &Arc<FirmRun>, worker: &str, s: &Session, r: &str, dest: &str) -> Result<Value> {
     let home = format!("/home/{}", s.resolved.agent.user);
