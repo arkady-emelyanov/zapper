@@ -117,13 +117,14 @@ pub fn tools(officer: bool) -> Vec<Value> {
         ),
         tool(
             "drive_publish",
-            "Publish files from your VM to the shared drive (paths under /work, your home or /tmp). Give artifact=a-N to add a new version of your own artifact.",
+            "Publish files from your VM to the shared drive (paths under /work, your home or /tmp). Give artifact=a-N to add a new version of your own artifact, with `changes` saying what changed.",
             json!({
                 "paths": { "type": "array", "items": { "type": "string" } }, "title": s("Title"),
                 "kind": { "type": "string", "enum": ["document", "report", "code", "dataset", "deck", "board-pack"] },
                 "summary": s("One paragraph: what it is and what it says"),
                 "audience": { "description": "firm (default), board, or a list of names" },
                 "artifact": s("Existing artifact id to add a version to"), "thread": s("The thread it answers"),
+                "changes": s("What changed from the previous version, for readers: one or two lines. Required with artifact; optional for a first version"),
             }),
             &["paths", "title", "kind", "summary"],
         ),
@@ -340,6 +341,7 @@ pub async fn dispatch(_d: &Arc<Daemon>, run: &Arc<FirmRun>, s: &Arc<Session>, me
                 audience: args["audience"].clone(),
                 artifact: opt_str(args, "artifact"),
                 thread: opt_str(args, "thread").or_else(|| w.context.lock().unwrap().clone()),
+                changes: opt_str(args, "changes").unwrap_or_default(),
             };
             drive::publish(run, me, s, a).await
         }

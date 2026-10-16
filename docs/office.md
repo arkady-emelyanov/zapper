@@ -67,7 +67,7 @@ firms:
       - { name: ada,      role: engineer, reports_to: dennis }
       - { name: grace,    role: engineer, reports_to: dennis }
       - { name: iris,     role: designer, reports_to: margaret }
-      - { name: ken,      role: analyst, reports_to: barbara }
+      - { name: ken,      role: analyst, reports_to: margaret }
       - { name: radia,    role: security-officer, reports_to: barbara }
     security:
       officers: [radia]
@@ -248,6 +248,7 @@ title     "Pricing analysis"
 kind      document | report | code | dataset | deck | board-pack
 author    ken
 summary   one paragraph, shown in lists and in mail
+changes   what this version changed from the previous one; required from version 2
 files     [{path: pricing.md, sha256, size, type}]
 audience  firm | board | [names]
 thread    t-01J…             the assignment it answers, if any
@@ -257,7 +258,7 @@ thread    t-01J…             the assignment it answers, if any
 
 | Tool | Does |
 |---|---|
-| `drive_publish(paths, title, kind, summary, audience?, artifact?, thread?)` | Copy files from the VM into the shared drive; with `artifact`, add a new version |
+| `drive_publish(paths, title, kind, summary, audience?, artifact?, thread?, changes?)` | Copy files from the VM into the shared drive; with `artifact`, add a new version, which needs `changes`: what changed from the previous one |
 | `drive_list(kind?, author?, query?)` | Find artifacts |
 | `drive_fetch(artifact[@version], dest)` | Copy an artifact into the VM |
 
@@ -412,7 +413,8 @@ The UI's state is built by folding the run's journal in the browser: live, it fo
 
 A mail client over the whole firm, read-only except for the board's own mail.
 
-- **Threads list** with subject, participants, kind, state (open, waiting, overdue, closed), last activity. Filters: worker, kind, state, involves the board, text search.
+- **Threads list** with subject, participants, kind, state (open, waiting, overdue, closed), last activity.
+- **Filters**: **from** (who wrote a message) and **to** (who received it, as recipient or in copy), each the board, a worker or the post office; kind, state and text search. From, to and kind have to match the same message: "from ada, to dennis" lists the threads where ada wrote to dennis. With these filters, each thread says how many of its messages match, opens at the first one, and the matching messages are highlighted.
 - **Thread view**: messages oldest first, with sender avatars, kinds, `due`, attachments that open in the Shared drive tab, and follow-ups marked as automatic. Assignment threads show who assigned what to whom and whether it was closed with a report.
 - **Board inbox**: the threads the board is in, first, with reply and compose. The latest board pack is pinned at the top.
 - **Delegation tree**: for any thread from the board, the threads it spawned (CEO → CTO → engineers) as a tree, with each branch's state, so the board can see how its request was split up and where it is stuck.
@@ -426,11 +428,11 @@ A mail client over the whole firm, read-only except for the board's own mail.
 
 ### Shared drive
 
-Artifacts by kind, author and thread, with versions. Viewers: Markdown for documents and reports, a slide viewer for decks and board packs, a table for datasets, a file tree for code.
+Artifacts by kind, author and thread. An artifact shows its version history, newest first, each version with the author's note of what changed; clicking one opens that version. Viewers: Markdown for documents and reports, a slide viewer for decks and board packs, a table for datasets, a file tree for code.
 
 ### Git
 
-The run's repository, read-only: a branch picker (`main` first), the branch's commits, its files as a tree with breadcrumbs, a file's text (Markdown rendered, code as text, up to 1 MiB), and a commit's message, files changed and diff. In replay, commits after the timeline's position are hidden. The repository itself is `state/firms/<firm>/runs/<run>/git/product.git` under `~/.local/state/zapper`, a bare repository you can clone.
+The run's repository, read-only: a branch picker (`main` first), the branch's commits (the subject, author and age, with the first line of the description under them), its files as a tree with breadcrumbs and the directory's README rendered under it, a file's text (Markdown rendered, code as text, up to 1 MiB), and a commit's message, files changed and diff. In replay, commits after the timeline's position are hidden. The repository itself is `state/firms/<firm>/runs/<run>/git/product.git` under `~/.local/state/zapper`, a bare repository you can clone.
 
 ### Statistics
 

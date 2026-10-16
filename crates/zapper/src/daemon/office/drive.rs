@@ -32,6 +32,9 @@ pub struct Version {
     pub version: u32,
     pub created: f64,
     pub summary: String,
+    /// What changed from the previous version.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub changes: String,
     pub files: Vec<File>,
 }
 
@@ -66,6 +69,8 @@ impl Artifact {
             "id": self.id, "title": self.title, "kind": self.kind, "author": self.author, "audience": self.audience,
             "thread": self.thread, "versions": self.versions.len(), "latest": last.map(|v| v.version),
             "summary": last.map(|v| v.summary.clone()), "updated": last.map(|v| v.created),
+            "changes": last.map(|v| v.changes.clone()).filter(|c| !c.is_empty()),
+            "history": self.versions.iter().map(|v| json!({ "version": v.version, "created": v.created, "changes": v.changes })).collect::<Vec<_>>(),
             "files": last.map(|v| v.files.len()), "size": last.map(|v| v.files.iter().map(|f| f.size).sum::<u64>()),
         })
     }
@@ -206,6 +211,8 @@ pub struct PublishArgs {
     pub audience: Value,
     pub artifact: Option<String>,
     pub thread: Option<String>,
+    /// What changed from the previous version; required for a new version.
+    pub changes: String,
 }
 
 impl Drive {
@@ -269,6 +276,12 @@ pub async fn publish(run: &Arc<FirmRun>, worker: &str, s: &Session, a: PublishAr
     }
     if a.summary.len() > 4000 {
         bail!("keep the summary under 4000 characters");
+    }
+    if a.changes.len() > 2000 {
+        bail!("keep the note of changes under 2000 characters");
+    }
+    if a.artifact.is_some() && a.changes.trim().is_empty() {
+        bail!("a new version needs `changes`: what changed from the previous version, for the people who read it");
     }
     if a.paths.is_empty() || a.paths.len() > MAX_PATHS {
         bail!("give 1 to {MAX_PATHS} paths");
@@ -361,10 +374,11 @@ pub async fn publish(run: &Arc<FirmRun>, worker: &str, s: &Session, a: PublishAr
         art.thread = a.thread.clone();
     }
     let version = art.versions.len() as u32 + 1;
-    art.versions.push(Version { version, created: now(), summary: a.summary.clone(), files: files.clone() });
+    let changes = if version == 1 && a.changes.trim().is_empty() { "First version.".to_string() } else { a.changes.trim().to_string() };
+    art.versions.push(Version { version, created: now(), summary: a.summary.clone(), changes: changes.clone(), files: files.clone() });
     let entry = json!({
         "artifact": id, "version": version, "title": art.title, "kind": art.kind, "author": worker,
-        "audience": art.audience, "thread": art.thread, "summary": a.summary, "files": files,
+        "audience": art.audience, "thread": art.thread, "summary": a.summary, "changes": changes, "files": files,
     });
     drop(d);
     run.journal.append("published", entry);

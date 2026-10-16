@@ -77,20 +77,32 @@ pub async fn branches(run_dir: &Path) -> Result<Value> {
     Ok(json!(list))
 }
 
-/// Commits reachable from a ref, newest first.
+/// Commits reachable from a ref, newest first, each with its subject and
+/// the first line of its description.
 pub async fn log(run_dir: &Path, r: &str, limit: usize) -> Result<Value> {
     check_ref(r)?;
     let rp = repo(run_dir)?;
     let n = format!("--max-count={}", limit.clamp(1, 1000));
-    let out = git(&rp, &["log", &n, "--date=unix", "--pretty=format:%H%x1f%an%x1f%ad%x1f%s", r, "--"]).await?;
+    let out = git(&rp, &["log", &n, "--date=unix", "--pretty=format:%H%x1f%an%x1f%ad%x1f%s%x1f%b%x1e", r, "--"]).await?;
     let commits: Vec<Value> = String::from_utf8_lossy(&out)
-        .lines()
-        .filter_map(|l| {
-            let f: Vec<&str> = l.split('\x1f').collect();
-            (f.len() >= 4).then(|| json!({ "commit": f[0], "author": f[1], "ts": f[2].parse::<f64>().unwrap_or(0.0), "subject": f[3] }))
+        .split('\x1e')
+        .filter_map(|rec| {
+            let f: Vec<&str> = rec.trim_start_matches('\n').splitn(5, '\x1f').collect();
+            (f.len() == 5).then(|| {
+                let body: String = f[4].lines().map(str::trim).find(|l| !l.is_empty() && !is_trailer(l)).unwrap_or("").chars().take(300).collect();
+                json!({ "commit": f[0], "author": f[1], "ts": f[2].parse::<f64>().unwrap_or(0.0), "subject": f[3], "body": body })
+            })
         })
         .collect();
     Ok(json!(commits))
+}
+
+/// A trailer such as `Co-Authored-By: …` or `Signed-off-by: …`: not a
+/// description.
+fn is_trailer(line: &str) -> bool {
+    let Some((key, _)) = line.split_once(": ") else { return false };
+    let key = key.to_ascii_lowercase();
+    (key.ends_with("-by") && key.bytes().all(|b| b.is_ascii_alphabetic() || b == b'-')) || key == "change-id"
 }
 
 /// The entries of a directory at a ref.
@@ -179,5 +191,9 @@ mod tests {
         assert!(check_path("../x").is_err());
         assert!(check_path("/etc/passwd").is_err());
         assert!(check_path("a//b").is_err());
+        assert!(is_trailer("Co-Authored-By: Claude <noreply@anthropic.com>"));
+        assert!(is_trailer("Signed-off-by: ada <ada@acme>"));
+        assert!(!is_trailer("Note: keeps the API stable"));
+        assert!(!is_trailer("Adds the README"));
     }
 }

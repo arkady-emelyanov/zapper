@@ -183,6 +183,23 @@
   .git-diff .dhunk { color: var(--info); }
   .git-diff .dh { font-weight: 600; }
   .commits .c.sel { background: var(--accent-soft); }
+  .gc { display:grid; grid-template-columns: minmax(0,1fr) auto; column-gap: 10px; padding: 5px 8px; border-bottom: 1px dashed var(--line); cursor: pointer; border-radius: 6px; }
+  .gc:last-child { border-bottom: 0; }
+  .gc:hover { background: var(--panel); }
+  .gc.sel { background: var(--accent-soft); }
+  .gc .s { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .gc .d { grid-column: 1 / -1; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .gc .r { font-size: 11.5px; color: var(--muted); text-align: right; white-space: nowrap; }
+  .git-readme { margin-top: 12px; padding: 16px 20px; }
+  .git-readme .h { font-size: 12px; color: var(--muted); margin-bottom: 8px; border-bottom: 1px solid var(--line); padding-bottom: 6px; }
+  .msg.focus { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .msg.hit { background: var(--accent-soft); }
+  .vhist { display:flex; flex-direction: column; gap: 2px; margin: 4px 0 10px; border-left: 2px solid var(--line2); }
+  .vrow { display:grid; grid-template-columns: 42px 1fr auto; gap: 8px; padding: 4px 10px; cursor: pointer; border-radius: 0 8px 8px 0; align-items: baseline; }
+  .vrow:hover { background: var(--accent-soft); }
+  .vrow.sel { background: var(--accent-soft); }
+  .vrow.sel .vnum { color: var(--accent-ink); font-weight: 600; }
+  .vnum { font-family: var(--mono); font-size: 12.5px; color: var(--muted); }
   .ov-product { margin-left: auto; display:flex; gap: 8px; align-items: center; }
   .vm-dash { display:flex; gap: 8px; align-items: center; }
   .ov-product a { text-decoration: none; }
@@ -725,7 +742,7 @@ function apply(M, e) {
       if (!a) { a = { id, title: '', kind: '', author: '', audience: null, thread: null, versions: [], created: ts }; M.artifacts.set(id, a); }
       Object.assign(a, { title: str(e.title), kind: str(e.kind), author: str(e.author), audience: e.audience, thread: e.thread || a.thread, last: ts });
       const files = arr(e.files).filter((f) => f && typeof f.path === 'string').map((f) => ({ path: f.path, size: Number(f.size) || 0, sha256: str(f.sha256) }));
-      a.versions.push({ version: Number(e.version) || a.versions.length + 1, summary: str(e.summary), files, ts, title: str(e.title) });
+      a.versions.push({ version: Number(e.version) || a.versions.length + 1, summary: str(e.summary), changes: str(e.changes), files, ts, title: str(e.title) });
       M.published.push({ artifact: id, version: Number(e.version) || a.versions.length, author: a.author, kind: a.kind, ts });
       break;
     }
@@ -1810,7 +1827,7 @@ function slideViewer(text, ctx) {
 
 // ───────────────────────────── messages ─────────────────────────────
 
-const MSG = { view: 'inbox', thread: null, compose: false, treeRoot: null, sig: null, mainSig: null, reply: null, composeForm: null };
+const MSG = { view: 'inbox', focus: null, focusShown: null, thread: null, compose: false, treeRoot: null, sig: null, mainSig: null, reply: null, composeForm: null };
 
 function mountMessages() {
   const root = $('tab-messages');
@@ -1820,7 +1837,10 @@ function mountMessages() {
     b.dataset.v = v;
     views.append(b);
   }
-  const fWorker = el('select', { id: 'mf-worker', onchange: () => { MSG.sig = null; updateMessages(); } });
+  // From (author) and To (recipient, including cc): on messages; a thread
+  // matches when one of its messages does.
+  const fFrom = el('select', { id: 'mf-from', title: 'Written by', onchange: () => { MSG.sig = null; updateMessages(); } });
+  const fTo = el('select', { id: 'mf-to', title: 'Received by (to or cc)', onchange: () => { MSG.sig = null; updateMessages(); } });
   const fKind = selectOf([['', 'any kind'], 'assignment', 'question', 'fyi', 'report', 'reply', 'follow-up'], '', { id: 'mf-kind', onchange: () => { MSG.sig = null; updateMessages(); } });
   const fState = selectOf([['', 'any state'], 'waiting', 'overdue', 'open', 'closed', 'paused'], '', { id: 'mf-state', onchange: () => { MSG.sig = null; updateMessages(); } });
   const fBoard = el('label', { class: 'small muted', style: 'display:flex;gap:4px;align-items:center' }, el('input', { type: 'checkbox', id: 'mf-board', onchange: () => { MSG.sig = null; updateMessages(); } }), 'involves the board');
@@ -1828,18 +1848,31 @@ function mountMessages() {
   root.replaceChildren(el('div', { class: 'split' },
     el('div', {},
       el('div', { class: 'bar' }, views, el('button', { class: 'btn small', id: 'msg-compose', type: 'button', onclick: () => { MSG.compose = true; MSG.thread = null; MSG.mainSig = null; updateMessages(); } }, 'Compose')),
-      el('div', { class: 'bar', id: 'msg-filters' }, fWorker, fKind, fState, fBoard, fq),
+      el('div', { class: 'bar', id: 'msg-filters' }, fFrom, fTo, fKind, fState, fBoard, fq),
       el('div', { id: 'msg-pin' }),
       el('div', { class: 'list', id: 'msg-list' })),
     el('div', { id: 'msg-main' })));
   MSG.sig = null; MSG.mainSig = null;
 }
+// The From, To and kind filters, on one message; null when none is set.
+function mailFilter() {
+  const f = $('mf-from').value, to = $('mf-to').value, k = $('mf-kind').value;
+  if (!f && !to && !k) return null;
+  return (m) => !!m && (!f || m.from === f) && (!to || m.to.includes(to) || m.cc.includes(to)) && (!k || m.kind === k);
+}
+// The thread's messages that pass the From, To and kind filters.
+function threadHits(M, t) {
+  const ok = mailFilter();
+  return ok ? t.mails.filter((id) => ok(M.mails.get(id))) : null;
+}
 function threadMatches(M, t, now) {
-  const w = $('mf-worker').value, k = $('mf-kind').value, st = $('mf-state').value, q = $('mf-q').value.trim().toLowerCase();
+  const st = $('mf-state').value;
   if (MSG.view === 'inbox' && !t.board) return false;
   if (MSG.view === 'all' && $('mf-board').checked && !t.board) return false;
-  if (w && !t.people.has(w)) return false;
-  if (k && !t.mails.some((id) => (M.mails.get(id) || {}).kind === k)) return false;
+  // From, To and kind must hold for one and the same message.
+  const hits = threadHits(M, t);
+  if (hits && !hits.length) return false;
+  const q = $('mf-q').value.trim().toLowerCase();
   if (st && threadState(M, t, now) !== st) return false;
   if (q) {
     const hay = (t.subject + '\n' + t.mails.map((id) => { const m = M.mails.get(id); return m ? m.from + ' ' + m.subject + ' ' + m.body : ''; }).join('\n')).toLowerCase();
@@ -1855,15 +1888,16 @@ function updateMessages() {
   $('msg-compose').classList.toggle('hidden', !canWrite());
   $('mf-board').parentElement.classList.toggle('hidden', MSG.view !== 'all');
   $('msg-filters').classList.toggle('hidden', MSG.view === 'tree');
-  // Worker filter options.
-  const ws = [...M.workers.keys()];
-  const fw = $('mf-worker');
-  if (fw.dataset.sig !== ws.join(',')) {
-    const cur = fw.value;
-    fw.dataset.sig = ws.join(',');
-    fw.replaceChildren(opt('', 'any worker'), ...ws.map((n) => opt(n, n, n === cur)));
+  // From and To options: the board, every worker, the post office.
+  const people = [BOARD, ...[...M.workers.keys()].filter((n) => n !== BOARD), 'office'];
+  for (const [id, any] of [['mf-from', 'from anyone'], ['mf-to', 'to anyone']]) {
+    const sel = $(id);
+    if (sel.dataset.sig === people.join(',')) continue;
+    const cur = sel.value;
+    sel.dataset.sig = people.join(',');
+    sel.replaceChildren(opt('', any), ...people.map((n) => opt(n, (id === 'mf-from' ? 'from ' : 'to ') + (n === BOARD ? boardName() + ' (board)' : n === 'office' ? 'the post office' : who(M, n)), n === cur)));
   }
-  const sig = [MSG.view, M.count, S.boardUnread.size, Math.floor(now / 30), MSG.thread, MSG.treeRoot].join('|');
+  const sig = [MSG.view, $('mf-from').value, $('mf-to').value, $('mf-kind').value, M.count, S.boardUnread.size, Math.floor(now / 30), MSG.thread, MSG.treeRoot].join('|');
   if (sig !== MSG.sig) {
     MSG.sig = sig;
     renderPin(M);
@@ -1874,8 +1908,10 @@ function updateMessages() {
       list.replaceChildren(...(roots.length ? roots.map((t) => threadItem(M, t, now, MSG.treeRoot === t.id, () => { MSG.treeRoot = t.id; MSG.sig = null; MSG.mainSig = null; updateMessages(); }))
         : [el('div', { class: 'empty' }, 'No threads with the board yet.')]));
     } else {
+      // With person or kind filters, a thread opens at its first message
+      // that matches, and says how many do.
       const ts = [...M.threads.values()].filter((t) => threadMatches(M, t, now)).sort((a, b) => b.last - a.last).slice(0, 500);
-      list.replaceChildren(...(ts.length ? ts.map((t) => threadItem(M, t, now, MSG.thread === t.id, () => openThread(t.id)))
+      list.replaceChildren(...(ts.length ? ts.map((t) => { const hits = threadHits(M, t); return threadItem(M, t, now, MSG.thread === t.id, () => openThread(t.id, hits ? hits[0] : null), hits); })
         : [el('div', { class: 'empty' }, MSG.view === 'inbox' ? 'The board has no mail yet.' : 'No threads match.')]));
     }
   }
@@ -1895,19 +1931,19 @@ function threadUnread(M, t) {
   if (!live()) return 0;
   return t.mails.filter((id) => S.boardUnread.has(id)).length;
 }
-function threadItem(M, t, now, sel, onclick) {
+function threadItem(M, t, now, sel, onclick, hits) {
   const st = threadState(M, t, now);
   const first = M.mails.get(t.first);
   const unread = threadUnread(M, t);
   return el('div', { class: 'li' + (sel ? ' sel' : ''), onclick },
     el('div', { class: 'top' }, el('span', { class: 'subj' }, unread ? el('span', { class: 'dot', title: 'unread' }) : '', unread ? ' ' : '', clip(t.subject || '(no subject)', 80)), pill(st, st)),
-    el('div', { class: 'meta' }, first ? pill(first.kind, first.kind) : '', clip([...t.people].join(', '), 70), el('span', {}, '· ' + t.mails.length + ' · ' + ago(t.last))));
+    el('div', { class: 'meta' }, first ? pill(first.kind, first.kind) : '', clip([...t.people].join(', '), 70), el('span', {}, '· ' + (hits ? hits.length + ' of ' + t.mails.length + ' match' : t.mails.length) + ' · ' + ago(t.last))));
 }
-function openThread(id) {
+function openThread(id, focus) {
   const M = S.M;
   const t = M && M.threads.get(id);
   if (!t) return;
-  MSG.thread = id; MSG.compose = false;
+  MSG.thread = id; MSG.compose = false; MSG.focus = focus || null;
   if (MSG.view === 'tree' || (MSG.view === 'inbox' && !t.board)) MSG.view = t.board ? 'inbox' : 'all';
   MSG.sig = null; MSG.mainSig = null;
   if (S.tab !== 'messages') showTab('messages'); else updateMessages();
@@ -1970,8 +2006,13 @@ function renderMsgMain(M, now) {
     main.replaceChildren(MSG.headBox, MSG.msgsBox, MSG.reply ? el('div', { class: 'card' }, el('h3', { style: 'margin:0 0 8px' }, 'Reply as the board'), MSG.reply) : '');
   } else if (MSG.reply) MSG.reply.refresh();
   MSG.headBox.replaceChildren(head);
-  const msgsSig = t.mails.length + '|' + Math.floor(now / 30);
-  if (msgsSig !== MSG.msgsSig) { MSG.msgsSig = msgsSig; MSG.msgsBox.replaceChildren(msgs()); }
+  const msgsSig = [t.mails.length, Math.floor(now / 30), $('mf-from').value, $('mf-to').value, $('mf-kind').value].join('|');
+  if (msgsSig !== MSG.msgsSig || MSG.focusShown !== MSG.focus) {
+    MSG.msgsSig = msgsSig; MSG.focusShown = MSG.focus;
+    MSG.msgsBox.replaceChildren(msgs());
+    const f = MSG.focus && MSG.msgsBox.querySelector('[data-mid="' + CSS.escape(MSG.focus) + '"]');
+    if (f) requestAnimationFrame(() => f.scrollIntoView({ block: 'center', behavior: REDUCED.matches ? 'auto' : 'smooth' }));
+  }
 }
 function rootOf(M, t) {
   const seen = new Set();
@@ -1982,7 +2023,7 @@ function messageCard(M, m, now) {
   const auto = m.automatic || m.from === 'office' || m.kind === 'follow-up';
   const obls = [...M.obl.values()].filter((o) => o.message === m.id);
   const late = obls.some((o) => overdue(o, now));
-  return el('div', { class: 'msg' + (auto ? ' auto' : '') + (m.from === BOARD ? ' board' : '') },
+  return el('div', { class: 'msg' + (auto ? ' auto' : '') + (m.from === BOARD ? ' board' : '') + (MSG.focus === m.id ? ' focus' : '') + (MSG.view !== 'tree' && mailFilter() && mailFilter()(m) ? ' hit' : ''), 'data-mid': m.id },
     el('div', { class: 'mh' },
       miniAvatar(m.from),
       el('span', { class: 'who' }, m.from === BOARD ? boardName() + ' (board)' : m.from === 'office' ? 'post office' : m.from),
@@ -2422,8 +2463,12 @@ function renderDriveMain(M) {
   main.replaceChildren(el('div', { class: 'card' },
     el('div', { style: 'display:flex;gap:10px;align-items:center;flex-wrap:wrap' }, el('h2', { class: 'sec', style: 'margin:0' }, a.title || a.id), pill(a.kind, a.kind)),
     el('div', { class: 'muted small', style: 'margin:4px 0 8px' }, a.id + ' · by ' + a.author + ' · v' + ver.version + ' published ' + fmtDate(ver.ts) + (a.audience ? ' · for ' + (Array.isArray(a.audience) ? a.audience.join(', ') : str(a.audience)) : '')),
-    a.versions.length > 1 ? el('div', { class: 'vers' }, a.versions.map((v) => el('button', { class: 'btn small' + (v === ver ? ' primary' : ''), type: 'button', onclick: () => openDrive(a.id, v.version, null) }, 'v' + v.version))) : '',
     ver.summary ? el('p', {}, ver.summary) : '',
+    // Every version with its note of what changed, newest first.
+    el('div', { class: 'vhist' }, [...a.versions].reverse().map((v) => el('div', { class: 'vrow' + (v === ver ? ' sel' : ''), onclick: () => openDrive(a.id, v.version, null), title: 'Open v' + v.version },
+      el('span', { class: 'vnum' }, 'v' + v.version),
+      el('span', { class: 'vnote' }, v.changes || (v.version === 1 ? 'First version.' : 'No note of what changed.')),
+      el('span', { class: 'muted small' }, fmtDate(v.ts))))),
     t ? el('div', { class: 'small' }, 'For: ', threadLink(t.id)) : '',
     el('div', { class: 'files' }, files.map((f) => el('button', { class: 'chip' + (f.path === path ? ' sel' : ''), type: 'button', style: f.path === path ? 'border-color:var(--accent)' : '', onclick: () => openDrive(a.id, ver.version, f.path) }, f.path + ' · ' + fmtBytes(f.size))))),
   el('div', { style: 'margin-top:14px' }, viewer));
@@ -2496,7 +2541,7 @@ function csvTable(text, sep) {
 // The run's repository: branches, the selected branch's files and commits,
 // a file's text and a commit's diff. Everything is text from workers.
 
-const GIT = { branch: 'main', path: '', file: null, commit: null, branches: [], tree: null, log: [], view: null, run: null, at: 0, busy: false, err: null };
+const GIT = { branch: 'main', path: '', file: null, commit: null, branches: [], tree: null, log: [], readme: null, view: null, run: null, at: 0, busy: false, err: null };
 
 function mountGit() {
   $('tab-git').replaceChildren(el('div', { class: 'git-empty hidden', id: 'git-empty' }), el('div', { class: 'split', id: 'git-split' },
@@ -2521,7 +2566,10 @@ async function loadGitTab(force) {
     if (GIT.branches.length) {
       const q = '?ref=' + enc(GIT.branch);
       [GIT.log, GIT.tree] = await Promise.all([gitFetch('/log' + q + '&limit=200').then(arr), gitFetch('/tree' + q + '&path=' + enc(GIT.path)).then(arr)]);
-    } else { GIT.log = []; GIT.tree = []; }
+      // The directory's README, shown under its files.
+      const rm = gitReadme(GIT.tree);
+      GIT.readme = rm ? await gitFetch('/blob' + q + '&path=' + enc((GIT.path ? GIT.path + '/' : '') + rm.name)).catch(() => null) : null;
+    } else { GIT.log = []; GIT.tree = []; GIT.readme = null; }
     GIT.err = null;
   } catch (e) { GIT.err = e.message; }
   GIT.busy = false;
@@ -2540,7 +2588,12 @@ async function gitOpen(o) {
   }
   renderGit();
 }
-function updateGit() { loadGitTab(false); }
+// In replay the commits follow the timeline; the rest loads once.
+function updateGit() { loadGitTab(false); if (S.mode === 'replay' && GIT.run === S.run && !GIT.err && GIT.branches.length) renderGitLog(); }
+function gitReadme(tree) {
+  const files = arr(tree).filter((e) => e.type === 'blob');
+  return files.find((e) => /^readme\.(md|markdown)$/i.test(str(e.name))) || files.find((e) => /^readme(\.txt)?$/i.test(str(e.name)));
+}
 function renderGit() {
   const sel = $('git-branch');
   if (!sel) return;
@@ -2552,11 +2605,8 @@ function renderGit() {
   if (empty) { $('git-empty').replaceChildren(gitEmptyView()); return; }
   sel.replaceChildren(...(GIT.branches.length ? GIT.branches.map((b) => opt(b.name, b.name + ' · ' + str(b.commit).slice(0, 7), b.name === GIT.branch)) : [opt('', 'no branches yet')]));
   sel.disabled = !GIT.branches.length;
-  // Commits of the branch.
-  const commits = S.mode === 'replay' ? GIT.log.filter((c) => !c.ts || Number(c.ts) <= T()) : GIT.log;
-  $('git-log').replaceChildren(...(commits.length ? commits.map((c) => el('div', { class: 'c' + (GIT.commit === c.commit ? ' sel' : ''), style: 'cursor:pointer', onclick: () => gitOpen({ commit: c.commit, file: null }) },
-    el('span', { class: 'mono muted' }, str(c.commit).slice(0, 8)), el('span', { style: 'flex:1' }, clip(c.subject, 100)),
-    el('span', { class: 'muted small' }, str(c.author) + (c.ts ? ' · ' + fmtDate(Number(c.ts)) : '')))) : [el('span', { class: 'muted' }, GIT.branches.length ? 'No commits.' : 'Nothing pushed yet. Engineers push to https://git.' + str(S.info && S.info.run && S.info.run.domain) + '/product.git')]));
+  GIT.logSig = null;
+  renderGitLog();
   // Breadcrumbs: branch / dir / dir / file.
   const crumbs = [el('a', { class: 'link', onclick: () => gitOpen({ path: '', file: null, commit: null }) }, GIT.branch || 'repository')];
   const parts = GIT.path ? GIT.path.split('/') : [];
@@ -2581,9 +2631,22 @@ function renderGit() {
     rows.unshift(el('div', { class: 'git-row', title: 'Up to ' + (up || GIT.branch), onclick: () => gitOpen({ path: up, file: null, commit: null }) },
       el('span', { class: 'git-ic' }, '▴'), el('span', { class: 'git-dir' }, '..'), el('span', {})));
   }
-  const readme = arr(GIT.tree).find((e) => e.type === 'blob' && /^readme(\.md)?$/i.test(str(e.name)));
+  const rm = GIT.readme;
   main.replaceChildren(el('div', { class: 'card git-tree' }, rows.length ? rows : el('span', { class: 'muted' }, GIT.branches.length ? 'Empty directory.' : 'The repository is empty.')),
-    readme ? el('div', { class: 'muted small', style: 'margin-top:8px' }, 'Open ', el('a', { class: 'link', onclick: () => gitOpen({ file: (GIT.path ? GIT.path + '/' : '') + readme.name, commit: null }) }, readme.name), ' to read it.') : '');
+    rm && rm.text != null ? el('div', { class: 'card git-readme' }, el('div', { class: 'h mono' }, str(rm.path).split('/').pop()),
+      /\.(md|markdown)$/i.test(str(rm.path)) ? renderMarkdown(rm.text) : el('pre', { class: 'mono git-pre' }, rm.text)) : '');
+}
+// The branch's commits; in replay, those made by the timeline's position.
+function renderGitLog() {
+  const commits = S.mode === 'replay' ? GIT.log.filter((c) => !c.ts || Number(c.ts) <= T()) : GIT.log;
+  const later = GIT.log.length - commits.length;
+  const sig = [GIT.branch, GIT.commit, commits.length, GIT.log.length, GIT.at].join('|');
+  if (sig === GIT.logSig) return;
+  GIT.logSig = sig;
+  // Subject, author and age; the description's first line under them.
+  $('git-log').replaceChildren(...(commits.length ? commits.map((c) => el('div', { class: 'gc' + (GIT.commit === c.commit ? ' sel' : ''), title: str(c.commit).slice(0, 8) + ' · ' + str(c.author) + (c.ts ? ' · ' + fmtDate(Number(c.ts)) : '') + '\n' + str(c.subject) + (c.body ? '\n' + str(c.body) : ''), onclick: () => gitOpen({ commit: c.commit, file: null }) },
+    el('span', { class: 's' }, clip(c.subject, 200)), el('span', { class: 'r' }, str(c.author) + (c.ts ? ' · ' + ago(Number(c.ts)) : '')),
+    c.body ? el('span', { class: 'd' }, clip(c.body, 300)) : '')) : [el('span', { class: 'muted' }, later ? 'No commits yet at this point of the replay; ' + later + ' later.' : 'No commits.')]));
 }
 function gitEmptyView() {
   const domain = str(S.info && S.info.run && S.info.run.domain) || (S.firm + '.internal');

@@ -16,7 +16,7 @@ The shared drive is where the firm's finished work lives. Your `/work` directory
 
 ## The tools
 
-- `drive_publish(paths, title, kind, summary, audience?, artifact?, thread?)`: copies files out of your VM. Paths must be under `/work`, your home or `/tmp`. About 50 MiB per artifact.
+- `drive_publish(paths, title, kind, summary, audience?, artifact?, thread?, changes?)`: copies files out of your VM; `artifact` adds a new version of it, and then `changes` is required. Paths must be under `/work`, your home or `/tmp`. About 50 MiB per artifact.
 - `drive_list(kind?, author?, query?)`: find artifacts.
 - `drive_fetch(artifact, dest)`: copy an artifact (`a-3` for the latest, `a-3@v2` for a version) into your VM, e.g. `dest: "/work/in/a-3"`.
 
@@ -40,7 +40,9 @@ The shared drive is where the firm's finished work lives. Your `/work` directory
 
 ## Revising: new version, not new artifact
 
-When you revise something you already published, publish again with `artifact: "a-3"`. That adds version 2 under the same id, so links and history stay together. Create a new artifact only for genuinely different work. Say what changed in the summary ("v2: added acceptance criteria for X; removed Y").
+When you revise something you already published, publish again with `artifact: "a-3"`. That adds version 2 under the same id, so links and history stay together. Create a new artifact only for genuinely different work.
+
+Every new version needs `changes`: one or two lines on what changed from the previous version, written for the people who read it ("Added acceptance criteria for sharing; removed the export section; fixed the totals in table 2"). The shared drive shows these notes as the artifact's history, so a reader can see what moved without diffing. Keep `summary` about what the artifact is now.
 
 ## Attaching to mail
 

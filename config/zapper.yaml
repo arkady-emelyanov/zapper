@@ -259,7 +259,7 @@ firms:
       - { name: ada, role: engineer, reports_to: dennis }
       - { name: grace, role: engineer, reports_to: dennis }
       - { name: iris, role: designer, reports_to: margaret }
-      - { name: ken, role: analyst, reports_to: barbara }
+      - { name: ken, role: analyst, reports_to: margaret }
       - { name: radia, role: security-officer, reports_to: barbara }
     security:
       officers: [radia]
