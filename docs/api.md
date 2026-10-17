@@ -25,6 +25,7 @@ The office's routes ([office](office.md)), for the board. F is a firm, RUN a run
 | `DELETE /v1/firms/F/credentials/grants/WORKER/RESOURCE?reason=` | ✓ | The board revokes a grant |
 | `GET /v1/firms/F/runs` | ✓ | Past runs, newest first |
 | `DELETE /v1/firms/F/runs/RUN` | ✓ | Delete a past run (not the running one) |
+| `PUT /v1/firms/F/runs/RUN/note` | ✓ | `{note}`: the board's note on a run, any text up to 4000 bytes; empty removes it. `GET …/runs` lists it as `note` |
 | `GET /v1/firms/F/runs/RUN/config` | ✓ | `{config, skills}`: the config the run started with (YAML, secret values hidden; null for older runs) and each role's skills |
 | `GET /v1/firms/F/runs/RUN/journal[?follow=true&from=OFFSET]` | ✓ | The journal (`application/x-ndjson`), or followed as server-sent events, one entry per `data:` |
 | `GET /v1/firms/F/runs/RUN/transcripts/WORKER[?follow=true]` | ✓ | A worker's Claude stream-json events and wake prompts |

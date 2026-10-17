@@ -41,7 +41,7 @@ The office ([office](office.md)), as the board:
 | `zapper firm status FIRM` | Workers' states, what they are doing, mail and desks, turns and tokens today |
 | `zapper firm journal FIRM [--run RUN] [-f]` | The run's journal: mail, states, turns, access, publishes |
 | `zapper firm transcript FIRM WORKER [--run RUN] [-f]` | A worker's Claude transcript |
-| `zapper firm runs FIRM` / `zapper firm prune FIRM RUN` | Past runs / delete one |
+| `zapper firm runs FIRM` / `zapper firm note FIRM RUN TEXT` / `zapper firm prune FIRM RUN` | Past runs, with the board's notes / put a note on one (any text, to find it again; empty removes it; also the Note button in the UI's Runs tab) / delete one |
 | `zapper firm replay FIRM RUN` | The UI address that replays a run |
 | `zapper firm security FIRM` | Access requests and standing approvals |
 | `zapper firm decide FIRM REQUEST --allow\|--deny [--scope once\|worker\|role] [--reason TEXT]` / `zapper firm revoke FIRM RULE` | Decide a request as the board / remove a standing approval |

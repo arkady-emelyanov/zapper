@@ -72,6 +72,13 @@ pub enum FirmCmd {
     Runs {
         firm: String,
     },
+    /// Put a note on a run (any text, to find it again later); an empty
+    /// note removes it.
+    Note {
+        firm: String,
+        run: String,
+        note: String,
+    },
     /// Delete a past run's directory.
     Prune {
         firm: String,
@@ -1044,12 +1051,27 @@ pub async fn firm(c: &Client, cmd: FirmCmd, json_out: bool) -> Result<i32> {
                             s(&r["run"]),
                             s(&r["state"]),
                             format!("{} KiB", r["journal_bytes"].as_u64().unwrap_or(0) / 1024),
+                            s(&r["note"])
+                                .lines()
+                                .next()
+                                .unwrap_or("")
+                                .chars()
+                                .take(60)
+                                .collect(),
                         ]
                     })
                     .collect();
-                table(&["run", "state", "journal"], rows);
+                table(&["run", "state", "journal", "note"], rows);
             }
         }
+        FirmCmd::Note { firm, run, note } => print_json(
+            &c.json(
+                Method::PUT,
+                &format!("/v1/firms/{firm}/runs/{run}/note"),
+                Some(json!({ "note": note }).to_string()),
+            )
+            .await?,
+        ),
         FirmCmd::Prune { firm, run } => print_json(
             &c.json(
                 Method::DELETE,

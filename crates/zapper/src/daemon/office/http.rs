@@ -11,7 +11,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::{header, StatusCode};
 use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use futures_util::stream::Stream;
 use serde::Deserialize;
@@ -66,7 +66,8 @@ pub fn read_routes() -> Router<Arc<Daemon>> {
         .route("/firms/{f}/credentials", get(credentials_state))
 }
 
-/// The board's writes, in the API and the UI: including deleting a past run.
+/// The board's writes, in the API and the UI: including deleting a past run
+/// and notes on runs.
 pub fn board_routes() -> Router<Arc<Daemon>> {
     Router::new()
         .route("/firms/{f}/up", post(up))
@@ -85,6 +86,7 @@ pub fn board_routes() -> Router<Arc<Daemon>> {
         .route("/firms/{f}/security/rules/{id}", delete(revoke))
         .route("/firms/{f}/security/rules/{id}/promote", post(promote))
         .route("/firms/{f}/runs/{run}", delete(prune))
+        .route("/firms/{f}/runs/{run}/note", put(run_note))
         .route("/firms/{f}/budget/{id}", post(budget_decide))
         .route("/firms/{f}/release", post(board_release))
         .route("/firms/{f}/fund", post(board_fund))
@@ -701,6 +703,18 @@ async fn promote(State(d): D, Path((f, id)): Path<(String, String)>) -> R<Json<V
     Ok(Json(
         json!({ "promoted": id, "scope": scope.to_string(), "rule": added }),
     ))
+}
+
+/// The board's note on a run: `{note}`, empty to remove it.
+async fn run_note(
+    State(d): D,
+    Path((f, run)): Path<(String, String)>,
+    text: String,
+) -> R<Json<Value>> {
+    let v = body(&text)?;
+    let note = v["note"].as_str().ok_or_else(|| bad("note: text"))?;
+    super::set_note(&d, &f, &run, note)?;
+    Ok(Json(json!({ "run": run, "note": note.trim() })))
 }
 
 async fn prune(State(d): D, Path((f, run)): Path<(String, String)>) -> R<Json<Value>> {

@@ -401,6 +401,7 @@
   .ko .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   /* runs */
   .runs { display:flex; flex-direction: column; gap: 10px; max-width: 980px; }
+  .run-note { margin: 4px 0; padding: 4px 8px; border-left: 3px solid var(--accent); white-space: pre-wrap; font-size: 13px; }
   .run { cursor: pointer; padding: 14px 18px; display:flex; flex-direction: column; gap: 6px; }
   .run:hover { border-color: var(--line2); box-shadow: var(--shadow); }
   .run.sel { border-color: var(--accent); }
@@ -3606,6 +3607,14 @@ function runCard(r, liveRun) {
       RUNS.at = 0; loadRuns();
     } }, 'Delete');
   const cfg = el('button', { class: 'btn small', type: 'button', title: 'The config and skills this run started with', onclick: (ev) => { ev.stopPropagation(); openRunConfig(id); } }, 'Config');
+  // The board's own note, to find the run again for analysis.
+  const noteBtn = el('button', { class: 'btn small', type: 'button', title: 'Your note on this run, to find it again later', onclick: async (ev) => {
+    ev.stopPropagation();
+    const text = prompt('Note on run ' + id + ' (empty removes it):', str(r.note));
+    if (text == null) return;
+    try { await write('PUT', runPath(id) + '/note', { note: text }); toast(text.trim() ? 'Noted run ' + id : 'Removed the note on run ' + id); } catch (e) { toast(e.message, true); }
+    RUNS.at = 0; loadRuns();
+  } }, r.note ? 'Edit note' : 'Note');
   // The run's record against the keeper's chains and signatures.
   const ver = el('button', { class: 'btn small', type: 'button', title: 'Check this run\'s record against the keeper\'s chains and signatures', onclick: async (ev) => {
     ev.stopPropagation();
@@ -3622,7 +3631,8 @@ function runCard(r, liveRun) {
   return el('div', { class: 'run card' + (open ? ' sel' : ''), tabindex: 0, role: 'button', title: isLive ? 'The running firm' : 'Replay this run', onclick: go,
     onkeydown: (ev) => { if (ev.key === 'Enter') go(); } },
     el('div', { class: 'run-h' }, el('span', { class: 'serif run-t' }, clip(str(k.subject) || '(no subject)', 120)),
-      isLive ? pill('running', 'live') : open ? pill('accent', 'replaying') : '', cfg, ver, del),
+      isLive ? pill('running', 'live') : open ? pill('accent', 'replaying') : '', noteBtn, cfg, ver, del),
+    r.note ? el('div', { class: 'run-note', title: str(r.note) }, clip(str(r.note), 400)) : '',
     k.preview ? el('div', { class: 'run-p' }, clip(str(k.preview), 240)) : '',
     el('div', { class: 'muted small run-m' },
       el('span', { class: 'mono' }, id), el('span', {}, '· ' + fmtDate(started)), el('span', {}, '· ' + fmtDur(Math.max(0, last - started)) + (isLive ? ' so far' : '')),

@@ -485,6 +485,15 @@ gone=$("$Z" firm runs acme | sed -n 2p | cut -d' ' -f1)
 [ "$(del_run -b "zapper_token=$token" -H 'x-zapper-ui: 1' -H "Origin: $base" "$base/api/firms/acme/runs/$gone")" = 200 ] && pass "the board deletes a finished run from the UI" || fail "the board deletes a finished run from the UI" "not 200"
 refute "the deleted run is gone" "$("$Z" firm runs acme)" "$gone"
 expect "the other run stays" "$("$Z" firm runs acme)" "$run"
+# The board's notes on runs, to find them again.
+"$Z" firm note acme "$run" "Baseline: the CEO delegated cleanly" > /dev/null
+expect "the board notes a run" "$("$Z" firm runs acme)" "Baseline: the CEO delegated"
+note_put() { curl -s -o /dev/null -w '%{http_code}' -X PUT -H 'content-type: application/json' -d '{"note":"from the UI"}' "$@" "$base/api/firms/acme/runs/$run/note"; }
+[ "$(note_put -b "zapper_token=$token" -H "Origin: $base")" = 403 ] && pass "a note from the UI needs X-Zapper-UI" || fail "a note from the UI needs X-Zapper-UI" "not 403"
+[ "$(note_put -b "zapper_token=$token" -H 'x-zapper-ui: 1' -H "Origin: $base")" = 200 ] && pass "the board notes a run from the UI" || fail "the board notes a run from the UI" "not 200"
+expect "the runs list carries the note" "$(curl -s -b "zapper_token=$token" "$base/api/firms/acme/runs")" '"note":"from the UI"'
+"$Z" firm note acme "$run" "" > /dev/null
+refute "an empty note removes it" "$(curl -s -b "zapper_token=$token" "$base/api/firms/acme/runs")" "from the UI"
 
 echo "== a firm that grows: budget and hiring"
 out=$("$Z" firm up corp 2>&1)

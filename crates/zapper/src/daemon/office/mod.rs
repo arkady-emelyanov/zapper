@@ -1151,8 +1151,9 @@ pub fn list_runs(d: &Daemon, firm: &str) -> Vec<Value> {
             let journal = super::record::view(&e.path().join("journal.jsonl"));
             let size = std::fs::metadata(&journal).map(|m| m.len()).unwrap_or(0);
             let sum = run_summary(&journal);
+            let note = std::fs::read_to_string(e.path().join(RUN_NOTE)).ok();
             Some(json!({
-                "run": name, "started": info["started"], "journal_bytes": size,
+                "run": name, "started": info["started"], "journal_bytes": size, "note": note,
                 "kickoff": sum.kickoff, "messages": sum.messages, "last": sum.last, "ended": sum.ended,
             }))
         })
@@ -1170,6 +1171,32 @@ pub fn list_runs(d: &Daemon, firm: &str) -> Vec<Value> {
 
 /// The config a run started with, in its directory.
 pub const RUN_CONFIG: &str = "config.yaml";
+
+/// The board's note on a run, in its directory: free text to find the run
+/// again later. Not part of the record.
+pub const RUN_NOTE: &str = "note.txt";
+/// The longest note, in bytes.
+const MAX_NOTE: usize = 4000;
+
+/// Sets the board's note on a run; empty removes it.
+pub fn set_note(d: &Daemon, firm: &str, run: &str, note: &str) -> Result<()> {
+    let dir = run_dir(d, firm, run)?;
+    let note = note.trim();
+    if note.len() > MAX_NOTE {
+        bail!("keep the note under {MAX_NOTE} bytes");
+    }
+    let path = dir.join(RUN_NOTE);
+    if note.is_empty() {
+        match std::fs::remove_file(&path) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
+            _ => return Ok(()),
+        }
+    }
+    let tmp = dir.join(format!("{RUN_NOTE}.tmp"));
+    super::write_private(&tmp, note.as_bytes())?;
+    std::fs::rename(&tmp, &path)?;
+    Ok(())
+}
 
 /// A run's config and the skills its workers had: what it was run with.
 pub fn run_config(dir: &std::path::Path) -> Value {

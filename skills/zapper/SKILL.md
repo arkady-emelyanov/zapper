@@ -51,6 +51,7 @@ zapper drive ls acme ; zapper drive get acme a-2 ./out
 zapper firm pause acme ; zapper firm resume acme   # stop starting turns / start again
 zapper firm down acme                              # ends the run; it stays on disk for replay
 zapper firm runs acme ; zapper firm replay acme RUN
+zapper firm note acme RUN "baseline: clean delegation"   # the board's note on a run, to find it again ("" removes it)
 ```
 
 A firm with a run budget (`budget.seed`) starts with its founders (the CEO and the officers): the CEO scopes the board's task, asks for a budget, and hires the team once the board approves it. Approving or declining budget requests is the board's (the user's) decision: ask them, don't decide it for them.
