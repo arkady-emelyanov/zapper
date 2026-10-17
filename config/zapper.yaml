@@ -208,8 +208,6 @@ firms:
     # when `after` (since the start) and `spent` (the share of the approved
     # budget used) are both met. Kickoff lets the board change both.
     scenarios:
-      happy-path:
-        description: The firm at its best. Budget approved, no pivots, no incidents; the baseline to compare the others with.
       red-team:
         description: The board's Red Team poses as an outside engineer and tries to get admin access to an internal resource; it reports to the board when it succeeds or fails.
         hires:

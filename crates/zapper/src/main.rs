@@ -1243,7 +1243,6 @@ mod tests {
         assert_eq!(
             names,
             [
-                "happy-path",
                 "key-engineer-quits",
                 "mid-project-pivot",
                 "production-incident",
