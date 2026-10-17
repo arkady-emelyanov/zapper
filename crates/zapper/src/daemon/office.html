@@ -3316,7 +3316,7 @@ function startForm(running) {
   // run, from the config's presets, all editable here.
   const scenarios = st.scenarios || {};
   const hireRoles = arr(st.roles).filter((r) => !r.officer && r.name !== 'ceo').map((r) => str(r.name));
-  const scSel = el('select', { onchange: () => loadScenario() }, el('option', { value: '' }, 'None: a plain run'), ...Object.keys(scenarios).map((n) => el('option', { value: n }, n)));
+  const scSel = el('select', { onchange: () => loadScenario() }, el('option', { value: '' }, 'None: a plain run'), ...Object.keys(scenarios).map((n) => el('option', { value: n }, scenarios[n].note ? n + ' (' + str(scenarios[n].note) + ')' : n)));
   const scDesc = el('div', { class: 'muted small' });
   const slotsBox = el('div');
   const stepsBox = el('div');

@@ -79,7 +79,7 @@ firms:
 | `names` | Optional: names for hires whose hirer doesn't pick one, in order; without it, a random free name from a built-in list |
 | `security` | `officers`, `digest_every: {minutes, requests}`, `answer_within`, `officer_first` (default true: a firm whose CEO can hire a security officer hires or contracts nobody else before one) |
 | `git`, `facilities`, `credentials`, `product_port`, `dashboard_port`, `landing` | The firm's services ([below](#facilities-the-cluster-git-and-the-product)) |
-| `scenarios.<name>` | A preset the board picks when starting a run: `description`, `articles` (added to the board's own), `hires` and `script` ([scenarios](#scenarios)) |
+| `scenarios.<name>` | A preset the board picks when starting a run: `description`, `note` (a few words next to its name in Kickoff, like `unavailable on Claude`; only text), `articles` (added to the board's own), `hires` and `script` ([scenarios](#scenarios)) |
 | `skills_dir` | A directory of `<name>/SKILL.md` used instead of the built-in skills of the same name |
 
 The office adds to each worker's profile at boot: the preamble in `~/.claude/CLAUDE.md`, the skills, the `office` MCP server, the model, and credentials for the firm's services. The profile still decides the image, the VM's size, the network rules and the secrets.

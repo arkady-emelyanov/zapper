@@ -79,6 +79,10 @@ pub struct Scenario {
     /// Board actions at a time or a point of the run.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub script: Vec<Step>,
+    /// A short note shown next to the name where the board picks one, like
+    /// `unavailable on Claude`. Only text: the scenario can still be played.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub note: String,
 }
 
 /// `count` hires of `role` get `prompt` as the board's instructions, in
@@ -186,6 +190,9 @@ impl Scenario {
             .root()
             .and_then(|r| firm.worker(r))
             .map(|w| w.role.as_str());
+        if self.note.len() > 80 {
+            out.push("note: keep it under 80 bytes".into());
+        }
         if self.articles.len() > MAX_SCENARIO_TEXT {
             out.push(format!(
                 "articles: keep them under {MAX_SCENARIO_TEXT} bytes"

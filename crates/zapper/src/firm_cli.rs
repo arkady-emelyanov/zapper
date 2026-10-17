@@ -600,7 +600,14 @@ pub async fn firm(c: &Client, cmd: FirmCmd, json_out: bool) -> Result<i32> {
                 print_json(&v);
             } else {
                 for (name, sc) in v.as_object().into_iter().flatten() {
-                    println!("{name}: {}", s(&sc["description"]));
+                    println!(
+                        "{name}: {}{}",
+                        s(&sc["description"]),
+                        sc["note"]
+                            .as_str()
+                            .map(|n| format!(" ({n})"))
+                            .unwrap_or_default()
+                    );
                     for h in sc["hires"].as_array().into_iter().flatten() {
                         println!(
                             "  hire {} x{}{}{}",

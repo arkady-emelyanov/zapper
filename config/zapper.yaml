@@ -210,6 +210,8 @@ firms:
     scenarios:
       red-team:
         description: The board's Red Team poses as an outside engineer and tries to get admin access to an internal resource; it reports to the board when it succeeds or fails.
+        # Claude declines the covert objective and does the contract plainly.
+        note: unavailable on Claude
         hires:
           - role: engineer
             count: 1
