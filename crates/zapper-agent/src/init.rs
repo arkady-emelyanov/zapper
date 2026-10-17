@@ -64,15 +64,45 @@ fn switch_root() -> Result<()> {
 fn early() -> Result<()> {
     use libc::{MS_NODEV, MS_NOEXEC, MS_NOSUID};
     switch_root()?;
-    sys::mount("proc", "/proc", "proc", MS_NOSUID | MS_NODEV | MS_NOEXEC, "")?;
-    sys::mount("sysfs", "/sys", "sysfs", MS_NOSUID | MS_NODEV | MS_NOEXEC, "")?;
-    sys::mount("devpts", "/dev/pts", "devpts", MS_NOSUID | MS_NOEXEC, "gid=5,mode=0620,ptmxmode=0666")?;
+    sys::mount(
+        "proc",
+        "/proc",
+        "proc",
+        MS_NOSUID | MS_NODEV | MS_NOEXEC,
+        "",
+    )?;
+    sys::mount(
+        "sysfs",
+        "/sys",
+        "sysfs",
+        MS_NOSUID | MS_NODEV | MS_NOEXEC,
+        "",
+    )?;
+    sys::mount(
+        "devpts",
+        "/dev/pts",
+        "devpts",
+        MS_NOSUID | MS_NOEXEC,
+        "gid=5,mode=0620,ptmxmode=0666",
+    )?;
     let _ = fs::remove_file("/dev/ptmx");
     std::os::unix::fs::symlink("pts/ptmx", "/dev/ptmx")?;
-    sys::mount("tmpfs", "/dev/shm", "tmpfs", MS_NOSUID | MS_NODEV, "mode=1777")?;
+    sys::mount(
+        "tmpfs",
+        "/dev/shm",
+        "tmpfs",
+        MS_NOSUID | MS_NODEV,
+        "mode=1777",
+    )?;
     sys::mount("tmpfs", "/run", "tmpfs", MS_NOSUID | MS_NODEV, "mode=0755")?;
     sys::mount("tmpfs", "/tmp", "tmpfs", MS_NOSUID | MS_NODEV, "mode=1777")?;
-    sys::mount("cgroup2", "/sys/fs/cgroup", "cgroup2", MS_NOSUID | MS_NODEV | MS_NOEXEC, "")?;
+    sys::mount(
+        "cgroup2",
+        "/sys/fs/cgroup",
+        "cgroup2",
+        MS_NOSUID | MS_NODEV | MS_NOEXEC,
+        "",
+    )?;
     fs::create_dir_all("/run/zapper")?;
     fs::set_permissions("/run/zapper", fs::Permissions::from_mode(0o700))?;
     fs::write(EMPTY_FILE, b"")?;
@@ -83,18 +113,26 @@ fn early() -> Result<()> {
 fn setup(control: &Control, spec: &GuestSpec) -> Result<()> {
     sys::sethostname(&spec.hostname);
     fs::write("/etc/hostname", format!("{}\n", spec.hostname))?;
-    fs::write("/etc/hosts", format!("127.0.0.1 localhost {}\n::1 localhost\n", spec.hostname))?;
+    fs::write(
+        "/etc/hosts",
+        format!("127.0.0.1 localhost {}\n::1 localhost\n", spec.hostname),
+    )?;
     if spec.nic {
         // The kernel configured eth0 (`ip=` on the command line).
         fs::write("/etc/resolv.conf", "nameserver 10.0.2.1\n")?;
     } else {
-        fs::write("/etc/resolv.conf", "# No DNS: egress goes through the proxy at 127.0.0.1:3128.\n")?;
+        fs::write(
+            "/etc/resolv.conf",
+            "# No DNS: egress goes through the proxy at 127.0.0.1:3128.\n",
+        )?;
     }
     ensure_user(&spec.user, &spec.home).context("creating user")?;
 
     for d in &spec.disks {
-        let flags = if d.read_only { libc::MS_RDONLY } else { 0 } | libc::MS_NOSUID | libc::MS_NODEV;
-        sys::mount(&d.device, &d.path, "ext4", flags, "").with_context(|| format!("disk {}", d.device))?;
+        let flags =
+            if d.read_only { libc::MS_RDONLY } else { 0 } | libc::MS_NOSUID | libc::MS_NODEV;
+        sys::mount(&d.device, &d.path, "ext4", flags, "")
+            .with_context(|| format!("disk {}", d.device))?;
         // mkfs leaves an empty lost+found in each copied folder; it isn't
         // the user's.
         if !d.read_only {
@@ -113,16 +151,21 @@ fn setup(control: &Control, spec: &GuestSpec) -> Result<()> {
     }
     install_self().context("installing zapper-agent in the guest")?;
     for f in &spec.files {
-        write_file(&f.path, &f.content, f.mode, f.user_owned).with_context(|| format!("file {}", f.path))?;
+        write_file(&f.path, &f.content, f.mode, f.user_owned)
+            .with_context(|| format!("file {}", f.path))?;
     }
     if !spec.ca_pem.is_empty() {
         write_file(CA_PATH, &spec.ca_pem, 0o644, false)?;
-        let mut bundle = fs::OpenOptions::new().create(true).append(true).open(CA_BUNDLE)?;
+        let mut bundle = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(CA_BUNDLE)?;
         bundle.write_all(spec.ca_pem.as_bytes())?;
     }
     for rule in &spec.fs {
         for path in expand(&rule.path)? {
-            apply_fs(&path, rule.access).with_context(|| format!("fs rule {:?} on {}", rule.path, path.display()))?;
+            apply_fs(&path, rule.access)
+                .with_context(|| format!("fs rule {:?} on {}", rule.path, path.display()))?;
         }
     }
     acct::start(control.clone());
@@ -146,7 +189,11 @@ fn setup(control: &Control, spec: &GuestSpec) -> Result<()> {
         output.push_str(&String::from_utf8_lossy(&out.stderr));
         let tail = output.len().saturating_sub(8192);
         let ok = out.status.success();
-        control.event(GuestEvent::Setup { step: cmd.clone(), ok, output: output[tail..].to_string() });
+        control.event(GuestEvent::Setup {
+            step: cmd.clone(),
+            ok,
+            output: output[tail..].to_string(),
+        });
         if !ok {
             bail!("setup step {cmd:?} failed with {}", out.status);
         }
@@ -171,24 +218,40 @@ fn install_self() -> Result<()> {
 
 /// Makes `user` the only account with uid/gid 1000.
 fn ensure_user(user: &str, home: &str) -> Result<()> {
-    let shell = if Path::new("/bin/bash").exists() { "/bin/bash" } else { "/bin/sh" };
+    let shell = if Path::new("/bin/bash").exists() {
+        "/bin/bash"
+    } else {
+        "/bin/sh"
+    };
     let keep = |line: &str, id_field: usize| {
         let f: Vec<&str> = line.split(':').collect();
         f.first() != Some(&user) && f.get(id_field) != Some(&"1000")
     };
     let rewrite = |path: &str, id_field: usize, entry: String| -> Result<()> {
         let old = fs::read_to_string(path).unwrap_or_default();
-        let mut lines: Vec<String> = old.lines().filter(|l| keep(l, id_field)).map(str::to_string).collect();
+        let mut lines: Vec<String> = old
+            .lines()
+            .filter(|l| keep(l, id_field))
+            .map(str::to_string)
+            .collect();
         lines.push(entry);
         fs::write(path, lines.join("\n") + "\n")?;
         Ok(())
     };
-    rewrite("/etc/passwd", 2, format!("{user}:x:{UID}:{UID}::{home}:{shell}"))?;
+    rewrite(
+        "/etc/passwd",
+        2,
+        format!("{user}:x:{UID}:{UID}::{home}:{shell}"),
+    )?;
     rewrite("/etc/group", 2, format!("{user}:x:{UID}:"))?;
     if Path::new("/etc/shadow").exists() {
         // Shadow lines have no uid; drop by name only.
         let old = fs::read_to_string("/etc/shadow")?;
-        let mut lines: Vec<String> = old.lines().filter(|l| !l.starts_with(&format!("{user}:"))).map(str::to_string).collect();
+        let mut lines: Vec<String> = old
+            .lines()
+            .filter(|l| !l.starts_with(&format!("{user}:")))
+            .map(str::to_string)
+            .collect();
         lines.push(format!("{user}:!:19000::::::"));
         fs::write("/etc/shadow", lines.join("\n") + "\n")?;
     }
@@ -236,10 +299,17 @@ fn write_file(path: &str, content: &str, mode: u32, user_owned: bool) -> Result<
 /// Paths matching a glob, found by walking from its literal prefix without
 /// following symlinks.
 fn expand(pattern: &str) -> Result<Vec<PathBuf>> {
-    let glob = GlobBuilder::new(pattern).literal_separator(true).build()?.compile_matcher();
+    let glob = GlobBuilder::new(pattern)
+        .literal_separator(true)
+        .build()?
+        .compile_matcher();
     let prefix: PathBuf = Path::new(pattern)
         .components()
-        .take_while(|c| !c.as_os_str().to_string_lossy().contains(['*', '?', '[', '{']))
+        .take_while(|c| {
+            !c.as_os_str()
+                .to_string_lossy()
+                .contains(['*', '?', '[', '{'])
+        })
         .collect();
     let mut found = Vec::new();
     let mut stack = vec![prefix];
@@ -249,7 +319,9 @@ fn expand(pattern: &str) -> Result<Vec<PathBuf>> {
         if visited > 200_000 {
             bail!("{pattern}: too many files to scan");
         }
-        let Ok(meta) = fs::symlink_metadata(&p) else { continue };
+        let Ok(meta) = fs::symlink_metadata(&p) else {
+            continue;
+        };
         if glob.is_match(&p) {
             found.push(p.clone());
             continue;
@@ -267,7 +339,9 @@ fn apply_fs(path: &Path, access: FsAccess) -> Result<()> {
     let p = path.to_string_lossy();
     let meta = fs::symlink_metadata(path)?;
     match access {
-        FsAccess::Hidden if meta.is_dir() => sys::mount("tmpfs", &p, "tmpfs", libc::MS_RDONLY, "size=4k,mode=0555")?,
+        FsAccess::Hidden if meta.is_dir() => {
+            sys::mount("tmpfs", &p, "tmpfs", libc::MS_RDONLY, "size=4k,mode=0555")?
+        }
         FsAccess::Hidden => sys::bind(EMPTY_FILE, &p, true)?,
         FsAccess::Ro => sys::bind(&p, &p, true)?,
     }
@@ -297,7 +371,11 @@ fn start_reaper() {
             std::thread::sleep(Duration::from_millis(100));
             continue;
         }
-        let code = if libc::WIFEXITED(status) { libc::WEXITSTATUS(status) } else { 128 + libc::WTERMSIG(status) };
+        let code = if libc::WIFEXITED(status) {
+            libc::WEXITSTATUS(status)
+        } else {
+            128 + libc::WTERMSIG(status)
+        };
         let mut r = reaper().lock().unwrap();
         match r.waiters.remove(&pid) {
             Some(tx) => drop(tx.send(code)),

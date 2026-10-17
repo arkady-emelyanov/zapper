@@ -17,8 +17,8 @@ The office's routes ([office](office.md)), for the board. F is a firm, RUN a run
 | Method and path | ui | Purpose |
 |---|---|---|
 | `GET /v1/firms` | ✓ | Firms with their runs' states |
-| `GET /v1/firms/F` | ✓ | The chart, and the run: workers' states, usage, budget |
-| `POST /v1/firms/F/up` · `/down` · `/pause {paused}` | ✓ | Start a fresh run, stop it, pause or resume it |
+| `GET /v1/firms/F` | ✓ | The chart (live, while a run goes), `officers` (who holds security now), `start` (the config's founders and terms, and the charter's articles, for the start form), the run's `articles`, and the run: workers' states, usage, budget, `funds` (seed, approved, balances, budget requests), `contracts` (offers, quotes, counters, agreed terms, how each ended) |
+| `POST /v1/firms/F/up` · `/down` · `/pause {paused}` | ✓ | Start a fresh run (optionally `{company, ceo, officer, seed, ceo_prompt, officer_prompt, security: "officer"|"ceo", articles, security_share, max_concurrent, daily_turns}` for this run), stop it, pause or resume it |
 | `GET /v1/firms/F/runs` | ✓ | Past runs, newest first |
 | `DELETE /v1/firms/F/runs/RUN` | ✓ | Delete a past run (not the running one) |
 | `GET /v1/firms/F/runs/RUN/config` | ✓ | `{config, skills}`: the config the run started with (YAML, secret values hidden; null for older runs) and each role's skills |
@@ -34,6 +34,8 @@ The office's routes ([office](office.md)), for the board. F is a firm, RUN a run
 | `GET /v1/firms/F/mail[?for=WORKER&unread=true]` | ✓ | The board's (or a worker's) inbox |
 | `POST /v1/firms/F/mail` | ✓ | The board sends `{to, cc?, subject, body, kind, due?, in_reply_to?, attachments?}` |
 | `POST /v1/firms/F/mail/read` | ✓ | `{ids}` the board has read |
+| `POST /v1/firms/F/security/screenings/CHECK` | ✓ | `{clear, note?}`: the board clears a new hire's background check, or objects (which cancels the hire) |
+| `POST /v1/firms/F/budget/REQUEST` | ✓ | `{approve, note?}`: the board's answer to the CEO's budget request, as a reply in its thread |
 | `POST /v1/firms/F/drive/upload` | ✓ | `{files: [{name, data}], title?, thread?}` with `data` in base64: files from the board (10 files, 5 MiB together) stored as one artifact by the board; returns its `ref` to attach to mail |
 | `GET /v1/firms/F/threads/T` | ✓ | A thread with its messages |
 | `GET /v1/firms/F/drive` | ✓ | The shared drive's artifacts |

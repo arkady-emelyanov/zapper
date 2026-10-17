@@ -81,12 +81,27 @@ pub struct RequestLog {
 }
 
 pub fn headers(h: &hyper::HeaderMap) -> Vec<(String, String)> {
-    h.iter().map(|(k, v)| (k.to_string(), String::from_utf8_lossy(v.as_bytes()).into_owned())).collect()
+    h.iter()
+        .map(|(k, v)| {
+            (
+                k.to_string(),
+                String::from_utf8_lossy(v.as_bytes()).into_owned(),
+            )
+        })
+        .collect()
 }
 
 impl RequestLog {
     #[allow(clippy::too_many_arguments)]
-    pub fn start(&mut self, scheme: &'static str, method: &str, host: &str, port: u16, path: Option<&str>, req_headers: Vec<(String, String)>) -> Shared {
+    pub fn start(
+        &mut self,
+        scheme: &'static str,
+        method: &str,
+        host: &str,
+        port: u16,
+        path: Option<&str>,
+        req_headers: Vec<(String, String)>,
+    ) -> Shared {
         self.next += 1;
         let rec = Arc::new(Mutex::new(Record {
             id: self.next,
@@ -116,7 +131,9 @@ impl RequestLog {
         while self.records.len() > MAX_RECORDS {
             if let Some(old) = self.records.pop_front() {
                 let old = old.lock().unwrap();
-                self.body_bytes = self.body_bytes.saturating_sub(old.req_body.data.len() + old.resp_body.data.len());
+                self.body_bytes = self
+                    .body_bytes
+                    .saturating_sub(old.req_body.data.len() + old.resp_body.data.len());
             }
         }
         rec
@@ -145,11 +162,17 @@ impl RequestLog {
     }
 
     pub fn list(&self) -> Vec<Value> {
-        self.records.iter().map(|r| summary(&r.lock().unwrap())).collect()
+        self.records
+            .iter()
+            .map(|r| summary(&r.lock().unwrap()))
+            .collect()
     }
 
     pub fn get(&self, id: u64) -> Option<Value> {
-        self.records.iter().find(|r| r.lock().unwrap().id == id).map(|r| detail(&r.lock().unwrap()))
+        self.records
+            .iter()
+            .find(|r| r.lock().unwrap().id == id)
+            .map(|r| detail(&r.lock().unwrap()))
     }
 }
 
@@ -179,7 +202,9 @@ pub fn mark_ttfb(rec: &Shared) {
 }
 
 fn header<'a>(h: &'a [(String, String)], name: &str) -> Option<&'a str> {
-    h.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str())
+    h.iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case(name))
+        .map(|(_, v)| v.as_str())
 }
 
 fn url(r: &Record) -> String {
@@ -210,7 +235,9 @@ fn redact(text: &str, values: &[String]) -> String {
 }
 
 fn redact_headers(h: &[(String, String)], values: &[String]) -> Vec<(String, String)> {
-    h.iter().map(|(k, v)| (k.clone(), redact(v, values))).collect()
+    h.iter()
+        .map(|(k, v)| (k.clone(), redact(v, values)))
+        .collect()
 }
 
 /// A body for display: decoded per `content-encoding`, as text when it is
@@ -218,15 +245,25 @@ fn redact_headers(h: &[(String, String)], values: &[String]) -> Vec<(String, Str
 /// bodies holding one are not shown.
 fn body_json(c: &Captured, h: &[(String, String)], values: &[String]) -> Value {
     use base64::Engine as _;
-    let encoding = header(h, "content-encoding").unwrap_or("").to_ascii_lowercase();
+    let encoding = header(h, "content-encoding")
+        .unwrap_or("")
+        .to_ascii_lowercase();
     let decoded = decode(&c.data, &encoding);
     let truncated = (c.data.len() as u64) < c.total;
     let shown = decoded.as_deref().unwrap_or(&c.data);
     let mut v = json!({ "total": c.total, "kept": c.data.len(), "truncated": truncated, "encoding": (!encoding.is_empty()).then_some(encoding) });
     match std::str::from_utf8(shown) {
         Ok(t) => v["text"] = json!(redact(t, values)),
-        Err(e) if e.valid_up_to() > shown.len().saturating_sub(4) && truncated => v["text"] = json!(redact(&String::from_utf8_lossy(shown), values)),
-        Err(_) if values.iter().any(|s| shown.windows(s.len()).any(|w| w == s.as_bytes())) => v["withheld"] = json!("contains an added secret"),
+        Err(e) if e.valid_up_to() > shown.len().saturating_sub(4) && truncated => {
+            v["text"] = json!(redact(&String::from_utf8_lossy(shown), values))
+        }
+        Err(_)
+            if values
+                .iter()
+                .any(|s| shown.windows(s.len()).any(|w| w == s.as_bytes())) =>
+        {
+            v["withheld"] = json!("contains an added secret")
+        }
         Err(_) => v["base64"] = json!(base64::engine::general_purpose::STANDARD.encode(shown)),
     }
     v
@@ -277,7 +314,14 @@ pub struct Tee {
 impl Tee {
     pub fn wrap(inner: Body, rec: Shared, log: Arc<Mutex<RequestLog>>, side: Side) -> Body {
         use http_body_util::BodyExt as _;
-        Tee { inner, rec, log, side, ended: false }.boxed()
+        Tee {
+            inner,
+            rec,
+            log,
+            side,
+            ended: false,
+        }
+        .boxed()
     }
 
     fn end(&mut self) {
@@ -295,7 +339,10 @@ impl HttpBody for Tee {
     type Data = Bytes;
     type Error = hyper::Error;
 
-    fn poll_frame(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<Frame<Bytes>, hyper::Error>>> {
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Bytes>, hyper::Error>>> {
         let polled = Pin::new(&mut self.inner).poll_frame(cx);
         match &polled {
             Poll::Ready(Some(Ok(frame))) => {
@@ -308,7 +355,11 @@ impl HttpBody for Tee {
                 }
             }
             Poll::Ready(Some(Err(e))) => {
-                self.rec.lock().unwrap().error.get_or_insert_with(|| e.to_string());
+                self.rec
+                    .lock()
+                    .unwrap()
+                    .error
+                    .get_or_insert_with(|| e.to_string());
                 self.end();
             }
             Poll::Ready(None) => self.end(),
@@ -341,8 +392,18 @@ mod tests {
     #[test]
     fn captures_and_budgets() {
         let mut log = RequestLog::default();
-        let rec = log.start("https", "GET", "a.example", 443, Some("/x"), vec![("accept".into(), "*/*".into())]);
-        rec.lock().unwrap().resp_body.push(&vec![b'a'; BODY_CAP + 10]);
+        let rec = log.start(
+            "https",
+            "GET",
+            "a.example",
+            443,
+            Some("/x"),
+            vec![("accept".into(), "*/*".into())],
+        );
+        rec.lock()
+            .unwrap()
+            .resp_body
+            .push(&vec![b'a'; BODY_CAP + 10]);
         let log = Mutex::new(log);
         finish(&log, &rec);
         let d = log.lock().unwrap().get(1).unwrap();
@@ -360,7 +421,8 @@ mod tests {
             f();
             let _ = tx.send(());
         });
-        rx.recv_timeout(std::time::Duration::from_secs(secs)).expect("deadlock: did not finish in time");
+        rx.recv_timeout(std::time::Duration::from_secs(secs))
+            .expect("deadlock: did not finish in time");
     }
 
     #[test]
@@ -369,7 +431,10 @@ mod tests {
             let log = Mutex::new(RequestLog::default());
             // Enough kept bodies to pass the budget, so `account` walks the records.
             for _ in 0..(MAX_BODY_BYTES / BODY_CAP + 4) {
-                let rec = log.lock().unwrap().start("https", "GET", "a.example", 443, Some("/"), vec![]);
+                let rec =
+                    log.lock()
+                        .unwrap()
+                        .start("https", "GET", "a.example", 443, Some("/"), vec![]);
                 rec.lock().unwrap().resp_body.push(&vec![b'a'; BODY_CAP]);
                 finish(&log, &rec);
             }
@@ -390,7 +455,10 @@ mod tests {
                 })
             };
             for _ in 0..2000 {
-                let rec = log.lock().unwrap().start("https", "GET", "a.example", 443, Some("/"), vec![]);
+                let rec =
+                    log.lock()
+                        .unwrap()
+                        .start("https", "GET", "a.example", 443, Some("/"), vec![]);
                 finish(&log, &rec);
             }
             reader.join().unwrap();
@@ -403,10 +471,17 @@ mod tests {
         let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
         gz.write_all(b"{\"ok\":true}").unwrap();
         let data = gz.finish().unwrap();
-        let c = Captured { total: data.len() as u64, data };
+        let c = Captured {
+            total: data.len() as u64,
+            data,
+        };
         let v = body_json(&c, &[("content-encoding".into(), "gzip".into())], &[]);
         assert_eq!(v["text"], "{\"ok\":true}");
-        let v = body_json(&c, &[("content-encoding".into(), "gzip".into())], &["true".into()]);
+        let v = body_json(
+            &c,
+            &[("content-encoding".into(), "gzip".into())],
+            &["true".into()],
+        );
         assert_eq!(v["text"], "{\"ok\":***}");
     }
 }

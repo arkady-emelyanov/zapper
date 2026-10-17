@@ -27,25 +27,53 @@ pub const BUILTIN: &[(&str, &str)] = builtin![
     "security-review",
 ];
 
+/// The skill officers work by.
+const SECURITY: &str = "security-review";
+
 /// A skill's `SKILL.md`: from the firm's directory if it has one, else built in.
 pub fn text(dir: Option<&str>, name: &str) -> Result<String> {
     if let Some(dir) = dir {
-        let path = std::path::Path::new(&expand_home(dir)).join(name).join("SKILL.md");
+        let path = std::path::Path::new(&expand_home(dir))
+            .join(name)
+            .join("SKILL.md");
         if path.is_file() {
-            return std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()));
+            return std::fs::read_to_string(&path)
+                .with_context(|| format!("reading {}", path.display()));
         }
     }
-    BUILTIN.iter().find(|(n, _)| *n == name).map(|(_, t)| t.to_string()).ok_or_else(|| anyhow!("no skill {name} (built in: {})", BUILTIN.iter().map(|b| b.0).collect::<Vec<_>>().join(", ")))
+    BUILTIN
+        .iter()
+        .find(|(n, _)| *n == name)
+        .map(|(_, t)| t.to_string())
+        .ok_or_else(|| {
+            anyhow!(
+                "no skill {name} (built in: {})",
+                BUILTIN.iter().map(|b| b.0).collect::<Vec<_>>().join(", ")
+            )
+        })
 }
 
 /// Writes `skills/<role>/<skill>/SKILL.md` in the run directory.
 pub fn prepare(run: &FirmRun, _config: &Config) -> Result<()> {
     let dir = run.config.skills_dir.as_deref();
+    // The CEO holds security while the firm has no officer.
+    let root_role = run
+        .config
+        .root()
+        .and_then(|r| run.config.worker(r))
+        .map(|w| w.role.clone());
     for (role_name, role) in &run.config.roles {
-        for skill in role.skills.names() {
+        let mut names = role.skills.names();
+        if root_role.as_deref() == Some(role_name.as_str()) && !names.contains(&SECURITY) {
+            names.push(SECURITY);
+        }
+        for skill in names {
             let out = run.dir.join("skills").join(role_name).join(skill);
             std::fs::create_dir_all(&out)?;
-            std::fs::write(out.join("SKILL.md"), text(dir, skill).with_context(|| format!("role {role_name}"))?)?;
+            std::fs::write(
+                out.join("SKILL.md"),
+                text(dir, skill).with_context(|| format!("role {role_name}"))?,
+            )?;
         }
     }
     Ok(())

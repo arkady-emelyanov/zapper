@@ -8,7 +8,10 @@ use std::collections::BTreeMap;
 use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
 use zapper_policy::proto::{GuestDisk, GuestFile, GuestSpec};
-use zapper_policy::{merge, placeholder, render, secret_refs, Config, FsRule, NetworkMode, ResolvedProfile, Scope, SecretMode};
+use zapper_policy::{
+    merge, placeholder, render, secret_refs, Config, FsRule, NetworkMode, ResolvedProfile, Scope,
+    SecretMode,
+};
 
 const CA_PATH: &str = "/usr/local/share/ca-certificates/zapper.crt";
 const PROXY: &str = "http://127.0.0.1:3128";
@@ -34,7 +37,15 @@ fn render_secrets(config: &Config, template: &str) -> Result<String> {
     }
 }
 
-pub fn build(config: &Config, profile: &ResolvedProfile, session: &str, ca_pem: &str, disks: Vec<GuestDisk>, extra_files: Vec<GuestFile>, forwards: Vec<zapper_policy::proto::Forward>) -> Result<GuestSpec> {
+pub fn build(
+    config: &Config,
+    profile: &ResolvedProfile,
+    session: &str,
+    ca_pem: &str,
+    disks: Vec<GuestDisk>,
+    extra_files: Vec<GuestFile>,
+    forwards: Vec<zapper_policy::proto::Forward>,
+) -> Result<GuestSpec> {
     let agent = &profile.agent;
     let home = format!("/home/{}", agent.user);
     let nic = profile.engine.network == NetworkMode::Nic;
@@ -57,11 +68,17 @@ pub fn build(config: &Config, profile: &ResolvedProfile, session: &str, ca_pem: 
     }
     let mut files = Vec::new();
     for (k, v) in &agent.env {
-        env.insert(k.clone(), render_secrets(config, v).with_context(|| format!("agent.env.{k}"))?);
+        env.insert(
+            k.clone(),
+            render_secrets(config, v).with_context(|| format!("agent.env.{k}"))?,
+        );
     }
     if agent.kind == "claude-code" {
         env.insert("DISABLE_AUTOUPDATER".into(), "1".into());
-        env.insert("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC".into(), "1".into());
+        env.insert(
+            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC".into(),
+            "1".into(),
+        );
         files.extend(claude_files(profile, &home, env.get("ANTHROPIC_API_KEY")));
     }
     for (path, content) in &agent.files {
@@ -71,10 +88,21 @@ pub fn build(config: &Config, profile: &ResolvedProfile, session: &str, ca_pem: 
         };
         let user_owned = path.starts_with(&home);
         // Files holding guest secrets are private to the user.
-        let holds_secret = secret_refs(content).iter().any(|n| config.secrets.get(n).is_some_and(|s| s.mode == SecretMode::Guest));
+        let holds_secret = secret_refs(content).iter().any(|n| {
+            config
+                .secrets
+                .get(n)
+                .is_some_and(|s| s.mode == SecretMode::Guest)
+        });
         let mode = if holds_secret { 0o600 } else { 0o644 };
-        let content = render_secrets(config, content).with_context(|| format!("agent.files.{path}"))?;
-        files.push(GuestFile { path, content, mode, user_owned });
+        let content =
+            render_secrets(config, content).with_context(|| format!("agent.files.{path}"))?;
+        files.push(GuestFile {
+            path,
+            content,
+            mode,
+            user_owned,
+        });
     }
     files.extend(extra_files);
     // All fs rules, most specific layer first; the guest applies them all.
@@ -120,7 +148,10 @@ fn claude_files(profile: &ResolvedProfile, home: &str, api_key: Option<&String>)
     let managed = agent.permission_mode.as_ref().map(|mode| {
         let mut m = json!({ "permissions": { "defaultMode": mode } });
         if mode == "bypassPermissions" {
-            merge(&mut m, &json!({ "skipDangerousModePermissionPrompt": true }));
+            merge(
+                &mut m,
+                &json!({ "skipDangerousModePermissionPrompt": true }),
+            );
         }
         m
     });
@@ -135,19 +166,49 @@ fn claude_files(profile: &ResolvedProfile, home: &str, api_key: Option<&String>)
     // Pre-approve the API key (placeholder or value) so Claude Code does not
     // ask about it.
     if let Some(key) = api_key {
-        let tail: String = key.chars().rev().take(20).collect::<Vec<_>>().into_iter().rev().collect();
-        merge(&mut state, &json!({ "customApiKeyResponses": { "approved": [tail], "rejected": [] } }));
+        let tail: String = key
+            .chars()
+            .rev()
+            .take(20)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        merge(
+            &mut state,
+            &json!({ "customApiKeyResponses": { "approved": [tail], "rejected": [] } }),
+        );
     }
     let pretty = |v: &Value| serde_json::to_string_pretty(v).unwrap();
     let mut files = vec![
-        GuestFile { path: format!("{home}/.claude/settings.json"), content: pretty(&settings), mode: 0o644, user_owned: true },
-        GuestFile { path: format!("{home}/.claude.json"), content: pretty(&state), mode: 0o600, user_owned: true },
+        GuestFile {
+            path: format!("{home}/.claude/settings.json"),
+            content: pretty(&settings),
+            mode: 0o644,
+            user_owned: true,
+        },
+        GuestFile {
+            path: format!("{home}/.claude.json"),
+            content: pretty(&state),
+            mode: 0o600,
+            user_owned: true,
+        },
     ];
     if let Some(md) = &agent.claude_md {
-        files.push(GuestFile { path: format!("{home}/.claude/CLAUDE.md"), content: md.clone(), mode: 0o644, user_owned: true });
+        files.push(GuestFile {
+            path: format!("{home}/.claude/CLAUDE.md"),
+            content: md.clone(),
+            mode: 0o644,
+            user_owned: true,
+        });
     }
     if let Some(m) = managed {
-        files.push(GuestFile { path: MANAGED_SETTINGS.into(), content: pretty(&m), mode: 0o644, user_owned: false });
+        files.push(GuestFile {
+            path: MANAGED_SETTINGS.into(),
+            content: pretty(&m),
+            mode: 0o644,
+            user_owned: false,
+        });
     }
     files
 }
@@ -157,7 +218,9 @@ fn claude_files(profile: &ResolvedProfile, home: &str, api_key: Option<&String>)
 const MANAGED_SETTINGS: &str = "/etc/claude-code/managed-settings.json";
 
 /// Policy layers of a session in evaluation order.
-pub fn layers_of<'a>(layers: &'a [(Scope, zapper_policy::Policy)]) -> Vec<(Scope, &'a zapper_policy::Policy)> {
+pub fn layers_of(
+    layers: &[(Scope, zapper_policy::Policy)],
+) -> Vec<(Scope, &zapper_policy::Policy)> {
     layers.iter().map(|(s, p)| (s.clone(), p)).collect()
 }
 
@@ -170,13 +233,28 @@ mod tests {
         let config = Config::from_yaml("profiles:\n  c:\n    agent: { kind: claude-code, permission_mode: bypassPermissions, model: m }\n").unwrap();
         let profile = config.resolve("c").unwrap();
         let spec = build(&config, &profile, "s", "", vec![], vec![], vec![]).unwrap();
-        let file = |p: &str| spec.files.iter().find(|f| f.path == p).map(|f| serde_json::from_str::<Value>(&f.content).unwrap());
+        let file = |p: &str| {
+            spec.files
+                .iter()
+                .find(|f| f.path == p)
+                .map(|f| serde_json::from_str::<Value>(&f.content).unwrap())
+        };
         let user = file("/home/agent/.claude/settings.json").unwrap();
         assert_eq!(user["model"], "m");
-        assert!(user.get("permissions").is_none(), "no defaultMode in user settings: {user}");
+        assert!(
+            user.get("permissions").is_none(),
+            "no defaultMode in user settings: {user}"
+        );
         let managed = file(MANAGED_SETTINGS).unwrap();
         assert_eq!(managed["permissions"]["defaultMode"], "bypassPermissions");
         assert_eq!(managed["skipDangerousModePermissionPrompt"], true);
-        assert!(!spec.files.iter().find(|f| f.path == MANAGED_SETTINGS).unwrap().user_owned);
+        assert!(
+            !spec
+                .files
+                .iter()
+                .find(|f| f.path == MANAGED_SETTINGS)
+                .unwrap()
+                .user_owned
+        );
     }
 }

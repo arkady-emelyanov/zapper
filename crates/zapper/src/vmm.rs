@@ -42,7 +42,9 @@ pub struct Args {
 impl Args {
     /// Arguments after `__vmm`, in the order `to_args` writes them.
     fn parse(args: &[String]) -> Option<Args> {
-        let [dir, firecracker, config, id, kernel, initrd, net] = args else { return None };
+        let [dir, firecracker, config, id, kernel, initrd, net] = args else {
+            return None;
+        };
         Some(Args {
             dir: dir.into(),
             firecracker: firecracker.into(),
@@ -82,7 +84,13 @@ fn cstr(p: &Path) -> CString {
     CString::new(p.as_os_str().as_encoded_bytes()).expect("path without NUL")
 }
 
-fn mount(src: Option<&Path>, target: &Path, fstype: Option<&str>, flags: libc::c_ulong, data: Option<&str>) -> Result<()> {
+fn mount(
+    src: Option<&Path>,
+    target: &Path,
+    fstype: Option<&str>,
+    flags: libc::c_ulong,
+    data: Option<&str>,
+) -> Result<()> {
     let src = src.map(cstr);
     let target_c = cstr(target);
     let fstype = fstype.map(|f| CString::new(f).unwrap());
@@ -93,7 +101,8 @@ fn mount(src: Option<&Path>, target: &Path, fstype: Option<&str>, flags: libc::c
             target_c.as_ptr(),
             fstype.as_ref().map_or(std::ptr::null(), |s| s.as_ptr()),
             flags,
-            data.as_ref().map_or(std::ptr::null(), |s| s.as_ptr() as *const libc::c_void),
+            data.as_ref()
+                .map_or(std::ptr::null(), |s| s.as_ptr() as *const libc::c_void),
         )
     };
     check(r, &format!("mount {}", target.display()))
@@ -125,7 +134,13 @@ fn bind(root: &Path, src: &Path, read_only: bool) -> Result<()> {
     }
     mount(Some(src), &target, None, libc::MS_BIND, None)?;
     if read_only {
-        mount(None, &target, None, libc::MS_BIND | libc::MS_REMOUNT | libc::MS_RDONLY | libc::MS_NOSUID, None)?;
+        mount(
+            None,
+            &target,
+            None,
+            libc::MS_BIND | libc::MS_REMOUNT | libc::MS_RDONLY | libc::MS_NOSUID,
+            None,
+        )?;
     }
     Ok(())
 }
@@ -133,16 +148,34 @@ fn bind(root: &Path, src: &Path, read_only: bool) -> Result<()> {
 /// Builds the minimal root and pivots into it.
 fn confine(a: &Args) -> Result<()> {
     // Keep these mounts in this namespace.
-    mount(None, Path::new("/"), None, libc::MS_REC | libc::MS_PRIVATE, None)?;
+    mount(
+        None,
+        Path::new("/"),
+        None,
+        libc::MS_REC | libc::MS_PRIVATE,
+        None,
+    )?;
     let root = a.dir.join(ROOT);
     std::fs::create_dir_all(&root)?;
-    mount(Some(Path::new("tmpfs")), &root, Some("tmpfs"), libc::MS_NOSUID, Some("mode=0755,size=1m"))?;
+    mount(
+        Some(Path::new("tmpfs")),
+        &root,
+        Some("tmpfs"),
+        libc::MS_NOSUID,
+        Some("mode=0755,size=1m"),
+    )?;
 
     // The private /tmp first: binds below it (a state directory under /tmp)
     // must land on top of it, not under it.
     let tmp = root.join("tmp");
     std::fs::create_dir_all(&tmp)?;
-    mount(Some(Path::new("tmpfs")), &tmp, Some("tmpfs"), libc::MS_NOSUID | libc::MS_NODEV, Some("mode=1777,size=16m"))?;
+    mount(
+        Some(Path::new("tmpfs")),
+        &tmp,
+        Some("tmpfs"),
+        libc::MS_NOSUID | libc::MS_NODEV,
+        Some("mode=1777,size=16m"),
+    )?;
 
     bind(&root, &a.dir, false)?;
     for p in [&a.kernel, &a.initrd, &a.firecracker] {
@@ -157,14 +190,30 @@ fn confine(a: &Args) -> Result<()> {
     }
     let old = root.join(".old");
     std::fs::create_dir_all(&old)?;
-    let r = unsafe { libc::syscall(libc::SYS_pivot_root, cstr(&root).as_ptr(), cstr(&old).as_ptr()) } as libc::c_int;
+    let r = unsafe {
+        libc::syscall(
+            libc::SYS_pivot_root,
+            cstr(&root).as_ptr(),
+            cstr(&old).as_ptr(),
+        )
+    } as libc::c_int;
     check(r, "pivot_root")?;
     std::env::set_current_dir("/")?;
-    check(unsafe { libc::umount2(c"/.old".as_ptr(), libc::MNT_DETACH) }, "unmount old root")?;
+    check(
+        unsafe { libc::umount2(c"/.old".as_ptr(), libc::MNT_DETACH) },
+        "unmount old root",
+    )?;
     std::fs::remove_dir("/.old").context("removing /.old")?;
     // The root itself holds only mount points: make it read-only.
-    mount(None, Path::new("/"), None, libc::MS_BIND | libc::MS_REMOUNT | libc::MS_RDONLY | libc::MS_NOSUID, None)?;
-    std::env::set_current_dir(&a.dir).with_context(|| format!("{} in the new root", a.dir.display()))?;
+    mount(
+        None,
+        Path::new("/"),
+        None,
+        libc::MS_BIND | libc::MS_REMOUNT | libc::MS_RDONLY | libc::MS_NOSUID,
+        None,
+    )?;
+    std::env::set_current_dir(&a.dir)
+        .with_context(|| format!("{} in the new root", a.dir.display()))?;
     Ok(())
 }
 

@@ -9,7 +9,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
-use zapper_policy::proto::{GuestEvent, GuestMsg, GuestSpec, HostMsg, CONTROL_PORT, HOST_CID, MAX_LINE};
+use zapper_policy::proto::{
+    GuestEvent, GuestMsg, GuestSpec, HostMsg, CONTROL_PORT, HOST_CID, MAX_LINE,
+};
 use zapper_policy::ExecRequest;
 
 use crate::sys;

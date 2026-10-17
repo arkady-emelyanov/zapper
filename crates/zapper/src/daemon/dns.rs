@@ -62,14 +62,18 @@ impl FakeDns {
     }
 
     pub fn cached(&self, name: &str) -> Option<bool> {
-        self.exists.get(name).filter(|(_, at)| at.elapsed() < CACHE_TTL).map(|(e, _)| *e)
+        self.exists
+            .get(name)
+            .filter(|(_, at)| at.elapsed() < CACHE_TTL)
+            .map(|(e, _)| *e)
     }
 
     pub fn remember(&mut self, name: &str, exists: bool) {
         if self.exists.len() > 10_000 {
             self.exists.retain(|_, (_, at)| at.elapsed() < CACHE_TTL);
         }
-        self.exists.insert(name.to_string(), (exists, Instant::now()));
+        self.exists
+            .insert(name.to_string(), (exists, Instant::now()));
     }
 }
 
@@ -129,20 +133,31 @@ pub fn parse(q: &[u8]) -> Option<Result<Question, Rejected>> {
             labels.push(std::str::from_utf8(l).expect("validated ASCII"));
             i += len;
         }
-        let tail = q.get(i..i + 4).ok_or(reject(FORMERR, "truncated question"))?;
+        let tail = q
+            .get(i..i + 4)
+            .ok_or(reject(FORMERR, "truncated question"))?;
         let qtype = u16::from_be_bytes([tail[0], tail[1]]);
         let qclass = u16::from_be_bytes([tail[2], tail[3]]);
         if qclass != CLASS_IN {
             return Err(reject(REFUSED, "class other than IN"));
         }
         let name = names::hostname(&labels.join(".")).map_err(|r| reject(REFUSED, r))?;
-        Ok(Question { name, qtype, end: i + 4 })
+        Ok(Question {
+            name,
+            qtype,
+            end: i + 4,
+        })
     })())
 }
 
 /// A response to `query` with `rcode`, echoing the question if there is a
 /// valid one, and an A record if `answer` is set.
-pub fn respond(query: &[u8], question: Option<&Question>, rcode: u8, answer: Option<Ipv4Addr>) -> Vec<u8> {
+pub fn respond(
+    query: &[u8],
+    question: Option<&Question>,
+    rcode: u8,
+    answer: Option<Ipv4Addr>,
+) -> Vec<u8> {
     let mut r = query[..12].to_vec();
     r[2] = 0x80 | (query[2] & 0x79); // QR, opcode, RD
     r[3] = 0x80 | (rcode & 0x0f); // RA, rcode
@@ -174,7 +189,10 @@ const BURST: f64 = 100.0;
 
 impl Default for RateLimit {
     fn default() -> Self {
-        RateLimit { tokens: BURST, at: Instant::now() }
+        RateLimit {
+            tokens: BURST,
+            at: Instant::now(),
+        }
     }
 }
 
@@ -235,12 +253,28 @@ mod tests {
         let mut two = query(&[b"a", b"com"], 1, 1);
         two[5] = 2;
         assert_eq!(rejected(&two).rcode, FORMERR);
-        assert_eq!(rejected(&query(&[b"a.b", b"com"], 1, 1)).rcode, REFUSED, "dot inside a label");
-        assert_eq!(rejected(&query(&[b"a b", b"com"], 1, 1)).rcode, REFUSED, "space");
-        assert_eq!(rejected(&query(&[b"a\0", b"com"], 1, 1)).rcode, REFUSED, "NUL");
+        assert_eq!(
+            rejected(&query(&[b"a.b", b"com"], 1, 1)).rcode,
+            REFUSED,
+            "dot inside a label"
+        );
+        assert_eq!(
+            rejected(&query(&[b"a b", b"com"], 1, 1)).rcode,
+            REFUSED,
+            "space"
+        );
+        assert_eq!(
+            rejected(&query(&[b"a\0", b"com"], 1, 1)).rcode,
+            REFUSED,
+            "NUL"
+        );
         assert_eq!(rejected(&query(&[b"-a", b"com"], 1, 1)).rcode, REFUSED);
         assert_eq!(rejected(&query(&[], 1, 1)).rcode, REFUSED, "root");
-        assert_eq!(rejected(&query(&[b"a", b"com"], 1, 3)).rcode, REFUSED, "class CHAOS");
+        assert_eq!(
+            rejected(&query(&[b"a", b"com"], 1, 3)).rcode,
+            REFUSED,
+            "class CHAOS"
+        );
         let mut ptr = query(&[b"a"], 1, 1);
         ptr[12] = 0xc0;
         assert_eq!(rejected(&ptr).rcode, FORMERR, "compression pointer");

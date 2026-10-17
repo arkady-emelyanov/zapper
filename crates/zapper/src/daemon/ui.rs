@@ -6,18 +6,27 @@ use axum::response::IntoResponse;
 
 /// The office: firms, mail, security, the shared drive, statistics.
 pub async fn index() -> impl IntoResponse {
-    ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], include_str!("office.html"))
+    (
+        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        include_str!("office.html"),
+    )
 }
 
 /// Sessions, network, terminals and approvals.
 pub async fn sessions() -> impl IntoResponse {
-    ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], include_str!("ui.html"))
+    (
+        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        include_str!("ui.html"),
+    )
 }
 
 /// xterm.js 6.0.0 (MIT), bundled; see `assets/README`.
 /// A single terminal, read-only, for its own browser window.
 pub async fn terminal() -> impl IntoResponse {
-    ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], include_str!("terminal.html"))
+    (
+        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        include_str!("terminal.html"),
+    )
 }
 
 /// The firm's logo, as on the product's landing page and in the UI's header.
@@ -27,9 +36,15 @@ pub async fn favicon() -> impl IntoResponse {
 }
 
 pub async fn xterm_js() -> impl IntoResponse {
-    ([(header::CONTENT_TYPE, "text/javascript; charset=utf-8")], include_str!("assets/xterm.js"))
+    (
+        [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
+        include_str!("assets/xterm.js"),
+    )
 }
 
 pub async fn xterm_css() -> impl IntoResponse {
-    ([(header::CONTENT_TYPE, "text/css; charset=utf-8")], include_str!("assets/xterm.css"))
+    (
+        [(header::CONTENT_TYPE, "text/css; charset=utf-8")],
+        include_str!("assets/xterm.css"),
+    )
 }

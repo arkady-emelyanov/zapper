@@ -61,7 +61,9 @@ impl Facilities {
     }
 
     pub fn session_of(&self, name: &str) -> Option<Arc<Session>> {
-        (name == CLUSTER).then(|| self.cluster.lock().unwrap().clone()).flatten()
+        (name == CLUSTER)
+            .then(|| self.cluster.lock().unwrap().clone())
+            .flatten()
     }
 }
 
@@ -86,8 +88,15 @@ pub fn route(run: &FirmRun, host: &str, port: u16) -> Option<Result<Internal>> {
         Ok(Internal::Git)
     } else if host == format!("{CLUSTER}.{d}") && cluster && port == API_PORT as u16 {
         Ok(Internal::Cluster(API_PORT))
-    } else if (host == apps || host.ends_with(&format!(".{apps}"))) && cluster && (port == 80 || port == 443) {
-        Ok(Internal::Cluster(if port == 80 { HTTP_PORT } else { HTTPS_PORT }))
+    } else if (host == apps || host.ends_with(&format!(".{apps}")))
+        && cluster
+        && (port == 80 || port == 443)
+    {
+        Ok(Internal::Cluster(if port == 80 {
+            HTTP_PORT
+        } else {
+            HTTPS_PORT
+        }))
     } else {
         Err(anyhow!("nothing serves {host}:{port} in the firm"))
     };
@@ -100,7 +109,10 @@ pub fn serves_name(run: &FirmRun, name: &str) -> Option<bool> {
     if name != *d && !name.ends_with(&format!(".{d}")) {
         return None;
     }
-    Some(route(run, name, 443).is_some_and(|r| r.is_ok()) || route(run, name, API_PORT as u16).is_some_and(|r| r.is_ok()))
+    Some(
+        route(run, name, 443).is_some_and(|r| r.is_ok())
+            || route(run, name, API_PORT as u16).is_some_and(|r| r.is_ok()),
+    )
 }
 
 pub trait Io: AsyncRead + AsyncWrite + Unpin + Send {}
@@ -109,7 +121,9 @@ impl<T: AsyncRead + AsyncWrite + Unpin + Send> Io for T {}
 /// Opens a host-initiated vsock connection to a port of a session's VM.
 pub async fn vsock_connect(s: &Session, port: u32) -> Result<UnixStream> {
     let mut stream = UnixStream::connect(vm::vsock_path(&s.dir)).await?;
-    stream.write_all(format!("CONNECT {port}\n").as_bytes()).await?;
+    stream
+        .write_all(format!("CONNECT {port}\n").as_bytes())
+        .await?;
     let mut line = Vec::new();
     let mut byte = [0u8; 1];
     while line.len() < 64 {
@@ -126,25 +140,50 @@ pub async fn vsock_connect(s: &Session, port: u32) -> Result<UnixStream> {
 }
 
 /// Connects to a firm service on behalf of `s`.
-pub async fn connect(run: &Arc<FirmRun>, s: &Arc<Session>, target: Internal) -> Result<Box<dyn Io>> {
+pub async fn connect(
+    run: &Arc<FirmRun>,
+    s: &Arc<Session>,
+    target: Internal,
+) -> Result<Box<dyn Io>> {
     match target {
         Internal::Cluster(port) => {
-            let c = run.facility.cluster.lock().unwrap().clone().ok_or_else(|| anyhow!("the cluster isn't running"))?;
-            Ok(Box::new(vsock_connect(&c, port).await.context("the cluster")?))
+            let c = run
+                .facility
+                .cluster
+                .lock()
+                .unwrap()
+                .clone()
+                .ok_or_else(|| anyhow!("the cluster isn't running"))?;
+            Ok(Box::new(
+                vsock_connect(&c, port).await.context("the cluster")?,
+            ))
         }
         Internal::Git => {
             let (a, b) = tokio::io::duplex(256 * 1024);
             let host = format!("git.{}", run.domain);
             let config = s.ca.server_config(&host)?;
-            let member = s.firm.as_ref().map(|f| f.member.clone()).unwrap_or_default();
+            let member = s
+                .firm
+                .as_ref()
+                .map(|f| f.member.clone())
+                .unwrap_or_default();
             let run = run.clone();
             tokio::spawn(async move {
-                let Ok(Ok(tls)) = tokio::time::timeout(Duration::from_secs(15), tokio_rustls::TlsAcceptor::from(config).accept(b)).await else { return };
+                let Ok(Ok(tls)) = tokio::time::timeout(
+                    Duration::from_secs(15),
+                    tokio_rustls::TlsAcceptor::from(config).accept(b),
+                )
+                .await
+                else {
+                    return;
+                };
                 let svc = hyper::service::service_fn(move |req| {
                     let (run, member) = (run.clone(), member.clone());
                     async move { Ok::<_, Infallible>(git_request(&run, &member, req).await) }
                 });
-                let _ = hyper::server::conn::http1::Builder::new().serve_connection(TokioIo::new(tls), svc).await;
+                let _ = hyper::server::conn::http1::Builder::new()
+                    .serve_connection(TokioIo::new(tls), svc)
+                    .await;
             });
             Ok(Box::new(a))
         }
@@ -152,13 +191,23 @@ pub async fn connect(run: &Arc<FirmRun>, s: &Arc<Session>, target: Internal) -> 
 }
 
 fn plain(status: StatusCode, msg: &str) -> Response<Full<Bytes>> {
-    Response::builder().status(status).header("content-type", "text/plain").body(Full::new(Bytes::from(format!("{msg}\n")))).unwrap()
+    Response::builder()
+        .status(status)
+        .header("content-type", "text/plain")
+        .body(Full::new(Bytes::from(format!("{msg}\n"))))
+        .unwrap()
 }
 
 fn basic_auth(h: &hyper::HeaderMap) -> Option<(String, String)> {
     use base64::Engine as _;
-    let v = h.get(hyper::header::AUTHORIZATION)?.to_str().ok()?.strip_prefix("Basic ")?;
-    let raw = base64::engine::general_purpose::STANDARD.decode(v.trim()).ok()?;
+    let v = h
+        .get(hyper::header::AUTHORIZATION)?
+        .to_str()
+        .ok()?
+        .strip_prefix("Basic ")?;
+    let raw = base64::engine::general_purpose::STANDARD
+        .decode(v.trim())
+        .ok()?;
     let s = String::from_utf8(raw).ok()?;
     let (u, p) = s.split_once(':')?;
     Some((u.to_string(), p.to_string()))
@@ -166,35 +215,63 @@ fn basic_auth(h: &hyper::HeaderMap) -> Option<(String, String)> {
 
 /// One request to the firm's git server: checks the worker's password and
 /// rights, then runs `git http-backend`.
-async fn git_request(run: &Arc<FirmRun>, member: &str, req: Request<hyper::body::Incoming>) -> Response<Full<Bytes>> {
+async fn git_request(
+    run: &Arc<FirmRun>,
+    member: &str,
+    req: Request<hyper::body::Incoming>,
+) -> Response<Full<Bytes>> {
     let Some((user, pass)) = basic_auth(req.headers()) else {
         let mut r = plain(StatusCode::UNAUTHORIZED, "credentials required");
-        r.headers_mut().insert("www-authenticate", "Basic realm=\"git\"".parse().unwrap());
+        r.headers_mut()
+            .insert("www-authenticate", "Basic realm=\"git\"".parse().unwrap());
         return r;
     };
-    let ok = user == member && run.facility.git_passwords.lock().unwrap().get(member).is_some_and(|p| *p == pass);
+    let ok = user == member
+        && run
+            .facility
+            .git_passwords
+            .lock()
+            .unwrap()
+            .get(member)
+            .is_some_and(|p| *p == pass);
     if !ok {
-        let mut r = plain(StatusCode::UNAUTHORIZED, "wrong credentials for this worker");
-        r.headers_mut().insert("www-authenticate", "Basic realm=\"git\"".parse().unwrap());
+        let mut r = plain(
+            StatusCode::UNAUTHORIZED,
+            "wrong credentials for this worker",
+        );
+        r.headers_mut()
+            .insert("www-authenticate", "Basic realm=\"git\"".parse().unwrap());
         return r;
     }
     let path = req.uri().path().to_string();
     let query = req.uri().query().unwrap_or("").to_string();
     let push = path.ends_with("/git-receive-pack") || query.contains("service=git-receive-pack");
-    let role = run.workers.get(member).map(|w| w.role.clone()).unwrap_or_default();
+    let role = run.rt(member).map(|w| w.role.clone()).unwrap_or_default();
     if push && !run.config.credentials.git.contains(&role) {
-        return plain(StatusCode::FORBIDDEN, "your role can read this repository, not push to it");
+        return plain(
+            StatusCode::FORBIDDEN,
+            "your role can read this repository, not push to it",
+        );
     }
     if path.split('/').any(|c| c == "..") {
         return plain(StatusCode::BAD_REQUEST, "bad path");
     }
     let method = req.method().to_string();
     let headers = req.headers().clone();
-    let body = match http_body_util::Limited::new(req.into_body(), MAX_GIT_BODY).collect().await {
+    let body = match http_body_util::Limited::new(req.into_body(), MAX_GIT_BODY)
+        .collect()
+        .await
+    {
         Ok(b) => b.to_bytes(),
         Err(_) => return plain(StatusCode::PAYLOAD_TOO_LARGE, "push too large"),
     };
-    let header = |k: &str| headers.get(k).and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+    let header = |k: &str| {
+        headers
+            .get(k)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string()
+    };
     let mut cmd = tokio::process::Command::new("git");
     cmd.arg("http-backend")
         .env_clear()
@@ -215,7 +292,12 @@ async fn git_request(run: &Arc<FirmRun>, member: &str, req: Request<hyper::body:
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
-    let Ok(mut child) = cmd.spawn() else { return plain(StatusCode::INTERNAL_SERVER_ERROR, "git http-backend is missing on the host") };
+    let Ok(mut child) = cmd.spawn() else {
+        return plain(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "git http-backend is missing on the host",
+        );
+    };
     let mut stdin = child.stdin.take().unwrap();
     let feed = tokio::spawn(async move {
         let _ = stdin.write_all(&body).await;
@@ -226,15 +308,36 @@ async fn git_request(run: &Arc<FirmRun>, member: &str, req: Request<hyper::body:
     };
     let _ = feed.await;
     // CGI: headers, a blank line, the body.
-    let split = out.stdout.windows(4).position(|w| w == b"\r\n\r\n").map(|i| (i, 4)).or_else(|| out.stdout.windows(2).position(|w| w == b"\n\n").map(|i| (i, 2)));
-    let Some((at, sep)) = split else { return plain(StatusCode::INTERNAL_SERVER_ERROR, &String::from_utf8_lossy(&out.stderr)) };
+    let split = out
+        .stdout
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .map(|i| (i, 4))
+        .or_else(|| {
+            out.stdout
+                .windows(2)
+                .position(|w| w == b"\n\n")
+                .map(|i| (i, 2))
+        });
+    let Some((at, sep)) = split else {
+        return plain(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &String::from_utf8_lossy(&out.stderr),
+        );
+    };
     let head = String::from_utf8_lossy(&out.stdout[..at]).into_owned();
     let mut resp = Response::builder().status(200);
     for line in head.lines() {
-        let Some((k, v)) = line.split_once(':') else { continue };
+        let Some((k, v)) = line.split_once(':') else {
+            continue;
+        };
         let (k, v) = (k.trim(), v.trim());
         if k.eq_ignore_ascii_case("status") {
-            let code = v.split_whitespace().next().and_then(|c| c.parse::<u16>().ok()).unwrap_or(500);
+            let code = v
+                .split_whitespace()
+                .next()
+                .and_then(|c| c.parse::<u16>().ok())
+                .unwrap_or(500);
             resp = resp.status(code);
         } else {
             resp = resp.header(k, v);
@@ -243,13 +346,21 @@ async fn git_request(run: &Arc<FirmRun>, member: &str, req: Request<hyper::body:
     if push && path.ends_with("/git-receive-pack") && out.status.success() {
         run.journal.append("git_push", json!({ "worker": member }));
     }
-    resp.body(Full::new(Bytes::copy_from_slice(&out.stdout[at + sep..]))).unwrap_or_else(|_| plain(StatusCode::INTERNAL_SERVER_ERROR, "bad CGI response"))
+    resp.body(Full::new(Bytes::copy_from_slice(&out.stdout[at + sep..])))
+        .unwrap_or_else(|_| plain(StatusCode::INTERNAL_SERVER_ERROR, "bad CGI response"))
 }
 
 /// Runs a shell command as root in a session's VM; its stdout.
 async fn sh(s: &Session, script: &str) -> Result<(i32, String)> {
     let mut out = Vec::new();
-    let (code, err) = drive::guest_command(s, vec!["sh".into(), "-c".into(), script.into()], None::<tokio::io::Empty>, &mut out, 4 << 20).await?;
+    let (code, err) = drive::guest_command(
+        s,
+        vec!["sh".into(), "-c".into(), script.into()],
+        None::<tokio::io::Empty>,
+        &mut out,
+        4 << 20,
+    )
+    .await?;
     let mut text = String::from_utf8_lossy(&out).into_owned();
     if code != 0 {
         text.push_str(&err);
@@ -261,23 +372,50 @@ pub async fn start(d: &Arc<Daemon>, run: &Arc<FirmRun>, config: &Config) -> Resu
     if run.config.git.is_some() {
         let repo = run.dir.join("git").join("product.git");
         std::fs::create_dir_all(&repo)?;
-        let ok = tokio::process::Command::new("git").args(["init", "--quiet", "--bare", "-b", "main"]).arg(&repo).status().await.context("git init (is git installed?)")?;
+        let ok = tokio::process::Command::new("git")
+            .args(["init", "--quiet", "--bare", "-b", "main"])
+            .arg(&repo)
+            .status()
+            .await
+            .context("git init (is git installed?)")?;
         if !ok.success() {
             bail!("git init failed");
         }
-        let _ = tokio::process::Command::new("git").arg("--git-dir").arg(&repo).args(["config", "http.receivepack", "true"]).status().await;
+        let _ = tokio::process::Command::new("git")
+            .arg("--git-dir")
+            .arg(&repo)
+            .args(["config", "http.receivepack", "true"])
+            .status()
+            .await;
         let mut pw = run.facility.git_passwords.lock().unwrap();
-        for w in run.workers.values() {
-            if run.config.credentials.git.contains(&w.role) || w.officer {
+        for w in run.rts() {
+            if run.config.credentials.git.contains(&w.role) || w.officer() {
                 pw.insert(w.name.clone(), random_id(24));
             }
         }
-        run.journal.append("facility", json!({ "name": "git", "state": "ready" }));
+        run.journal
+            .append("facility", json!({ "name": "git", "state": "ready" }));
     }
-    let Some((name, f)) = run.config.facilities.iter().next() else { return Ok(()) };
-    run.journal.append("facility", json!({ "name": name, "state": "booting" }));
-    let link = FirmLink { firm: run.firm.clone(), member: CLUSTER.into(), worker: false, run: Arc::downgrade(run), role: None };
-    let forwards = [API_PORT, HTTP_PORT, HTTPS_PORT, DASHBOARD_PORT].iter().map(|p| Forward { vsock_port: *p, tcp_port: *p as u16, nic: true }).collect();
+    let Some((name, f)) = run.config.facilities.iter().next() else {
+        return Ok(());
+    };
+    run.journal
+        .append("facility", json!({ "name": name, "state": "booting" }));
+    let link = FirmLink {
+        firm: run.firm.clone(),
+        member: CLUSTER.into(),
+        worker: false,
+        run: Arc::downgrade(run),
+        role: None,
+    };
+    let forwards = [API_PORT, HTTP_PORT, HTTPS_PORT, DASHBOARD_PORT]
+        .iter()
+        .map(|p| Forward {
+            vsock_port: *p,
+            tcp_port: *p as u16,
+            nic: true,
+        })
+        .collect();
     let new = NewSession {
         profile: f.profile.clone(),
         workdir: run.dir.join("empty"),
@@ -290,9 +428,14 @@ pub async fn start(d: &Arc<Daemon>, run: &Arc<FirmRun>, config: &Config) -> Resu
         forwards,
     };
     let _ = config;
-    let s = session::create(d.clone(), new).await.context("booting the cluster")?;
+    let s = session::create(d.clone(), new)
+        .await
+        .context("booting the cluster")?;
     *run.facility.cluster.lock().unwrap() = Some(s.clone());
-    run.journal.append("facility", json!({ "name": name, "state": "starting", "session": s.id }));
+    run.journal.append(
+        "facility",
+        json!({ "name": name, "state": "starting", "session": s.id }),
+    );
     let san = format!("{CLUSTER}.{}", run.domain);
     let script = format!(
         "mkdir -p /var/log && nohup k3s server --node-name {CLUSTER} --tls-san {san} --disable metrics-server --flannel-backend host-gw --write-kubeconfig-mode 600 > /var/log/k3s.log 2>&1 &"
@@ -304,12 +447,16 @@ pub async fn start(d: &Arc<Daemon>, run: &Arc<FirmRun>, config: &Config) -> Resu
     // The API first; the workers' kubeconfig comes from it.
     let deadline = tokio::time::Instant::now() + Duration::from_secs(300);
     loop {
-        let (code, out) = sh(&s, "k3s kubectl get --raw=/readyz 2>&1").await.unwrap_or((1, String::new()));
+        let (code, out) = sh(&s, "k3s kubectl get --raw=/readyz 2>&1")
+            .await
+            .unwrap_or((1, String::new()));
         if code == 0 && out.trim() == "ok" {
             break;
         }
         if tokio::time::Instant::now() > deadline {
-            let (_, log) = sh(&s, "tail -30 /var/log/k3s.log").await.unwrap_or_default();
+            let (_, log) = sh(&s, "tail -30 /var/log/k3s.log")
+                .await
+                .unwrap_or_default();
             bail!("k3s did not become ready in 5 minutes; its log ends:\n{log}");
         }
         tokio::time::sleep(Duration::from_secs(3)).await;
@@ -320,7 +467,10 @@ pub async fn start(d: &Arc<Daemon>, run: &Arc<FirmRun>, config: &Config) -> Resu
     }
     let kube = kube.replace("https://127.0.0.1:6443", &format!("https://{san}:6443"));
     *run.facility.kubeconfig.lock().unwrap() = Some(kube);
-    run.journal.append("facility", json!({ "name": name, "state": "ready", "session": s.id }));
+    run.journal.append(
+        "facility",
+        json!({ "name": name, "state": "ready", "session": s.id }),
+    );
     if let Some(l) = &run.config.landing {
         // In the background: Traefik comes up after the API.
         let manifest = landing_manifest(&l.display_name(&run.firm), &l.motto);
@@ -330,7 +480,10 @@ pub async fn start(d: &Arc<Daemon>, run: &Arc<FirmRun>, config: &Config) -> Resu
     if let Some(addr) = &run.config.product_port {
         let task = forward_port(run, addr, HTTP_PORT, "product").await?;
         *run.facility.product.lock().unwrap() = Some(task);
-        run.journal.append("facility", json!({ "name": "product", "state": "ready", "address": addr }));
+        run.journal.append(
+            "facility",
+            json!({ "name": "product", "state": "ready", "address": addr }),
+        );
     }
     if let Some(addr) = &run.config.dashboard_port {
         let task = forward_port(run, addr, DASHBOARD_PORT, "dashboard").await?;
@@ -342,15 +495,26 @@ pub async fn start(d: &Arc<Daemon>, run: &Arc<FirmRun>, config: &Config) -> Resu
 }
 
 /// Forwards a local address to a port of the cluster VM, for the board.
-async fn forward_port(run: &Arc<FirmRun>, addr: &str, port: u32, what: &'static str) -> Result<JoinHandle<()>> {
-    let listener = tokio::net::TcpListener::bind(addr).await.with_context(|| format!("{what}_port {addr}"))?;
+async fn forward_port(
+    run: &Arc<FirmRun>,
+    addr: &str,
+    port: u32,
+    what: &'static str,
+) -> Result<JoinHandle<()>> {
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .with_context(|| format!("{what}_port {addr}"))?;
     let run = run.clone();
     Ok(tokio::spawn(async move {
         loop {
-            let Ok((mut conn, peer)) = listener.accept().await else { break };
+            let Ok((mut conn, peer)) = listener.accept().await else {
+                break;
+            };
             let run = run.clone();
             tokio::spawn(async move {
-                let Some(c) = run.facility.cluster.lock().unwrap().clone() else { return };
+                let Some(c) = run.facility.cluster.lock().unwrap().clone() else {
+                    return;
+                };
                 tracing::info!(firm = %run.firm, "{what} port: connection from {peer}");
                 if let Ok(mut up) = vsock_connect(&c, port).await {
                     let _ = tokio::io::copy_bidirectional(&mut conn, &mut up).await;
@@ -393,7 +557,18 @@ async fn deploy_dashboard(run: &FirmRun, s: &Session) {
         }
         let mut out = Vec::new();
         let input = std::io::Cursor::new(manifest.clone().into_bytes());
-        let applied = drive::guest_command(s, vec!["sh".into(), "-c".into(), "cat > /tmp/dashboard.json && k3s kubectl apply -f /tmp/dashboard.json".into()], Some(input), &mut out, 1 << 20).await;
+        let applied = drive::guest_command(
+            s,
+            vec![
+                "sh".into(),
+                "-c".into(),
+                "cat > /tmp/dashboard.json && k3s kubectl apply -f /tmp/dashboard.json".into(),
+            ],
+            Some(input),
+            &mut out,
+            1 << 20,
+        )
+        .await;
         if let Ok((0, _)) = applied {
             break;
         }
@@ -414,11 +589,18 @@ async fn deploy_dashboard(run: &FirmRun, s: &Session) {
         }
         tokio::time::sleep(Duration::from_secs(2)).await;
     }
-    run.journal.append("facility", json!({ "name": "dashboard", "state": "failed" }));
+    run.journal.append(
+        "facility",
+        json!({ "name": "dashboard", "state": "failed" }),
+    );
 }
 
 fn html_escape(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;").replace('\'', "&#39;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
 }
 
 /// The landing page, in namespace `landing`, with the firm's mark (a camera
@@ -473,31 +655,39 @@ async fn deploy_landing(run: &FirmRun, s: &Session, manifest: String) {
         }
         let mut out = Vec::new();
         let input = std::io::Cursor::new(manifest.clone().into_bytes());
-        let r = drive::guest_command(s, vec!["sh".into(), "-c".into(), "cat > /tmp/landing.json && k3s kubectl apply -f /tmp/landing.json".into()], Some(input), &mut out, 1 << 20).await;
+        let r = drive::guest_command(
+            s,
+            vec![
+                "sh".into(),
+                "-c".into(),
+                "cat > /tmp/landing.json && k3s kubectl apply -f /tmp/landing.json".into(),
+            ],
+            Some(input),
+            &mut out,
+            1 << 20,
+        )
+        .await;
         if let Ok((0, _)) = r {
-            run.journal.append("facility", json!({ "name": "landing", "state": "deployed" }));
+            run.journal.append(
+                "facility",
+                json!({ "name": "landing", "state": "deployed" }),
+            );
             return;
         }
         tokio::time::sleep(Duration::from_secs(3)).await;
     }
-    run.journal.append("facility", json!({ "name": "landing", "state": "failed" }));
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn landing_escapes_text() {
-        let m = super::landing_manifest("A <b>&</b>", "it's \"new\"");
-        let v: serde_json::Value = serde_json::from_str(&m).unwrap();
-        let page = v["items"][1]["data"]["index.html"].as_str().unwrap();
-        assert!(page.contains("<h1>A &lt;b&gt;&amp;&lt;/b&gt;</h1>"), "{page}");
-        assert!(page.contains("it&#39;s &quot;new&quot;"));
-        assert_eq!(v["items"][4]["metadata"]["annotations"]["traefik.ingress.kubernetes.io/router.priority"], "1");
-    }
+    run.journal
+        .append("facility", json!({ "name": "landing", "state": "failed" }));
 }
 
 pub async fn stop(d: &Arc<Daemon>, run: &Arc<FirmRun>) {
-    for t in [run.facility.product.lock().unwrap().take(), run.facility.dashboard.lock().unwrap().take()].into_iter().flatten() {
+    for t in [
+        run.facility.product.lock().unwrap().take(),
+        run.facility.dashboard.lock().unwrap().take(),
+    ]
+    .into_iter()
+    .flatten()
+    {
         t.abort();
     }
     let cluster = run.facility.cluster.lock().unwrap().take();
@@ -516,7 +706,13 @@ pub async fn git_log(run_dir: &Path) -> Value {
     let out = tokio::process::Command::new("git")
         .arg("--git-dir")
         .arg(&repo)
-        .args(["log", "--all", "--date=unix", "--max-count=500", "--pretty=format:%H%x1f%an%x1f%ad%x1f%s%x1f%D"])
+        .args([
+            "log",
+            "--all",
+            "--date=unix",
+            "--max-count=500",
+            "--pretty=format:%H%x1f%an%x1f%ad%x1f%s%x1f%D",
+        ])
         .output()
         .await;
     let Ok(out) = out else { return json!([]) };
@@ -532,9 +728,17 @@ pub async fn git_log(run_dir: &Path) -> Value {
 
 pub fn services_for(run: &FirmRun, role: &str) -> Services {
     let d = &run.domain;
-    let officer_roles: Vec<&String> = run.workers.values().filter(|w| w.officer).map(|w| &w.role).collect();
-    let git = run.config.git.is_some() && (run.config.credentials.git.iter().any(|r| r == role) || officer_roles.iter().any(|r| *r == role));
-    let kube = run.config.credentials.kubeconfig.iter().any(|r| r == role) && run.facility.kubeconfig.lock().unwrap().is_some();
+    let officer_roles: Vec<String> = run
+        .rts()
+        .iter()
+        .filter(|w| w.officer())
+        .map(|w| w.role.clone())
+        .collect();
+    let git = run.config.git.is_some()
+        && (run.config.credentials.git.iter().any(|r| r == role)
+            || officer_roles.iter().any(|r| r == role));
+    let kube = run.config.credentials.kubeconfig.iter().any(|r| r == role)
+        && run.facility.kubeconfig.lock().unwrap().is_some();
     let cluster = run.facility.cluster.lock().unwrap().is_some();
     Services {
         git: git.then(|| format!("https://git.{d}/product.git")),
@@ -544,16 +748,31 @@ pub fn services_for(run: &FirmRun, role: &str) -> Services {
 }
 
 /// Files that give a worker its credentials for the firm's services.
-pub fn credentials_for(run: &FirmRun, worker: &str, role: &str, home: &str) -> Result<Vec<GuestFile>> {
+pub fn credentials_for(
+    run: &FirmRun,
+    worker: &str,
+    role: &str,
+    home: &str,
+) -> Result<Vec<GuestFile>> {
     let mut files = Vec::new();
     if run.config.credentials.kubeconfig.iter().any(|r| r == role) {
         if let Some(k) = run.facility.kubeconfig.lock().unwrap().clone() {
-            files.push(GuestFile { path: format!("{home}/.kube/config"), content: k, mode: 0o600, user_owned: true });
+            files.push(GuestFile {
+                path: format!("{home}/.kube/config"),
+                content: k,
+                mode: 0o600,
+                user_owned: true,
+            });
         }
     }
     if let Some(pw) = run.facility.git_passwords.lock().unwrap().get(worker) {
         let d = &run.domain;
-        files.push(GuestFile { path: format!("{home}/.git-credentials"), content: format!("https://{worker}:{pw}@git.{d}\n"), mode: 0o600, user_owned: true });
+        files.push(GuestFile {
+            path: format!("{home}/.git-credentials"),
+            content: format!("https://{worker}:{pw}@git.{d}\n"),
+            mode: 0o600,
+            user_owned: true,
+        });
         files.push(GuestFile {
             path: format!("{home}/.gitconfig"),
             content: format!("[user]\n\tname = {worker}\n\temail = {worker}@{d}\n[credential]\n\thelper = store\n[init]\n\tdefaultBranch = main\n[push]\n\tautoSetupRemote = true\n"),
@@ -562,4 +781,24 @@ pub fn credentials_for(run: &FirmRun, worker: &str, role: &str, home: &str) -> R
         });
     }
     Ok(files)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn landing_escapes_text() {
+        let m = super::landing_manifest("A <b>&</b>", "it's \"new\"");
+        let v: serde_json::Value = serde_json::from_str(&m).unwrap();
+        let page = v["items"][1]["data"]["index.html"].as_str().unwrap();
+        assert!(
+            page.contains("<h1>A &lt;b&gt;&amp;&lt;/b&gt;</h1>"),
+            "{page}"
+        );
+        assert!(page.contains("it&#39;s &quot;new&quot;"));
+        assert_eq!(
+            v["items"][4]["metadata"]["annotations"]
+                ["traefik.ingress.kubernetes.io/router.priority"],
+            "1"
+        );
+    }
 }

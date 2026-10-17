@@ -33,7 +33,8 @@ The office ([office](office.md)), as the board:
 | Command | Purpose |
 |---|---|
 | `zapper firm ls` | Firms and their runs' states |
-| `zapper firm up FIRM` / `zapper firm down FIRM` | Start a fresh run (facilities, then every worker, idle) / stop it; the run stays on disk |
+| `zapper firm contracts FIRM` | The run's contracts: hirer, contractor, state, offered, quoted and agreed budgets, how each ended |
+| `zapper firm up FIRM [--company NAME] [--ceo NAME] [--officer NAME] [--seed TOKENS] [--ceo-prompt FILE] [--officer-prompt FILE] [--ceo-holds-security] [--articles FILE] [--security-share F] [--max-concurrent N] [--daily-turns N]` / `zapper firm down FIRM` | Start a fresh run (facilities, then the founders, idle), with the board's parameters and charter terms for this run / stop it; the run stays on disk |
 | `zapper firm pause FIRM` / `zapper firm resume FIRM` | Stop starting turns / start again |
 | `zapper firm status FIRM` | Workers' states, what they are doing, mail and desks, turns and tokens today |
 | `zapper firm journal FIRM [--run RUN] [-f]` | The run's journal: mail, states, turns, access, publishes |
@@ -42,6 +43,9 @@ The office ([office](office.md)), as the board:
 | `zapper firm replay FIRM RUN` | The UI address that replays a run |
 | `zapper firm security FIRM` | Access requests and standing approvals |
 | `zapper firm decide FIRM REQUEST --allow\|--deny [--scope once\|worker\|role] [--reason TEXT]` / `zapper firm revoke FIRM RULE` | Decide a request as the board / remove a standing approval |
+| `zapper firm screen FIRM CHECK --clear\|--object [--note TEXT]` | Clear a new hire's background check as the board, or object |
+| `zapper record status` / `zapper record verify FIRM RUN` | Who keeps the record and whether it's being written / a run's record checked against the keeper's chains and signatures |
+| `zapper firm budget FIRM [approve\|decline REQUEST [--note TEXT]]` | The run's budget, balances and the CEO's budget requests; or the board's answer to one |
 | `zapper mail send FIRM --to NAME[,NAME] [--cc …] [--subject S] [--kind K] [--due 2h] [--reply-to ID] [--body TEXT]` | Write as the board; the body is read from stdin if `--body` is missing |
 | `zapper mail ls FIRM [--for WORKER] [--unread]` / `zapper mail thread FIRM THREAD` | The board's (or a worker's) inbox / a thread |
 | `zapper drive ls FIRM` / `zapper drive get FIRM ARTIFACT[@vN] DIR [--run RUN]` | The shared drive / download an artifact |

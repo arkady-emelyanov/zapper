@@ -18,7 +18,10 @@ pub fn label(l: &[u8]) -> Result<(), Invalid> {
     if l.len() > 63 {
         return Err("label longer than 63 bytes");
     }
-    if !l.iter().all(|b| b.is_ascii_alphanumeric() || *b == b'-' || *b == b'_') {
+    if !l
+        .iter()
+        .all(|b| b.is_ascii_alphanumeric() || *b == b'-' || *b == b'_')
+    {
         return Err("label with a character other than letters, digits, '-' and '_'");
     }
     if l.first() == Some(&b'-') || l.last() == Some(&b'-') {
@@ -58,9 +61,29 @@ mod tests {
     #[test]
     fn hostnames() {
         assert_eq!(hostname("API.GitHub.com."), Ok("api.github.com".into()));
-        assert_eq!(hostname("_dmarc.example.com"), Ok("_dmarc.example.com".into()));
-        assert_eq!(hostname("xn--bcher-kva.example"), Ok("xn--bcher-kva.example".into()));
-        for bad in ["", ".", "a..b", "-a.com", "a-.com", "a b.com", "a\0.com", "ü.com", "a/b", "a%2e.com", "*.com", &"a".repeat(64), &format!("{}.com", "a.".repeat(130))] {
+        assert_eq!(
+            hostname("_dmarc.example.com"),
+            Ok("_dmarc.example.com".into())
+        );
+        assert_eq!(
+            hostname("xn--bcher-kva.example"),
+            Ok("xn--bcher-kva.example".into())
+        );
+        for bad in [
+            "",
+            ".",
+            "a..b",
+            "-a.com",
+            "a-.com",
+            "a b.com",
+            "a\0.com",
+            "ü.com",
+            "a/b",
+            "a%2e.com",
+            "*.com",
+            &"a".repeat(64),
+            &format!("{}.com", "a.".repeat(130)),
+        ] {
             assert!(hostname(bad).is_err(), "{bad:?} should be rejected");
         }
         assert_eq!(host("10.0.0.1"), Ok("10.0.0.1".into()));

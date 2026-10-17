@@ -26,8 +26,12 @@ pub struct SessionCa {
 impl SessionCa {
     pub fn new(session: &str) -> Result<Self> {
         let mut params = CertificateParams::default();
-        params.distinguished_name.push(DnType::CommonName, format!("zapper session {session}"));
-        params.distinguished_name.push(DnType::OrganizationName, "zapper");
+        params
+            .distinguished_name
+            .push(DnType::CommonName, format!("zapper session {session}"));
+        params
+            .distinguished_name
+            .push(DnType::OrganizationName, "zapper");
         params.is_ca = IsCa::Ca(BasicConstraints::Constrained(0));
         params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
         let now = time::OffsetDateTime::now_utc();
@@ -36,7 +40,12 @@ impl SessionCa {
         let key = KeyPair::generate()?;
         let cert = params.self_signed(&key)?;
         let pem = cert.pem();
-        Ok(Self { cert, key, pem, leaves: Mutex::new(HashMap::new()) })
+        Ok(Self {
+            cert,
+            key,
+            pem,
+            leaves: Mutex::new(HashMap::new()),
+        })
     }
 
     /// Server config presenting a certificate for `host`.
@@ -46,7 +55,9 @@ impl SessionCa {
             return Ok(c.clone());
         }
         let mut params = CertificateParams::default();
-        params.distinguished_name.push(DnType::CommonName, host.clone());
+        params
+            .distinguished_name
+            .push(DnType::CommonName, host.clone());
         params.subject_alt_names = vec![match host.parse() {
             Ok(ip) => SanType::IpAddress(ip),
             Err(_) => SanType::DnsName(host.clone().try_into().context("host name")?),
@@ -56,7 +67,10 @@ impl SessionCa {
         params.not_after = now + time::Duration::days(7);
         let key = KeyPair::generate()?;
         let cert = params.signed_by(&key, &self.cert, &self.key)?;
-        let chain = vec![CertificateDer::from(cert.der().to_vec()), CertificateDer::from(self.cert.der().to_vec())];
+        let chain = vec![
+            CertificateDer::from(cert.der().to_vec()),
+            CertificateDer::from(self.cert.der().to_vec()),
+        ];
         let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.serialize_der()));
         let mut config = ServerConfig::builder_with_provider(provider())
             .with_safe_default_protocol_versions()?
@@ -74,7 +88,9 @@ impl SessionCa {
 pub fn client_config() -> Arc<ClientConfig> {
     static C: OnceLock<Arc<ClientConfig>> = OnceLock::new();
     C.get_or_init(|| {
-        let roots = RootCertStore { roots: webpki_roots::TLS_SERVER_ROOTS.to_vec() };
+        let roots = RootCertStore {
+            roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+        };
         let mut config = ClientConfig::builder_with_provider(provider())
             .with_safe_default_protocol_versions()
             .expect("protocol versions")
@@ -175,7 +191,8 @@ mod tests {
     fn parses_sni() {
         // Real ClientHello from rustls for "example.com".
         let config = client_config();
-        let mut conn = rustls::ClientConnection::new(config, "Example.com".try_into().unwrap()).unwrap();
+        let mut conn =
+            rustls::ClientConnection::new(config, "Example.com".try_into().unwrap()).unwrap();
         let mut hello = Vec::new();
         conn.write_tls(&mut hello).unwrap();
         assert_eq!(tls_record_len(&hello), Some(hello.len()));

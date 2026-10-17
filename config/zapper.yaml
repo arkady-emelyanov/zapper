@@ -196,7 +196,9 @@ firms:
   acme:
     description: A small product company
     board: { name: Board }
-    budget: { daily_turns: 400, max_concurrent: 3 }
+    # The CEO scopes the board's task on the seed and asks for the run's
+    # budget; the board approves it in the UI. 10% goes to security.
+    budget: { daily_turns: 400, max_concurrent: 3, seed: 1200000, security_share: 0.1 }
     git: {}
     product_port: 0.0.0.0:8080           # the product, on your LAN too; 127.0.0.1:8080 keeps it on this machine
     dashboard_port: 127.0.0.1:8081       # the cluster's dashboard (Headlamp), for you
@@ -208,23 +210,35 @@ firms:
     # What the cluster serves until the firm deploys its product on /.
     landing: { name: "Acme Inc.", motto: "Building digital worlds!" }
     credentials:
-      kubeconfig: [engineer]
-      git: [engineer, designer]
+      kubeconfig: [cto, engineer]
+      git: [cto, engineer, designer]
     roles:
       ceo:
         profile: office
         title: CEO
         model: claude-opus-5-5
         skills: { work: ceo }
+        hires: [cto, manager, product-manager, engineer, designer, researcher, analyst, security-officer]
         avatar: { figure: ceo, color: "#D97757" }
+      # Owns the repository, the cluster and the product: an engineer's
+      # access (git push, cluster-admin, kubectl) and a manager's skill.
+      cto:
+        profile: office-engineer
+        title: CTO
+        skills: { work: manager }
+        owns_services: true              # decides colleagues' access to git, the cluster and the product
+        hires: [engineer, designer, researcher, analyst]
+        avatar: { figure: manager, color: "#5A7FB5" }
       product-manager:
         profile: office
         title: Product Manager
         skills: { work: product-manager }
+        hires: [designer, researcher, analyst]
         avatar: { figure: product-manager, color: "#C6A15B" }
       manager:
         profile: office
         skills: { work: manager }
+        hires: [engineer, designer, researcher, analyst]
         avatar: { figure: manager, color: "#B5715A" }
       engineer:
         profile: office-engineer
@@ -248,16 +262,14 @@ firms:
         profile: office-security
         title: Security Officer
         skills: { work: security-review }
+        officer: true                    # hired, they join the officers once cleared
         avatar: { figure: shield, color: "#788C5D" }
+    # The founders; the CEO hires the rest during the run.
     workers:
       - { name: barbara, role: ceo }
-      - { name: margaret, role: product-manager, reports_to: barbara }
-      - { name: dennis, role: manager, reports_to: barbara, title: CTO }
-      - { name: ada, role: engineer, reports_to: dennis }
-      - { name: grace, role: engineer, reports_to: dennis }
-      - { name: iris, role: designer, reports_to: margaret }
-      - { name: ken, role: analyst, reports_to: margaret }
       - { name: radia, role: security-officer, reports_to: barbara }
+    # Names for hires whose hirer doesn't pick one.
+    names: [dennis, margaret, ada, grace, iris, ken, hedy, alan, frances, edsger, joan, niklaus]
     security:
       officers: [radia]
       digest_every: { minutes: 10, requests: 200 }

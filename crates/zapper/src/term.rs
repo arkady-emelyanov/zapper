@@ -56,7 +56,10 @@ fn encode(f: &Frame) -> Vec<u8> {
 }
 
 /// Runs a terminal session over `io`; returns the remote exit code.
-pub async fn run<T: AsyncRead + AsyncWrite + Unpin + Send + 'static>(io: T, tty: bool) -> Result<i32> {
+pub async fn run<T: AsyncRead + AsyncWrite + Unpin + Send + 'static>(
+    io: T,
+    tty: bool,
+) -> Result<i32> {
     let _raw = if tty { Raw::enter() } else { None };
     let (mut r, mut w) = tokio::io::split(io);
     let (tx, mut rx) = tokio::sync::mpsc::channel::<Frame>(64);
@@ -82,7 +85,9 @@ pub async fn run<T: AsyncRead + AsyncWrite + Unpin + Send + 'static>(io: T, tty:
     if tty {
         let winch_tx = tx.clone();
         tokio::spawn(async move {
-            let Ok(mut winch) = signal(SignalKind::window_change()) else { return };
+            let Ok(mut winch) = signal(SignalKind::window_change()) else {
+                return;
+            };
             while winch.recv().await.is_some() {
                 if let Some((rows, cols)) = size() {
                     if winch_tx.send(Frame::Resize(rows, cols)).await.is_err() {

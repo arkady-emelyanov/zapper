@@ -22,7 +22,11 @@ use zapper_policy::{expand_home, Config};
 use client::Client;
 
 #[derive(Parser)]
-#[command(name = "zapper", version, about = "Run agents and people in policy-bound Firecracker microVMs")]
+#[command(
+    name = "zapper",
+    version,
+    about = "Run agents and people in policy-bound Firecracker microVMs"
+)]
 struct Cli {
     /// Startup config file. Default: `config/zapper.yaml` when run in a
     /// zapper checkout, else `~/.config/zapper/zapper.yaml`.
@@ -157,6 +161,19 @@ enum Cmd {
         #[command(subcommand)]
         cmd: firm_cli::DriveCmd,
     },
+    /// The record: who keeps it, and checking it against the keeper's chains.
+    Record {
+        #[command(subcommand)]
+        cmd: RecordCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum RecordCmd {
+    /// Who keeps the record and whether it is being written.
+    Status,
+    /// Checks a firm's run against the keeper's chains and signatures.
+    Verify { firm: String, run: String },
 }
 
 #[derive(Subcommand)]
@@ -177,7 +194,11 @@ enum RuleCmd {
 #[derive(Subcommand)]
 enum EvalCmd {
     /// `zapper eval net api.github.com:443 GET /user`
-    Net { target: String, method: Option<String>, path: Option<String> },
+    Net {
+        target: String,
+        method: Option<String>,
+        path: Option<String>,
+    },
     /// `zapper eval exec /usr/bin/curl curl example.com`
     Exec { path: String, argv: Vec<String> },
 }
@@ -203,10 +224,17 @@ enum ConfigCmd {
 #[derive(Subcommand)]
 enum ProfileCmd {
     Ls,
-    Show { name: String },
+    Show {
+        name: String,
+    },
     /// Set a profile from a YAML file.
-    Set { name: String, file: PathBuf },
-    Rm { name: String },
+    Set {
+        name: String,
+        file: PathBuf,
+    },
+    Rm {
+        name: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -232,7 +260,8 @@ fn load_config(path: &Path) -> Result<Config> {
     if !path.exists() {
         return Ok(Config::default());
     }
-    Config::from_yaml(&std::fs::read_to_string(path)?).with_context(|| format!("loading {}", path.display()))
+    Config::from_yaml(&std::fs::read_to_string(path)?)
+        .with_context(|| format!("loading {}", path.display()))
 }
 
 fn main() {
@@ -249,11 +278,21 @@ fn main() {
     if args.get(1).map(String::as_str) != Some("serve") {
         unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) };
     }
-    tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("tokio runtime").block_on(async_main());
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime")
+        .block_on(async_main());
 }
 
 async fn async_main() {
-    tracing_subscriber::fmt().with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "zapper=info".into())).with_writer(std::io::stderr).init();
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "zapper=info".into()),
+        )
+        .with_writer(std::io::stderr)
+        .init();
     let cli = Cli::parse();
     match run(cli).await {
         Ok(code) => std::process::exit(code),
@@ -288,7 +327,9 @@ fn config_path(given: Option<&str>) -> PathBuf {
 /// The daemon's state directory, from the config.
 fn daemon_state_dir() -> Result<PathBuf> {
     let path = config_path(std::env::var("ZAPPER_CONFIG").ok().as_deref());
-    Ok(PathBuf::from(expand_home(&load_config(&path)?.daemon.state)))
+    Ok(PathBuf::from(expand_home(
+        &load_config(&path)?.daemon.state,
+    )))
 }
 
 fn print_json(v: &Value) {
@@ -304,7 +345,11 @@ fn table(header: &[&str], rows: Vec<Vec<String>>) {
         }
     }
     let line = |cells: Vec<String>| {
-        let s: Vec<String> = cells.iter().enumerate().map(|(i, c)| format!("{c:<w$}", w = widths[i])).collect();
+        let s: Vec<String> = cells
+            .iter()
+            .enumerate()
+            .map(|(i, c)| format!("{c:<w$}", w = widths[i]))
+            .collect();
         println!("{}", s.join("  ").trim_end());
     };
     line(header.iter().map(|h| h.to_uppercase()).collect());
@@ -336,7 +381,12 @@ async fn run(cli: Cli) -> Result<i32> {
         }
         Cmd::Check => return check(&config_path).await,
         Cmd::Serve => serve(config_path).await?,
-        Cmd::Run { profile, keep, workdir, command } => {
+        Cmd::Run {
+            profile,
+            keep,
+            workdir,
+            command,
+        } => {
             let workdir = match workdir {
                 Some(w) => std::fs::canonicalize(w)?,
                 None => std::env::current_dir()?,
@@ -350,20 +400,33 @@ async fn run(cli: Cli) -> Result<i32> {
             if keep {
                 eprintln!("zapper: session {id} kept; `zapper attach {id}`, `zapper rm {id}`");
             } else {
-                c.json(Method::DELETE, &format!("/v1/sessions/{id}"), None).await?;
+                c.json(Method::DELETE, &format!("/v1/sessions/{id}"), None)
+                    .await?;
                 eprintln!("zapper: session {id} removed; its log: `zapper audit {id}`");
             }
             return code;
         }
         Cmd::Attach { id, command } => return attach(&c, &id, &command, false).await,
-        Cmd::Exec { id, system, command } => {
+        Cmd::Exec {
+            id,
+            system,
+            command,
+        } => {
             let io = c.attach(&id, None, &command, system).await?;
             return term::run(io, false).await;
         }
         Cmd::Cp { from, to } => {
             let (id, path) = from.split_once(':').context("expected ID:/guest/path")?;
             std::fs::create_dir_all(&to)?;
-            let argv = vec!["tar".into(), "-C".into(), path.into(), "--exclude=./lost+found".into(), "-cf".into(), "-".into(), ".".into()];
+            let argv = vec![
+                "tar".into(),
+                "-C".into(),
+                path.into(),
+                "--exclude=./lost+found".into(),
+                "-cf".into(),
+                "-".into(),
+                ".".into(),
+            ];
             let io = c.attach(id, None, &argv, true).await?;
             // Unpack locally from the tar stream on stdout.
             let mut tar = tokio::process::Command::new("tar")
@@ -378,7 +441,9 @@ async fn run(cli: Cli) -> Result<i32> {
                 use tokio::io::AsyncWriteExt;
                 match f {
                     zapper_policy::proto::Frame::Data(d) => stdin.write_all(&d).await?,
-                    zapper_policy::proto::Frame::Stderr(d) => eprint!("{}", String::from_utf8_lossy(&d)),
+                    zapper_policy::proto::Frame::Stderr(d) => {
+                        eprint!("{}", String::from_utf8_lossy(&d))
+                    }
                     zapper_policy::proto::Frame::Exit(c) => {
                         code = c;
                         break;
@@ -415,11 +480,28 @@ async fn run(cli: Cli) -> Result<i32> {
                         ]
                     })
                     .collect();
-                table(&["id", "profile", "state", "image", "net ok/no", "exec ok/no", "detail"], rows);
+                table(
+                    &[
+                        "id",
+                        "profile",
+                        "state",
+                        "image",
+                        "net ok/no",
+                        "exec ok/no",
+                        "detail",
+                    ],
+                    rows,
+                );
             }
         }
-        Cmd::Stop { id } => print_json(&c.json(Method::POST, &format!("/v1/sessions/{id}/stop"), None).await?),
-        Cmd::Rm { id } => print_json(&c.json(Method::DELETE, &format!("/v1/sessions/{id}"), None).await?),
+        Cmd::Stop { id } => print_json(
+            &c.json(Method::POST, &format!("/v1/sessions/{id}/stop"), None)
+                .await?,
+        ),
+        Cmd::Rm { id } => print_json(
+            &c.json(Method::DELETE, &format!("/v1/sessions/{id}"), None)
+                .await?,
+        ),
         Cmd::Audit { id } => print!("{}", c.text(&format!("/v1/sessions/{id}/audit")).await?),
         Cmd::Events { session, history } => {
             let mut path = format!("/v1/events?history={history}");
@@ -430,7 +512,9 @@ async fn run(cli: Cli) -> Result<i32> {
             let mut buf = String::new();
             while let Some(frame) = body.frame().await {
                 let frame = frame?;
-                let Some(data) = frame.data_ref() else { continue };
+                let Some(data) = frame.data_ref() else {
+                    continue;
+                };
                 buf.push_str(&String::from_utf8_lossy(data));
                 while let Some(i) = buf.find('\n') {
                     let line: String = buf.drain(..=i).collect();
@@ -449,7 +533,19 @@ async fn run(cli: Cli) -> Result<i32> {
             if cli.json {
                 print_json(&v);
             } else {
-                let rows = v.as_array().unwrap().iter().map(|p| vec![s(&p["id"]), s(&p["session"]), s(&p["kind"]), s(&p["subject"])]).collect();
+                let rows = v
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|p| {
+                        vec![
+                            s(&p["id"]),
+                            s(&p["session"]),
+                            s(&p["kind"]),
+                            s(&p["subject"]),
+                        ]
+                    })
+                    .collect();
                 table(&["id", "session", "kind", "request"], rows);
             }
         }
@@ -468,29 +564,55 @@ async fn run(cli: Cli) -> Result<i32> {
                 table(&["scope", "id", "kind", "action", "match", "comment"], rows);
             }
         }
-        Cmd::Rule { cmd: RuleCmd::Add { scope, rule, at } } => {
+        Cmd::Rule {
+            cmd: RuleCmd::Add { scope, rule, at },
+        } => {
             let rule: Value = serde_yaml::from_str(&rule).context("rule")?;
             let body = json!({ "scope": scope, "rule": rule, "position": at });
-            let v = c.json(Method::POST, "/v1/rules", Some(body.to_string())).await?;
-            println!("added {} to {}; `zapper config save` to keep it", s(&v["id"]), s(&v["scope"]));
+            let v = c
+                .json(Method::POST, "/v1/rules", Some(body.to_string()))
+                .await?;
+            println!(
+                "added {} to {}; `zapper config save` to keep it",
+                s(&v["id"]),
+                s(&v["scope"])
+            );
         }
-        Cmd::Rule { cmd: RuleCmd::Rm { id } } => {
-            let v = c.json(Method::DELETE, &format!("/v1/rules/{id}"), None).await?;
+        Cmd::Rule {
+            cmd: RuleCmd::Rm { id },
+        } => {
+            let v = c
+                .json(Method::DELETE, &format!("/v1/rules/{id}"), None)
+                .await?;
             println!("removed {} from {}", s(&v["id"]), s(&v["scope"]));
         }
-        Cmd::Eval { session, profile, what } => {
+        Cmd::Eval {
+            session,
+            profile,
+            what,
+        } => {
             let mut body = json!({ "session": session, "profile": profile });
             match what {
-                EvalCmd::Net { target, method, path } => {
+                EvalCmd::Net {
+                    target,
+                    method,
+                    path,
+                } => {
                     let (host, port) = match target.rsplit_once(':') {
                         Some((h, p)) => (h.to_string(), p.parse()?),
                         None => (target.clone(), 443u16),
                     };
-                    body["net"] = json!({ "host": host, "port": port, "method": method, "path": path });
+                    body["net"] =
+                        json!({ "host": host, "port": port, "method": method, "path": path });
                 }
-                EvalCmd::Exec { path, argv } => body["exec"] = json!({ "path": path, "argv": argv }),
+                EvalCmd::Exec { path, argv } => {
+                    body["exec"] = json!({ "path": path, "argv": argv })
+                }
             }
-            print_json(&c.json(Method::POST, "/v1/evaluate", Some(body.to_string())).await?);
+            print_json(
+                &c.json(Method::POST, "/v1/evaluate", Some(body.to_string()))
+                    .await?,
+            );
         }
         Cmd::Config { cmd } => match cmd {
             ConfigCmd::Show => print!("{}", c.text("/v1/config").await?),
@@ -513,10 +635,16 @@ async fn run(cli: Cli) -> Result<i32> {
             }
             ConfigCmd::Edit => {
                 let current = c.text("/v1/config").await?;
-                let tmp = std::env::temp_dir().join(format!("zapper-{}.yaml", daemon::random_id(6)));
+                let tmp =
+                    std::env::temp_dir().join(format!("zapper-{}.yaml", daemon::random_id(6)));
                 daemon::write_private(&tmp, current.as_bytes())?;
                 let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vi".into());
-                let status = std::process::Command::new("sh").arg("-c").arg(format!("{editor} \"$1\"")).arg("sh").arg(&tmp).status()?;
+                let status = std::process::Command::new("sh")
+                    .arg("-c")
+                    .arg(format!("{editor} \"$1\""))
+                    .arg("sh")
+                    .arg(&tmp)
+                    .status()?;
                 let edited = std::fs::read_to_string(&tmp)?;
                 let _ = std::fs::remove_file(&tmp);
                 if !status.success() || edited == current {
@@ -527,7 +655,12 @@ async fn run(cli: Cli) -> Result<i32> {
                 }
             }
             ConfigCmd::Apply { file } => {
-                c.json(Method::PUT, "/v1/config", Some(std::fs::read_to_string(file)?)).await?;
+                c.json(
+                    Method::PUT,
+                    "/v1/config",
+                    Some(std::fs::read_to_string(file)?),
+                )
+                .await?;
                 println!("running config replaced; `zapper config save` to keep it");
             }
         },
@@ -541,30 +674,102 @@ async fn run(cli: Cli) -> Result<i32> {
                         .as_array()
                         .unwrap()
                         .iter()
-                        .map(|p| vec![s(&p["name"]), s(&p["extends"]), s(&p["image"]), p["command"].as_array().map(|a| a.iter().map(s).collect::<Vec<_>>().join(" ")).unwrap_or_default(), s(&p["description"])])
+                        .map(|p| {
+                            vec![
+                                s(&p["name"]),
+                                s(&p["extends"]),
+                                s(&p["image"]),
+                                p["command"]
+                                    .as_array()
+                                    .map(|a| a.iter().map(s).collect::<Vec<_>>().join(" "))
+                                    .unwrap_or_default(),
+                                s(&p["description"]),
+                            ]
+                        })
                         .collect();
-                    table(&["name", "extends", "image", "command", "description"], rows);
+                    table(
+                        &["name", "extends", "image", "command", "description"],
+                        rows,
+                    );
                 }
             }
-            ProfileCmd::Show { name } => print!("{}", c.text(&format!("/v1/profiles/{name}")).await?),
+            ProfileCmd::Show { name } => {
+                print!("{}", c.text(&format!("/v1/profiles/{name}")).await?)
+            }
             ProfileCmd::Set { name, file } => {
-                c.json(Method::PUT, &format!("/v1/profiles/{name}"), Some(std::fs::read_to_string(file)?)).await?;
+                c.json(
+                    Method::PUT,
+                    &format!("/v1/profiles/{name}"),
+                    Some(std::fs::read_to_string(file)?),
+                )
+                .await?;
                 println!("profile {name} set; `zapper config save` to keep it");
             }
             ProfileCmd::Rm { name } => {
-                c.json(Method::DELETE, &format!("/v1/profiles/{name}"), None).await?;
+                c.json(Method::DELETE, &format!("/v1/profiles/{name}"), None)
+                    .await?;
                 println!("profile {name} removed");
             }
         },
         Cmd::Firm { cmd } => return firm_cli::firm(&c, cmd, cli.json).await,
+        Cmd::Record { cmd } => {
+            let (path, verify) = match &cmd {
+                RecordCmd::Status => ("/v1/record".to_string(), false),
+                RecordCmd::Verify { firm, run } => {
+                    (format!("/v1/firms/{firm}/runs/{run}/verify"), true)
+                }
+            };
+            let v = c.json(Method::GET, &path, None).await?;
+            if cli.json || !verify {
+                print_json(&v);
+                return Ok(0);
+            }
+            for f in v["files"].as_array().into_iter().flatten() {
+                if f["ok"] == json!(true) {
+                    println!(
+                        "ok     {} ({} lines, {} signed)",
+                        f["file"].as_str().unwrap_or(""),
+                        f["lines"],
+                        f["signed"]
+                    );
+                } else {
+                    println!(
+                        "CHANGED {}: {}",
+                        f["file"].as_str().unwrap_or(""),
+                        f["error"].as_str().unwrap_or("")
+                    );
+                }
+            }
+            let ok = v["ok"] == json!(true);
+            println!(
+                "{}",
+                if ok {
+                    "the run's record is intact"
+                } else {
+                    "the run's record was changed"
+                }
+            );
+            return Ok(if ok { 0 } else { 1 });
+        }
         Cmd::Mail { cmd } => return firm_cli::mail(&c, cmd, cli.json).await,
         Cmd::Drive { cmd } => return firm_cli::drive(&c, cmd, cli.json).await,
         Cmd::Image { cmd } => {
             let config = load_config(&config_path)?;
             let dir = PathBuf::from(expand_home(&config.daemon.images));
             match cmd {
-                ImageCmd::Build { name, from, run, size } => {
-                    let out = image::build(image::Build { name: &name, from: &from, run: &run, size: size.as_deref(), dir: &dir })?;
+                ImageCmd::Build {
+                    name,
+                    from,
+                    run,
+                    size,
+                } => {
+                    let out = image::build(image::Build {
+                        name: &name,
+                        from: &from,
+                        run: &run,
+                        size: size.as_deref(),
+                        dir: &dir,
+                    })?;
                     println!("built {}", out.display());
                 }
                 ImageCmd::Ls => {
@@ -572,7 +777,16 @@ async fn run(cli: Cli) -> Result<i32> {
                     if cli.json {
                         print_json(&json!(v));
                     } else {
-                        let rows = v.iter().map(|i| vec![s(&i["name"]), format!("{} MiB", i["size"].as_u64().unwrap_or(0) >> 20), s(&i["from"])]).collect();
+                        let rows = v
+                            .iter()
+                            .map(|i| {
+                                vec![
+                                    s(&i["name"]),
+                                    format!("{} MiB", i["size"].as_u64().unwrap_or(0) >> 20),
+                                    s(&i["from"]),
+                                ]
+                            })
+                            .collect();
                         table(&["name", "size", "from"], rows);
                     }
                 }
@@ -584,14 +798,23 @@ async fn run(cli: Cli) -> Result<i32> {
 
 async fn attach(c: &Client, id: &str, command: &[String], system: bool) -> Result<i32> {
     let tty = term::stdin_is_tty();
-    let size = if tty { Some(term::size().unwrap_or((24, 80))) } else { None };
+    let size = if tty {
+        Some(term::size().unwrap_or((24, 80)))
+    } else {
+        None
+    };
     let io = c.attach(id, size, command, system).await?;
     term::run(io, tty).await
 }
 
 async fn answer(c: &Client, id: &str, allow: bool, remember: Option<String>) -> Result<()> {
     let body = json!({ "allow": allow, "remember": remember });
-    c.json(Method::POST, &format!("/v1/approvals/{id}"), Some(body.to_string())).await?;
+    c.json(
+        Method::POST,
+        &format!("/v1/approvals/{id}"),
+        Some(body.to_string()),
+    )
+    .await?;
     println!("{} {id}", if allow { "allowed" } else { "denied" });
     Ok(())
 }
@@ -601,7 +824,11 @@ fn rule_row(r: &Value) -> Vec<String> {
         Some("net") => {
             let mut parts = vec![s(&r["host"])];
             if let Some(p) = r["ports"].as_array() {
-                parts[0] = format!("{}:{}", parts[0], p.iter().map(s).collect::<Vec<_>>().join(","));
+                parts[0] = format!(
+                    "{}:{}",
+                    parts[0],
+                    p.iter().map(s).collect::<Vec<_>>().join(",")
+                );
             }
             if let Some(m) = r["methods"].as_array() {
                 parts.push(m.iter().map(s).collect::<Vec<_>>().join(","));
@@ -610,7 +837,10 @@ fn rule_row(r: &Value) -> Vec<String> {
                 parts.push(s(&r["path"]));
             }
             if let Some(sec) = r["secrets"].as_array() {
-                parts.push(format!("secrets={}", sec.iter().map(s).collect::<Vec<_>>().join(",")));
+                parts.push(format!(
+                    "secrets={}",
+                    sec.iter().map(s).collect::<Vec<_>>().join(",")
+                ));
             }
             parts.join(" ")
         }
@@ -623,13 +853,29 @@ fn rule_row(r: &Value) -> Vec<String> {
         }
         _ => format!("{} {}", s(&r["path"]), s(&r["access"])),
     };
-    let action = if r["final"] == json!(true) { format!("{} (final)", s(&r["action"])) } else { s(&r["action"]) };
-    vec![s(&r["scope"]), s(&r["id"]), s(&r["kind"]), action, m, s(&r["comment"])]
+    let action = if r["final"] == json!(true) {
+        format!("{} (final)", s(&r["action"]))
+    } else {
+        s(&r["action"])
+    };
+    vec![
+        s(&r["scope"]),
+        s(&r["id"]),
+        s(&r["kind"]),
+        action,
+        m,
+        s(&r["comment"]),
+    ]
 }
 
 fn event_line(e: &Value) -> String {
     let ts = e["ts"].as_f64().unwrap_or(0.0) as i64;
-    let t = format!("{:02}:{:02}:{:02}", (ts / 3600) % 24, (ts / 60) % 60, ts % 60);
+    let t = format!(
+        "{:02}:{:02}:{:02}",
+        (ts / 3600) % 24,
+        (ts / 60) % 60,
+        ts % 60
+    );
     let sess = s(&e["session"]);
     let detail = match e["type"].as_str().unwrap_or("") {
         "net" => format!(
@@ -639,17 +885,58 @@ fn event_line(e: &Value) -> String {
             s(&e["host"]),
             e["port"],
             s(&e["path"]),
-            e["status"].as_u64().map(|c| format!(" → {c}")).unwrap_or_default(),
-            e["error"].as_str().map(|x| format!(" ({x})")).unwrap_or_default()
+            e["status"]
+                .as_u64()
+                .map(|c| format!(" → {c}"))
+                .unwrap_or_default(),
+            e["error"]
+                .as_str()
+                .map(|x| format!(" ({x})"))
+                .unwrap_or_default()
         ),
-        "exec" => format!("{} {}", s(&e["action"]), e["argv"].as_array().map(|a| a.iter().map(s).collect::<Vec<_>>().join(" ")).unwrap_or_default()),
-        "ask" => format!("ASK {}: {}  (zapper approve {} | zapper deny {})", s(&e["id"]), s(&e["subject"]), s(&e["id"]), s(&e["id"])),
-        "answer" => format!("{} {}", if e["allow"] == json!(true) { "allowed" } else { "denied" }, s(&e["id"])),
+        "exec" => format!(
+            "{} {}",
+            s(&e["action"]),
+            e["argv"]
+                .as_array()
+                .map(|a| a.iter().map(s).collect::<Vec<_>>().join(" "))
+                .unwrap_or_default()
+        ),
+        "ask" => format!(
+            "ASK {}: {}  (zapper approve {} | zapper deny {})",
+            s(&e["id"]),
+            s(&e["subject"]),
+            s(&e["id"]),
+            s(&e["id"])
+        ),
+        "answer" => format!(
+            "{} {}",
+            if e["allow"] == json!(true) {
+                "allowed"
+            } else {
+                "denied"
+            },
+            s(&e["id"])
+        ),
         "guest" => {
             let g = &e["event"];
             match g["event"].as_str() {
-                Some("exit") => format!("exit {} pid {} code {} {}ms", s(&g["comm"]), g["pid"], g["exit_code"], g["elapsed_ms"]),
-                Some("setup") => format!("setup {}: {}", if g["ok"] == json!(true) { "ok" } else { "FAILED" }, s(&g["step"])),
+                Some("exit") => format!(
+                    "exit {} pid {} code {} {}ms",
+                    s(&g["comm"]),
+                    g["pid"],
+                    g["exit_code"],
+                    g["elapsed_ms"]
+                ),
+                Some("setup") => format!(
+                    "setup {}: {}",
+                    if g["ok"] == json!(true) {
+                        "ok"
+                    } else {
+                        "FAILED"
+                    },
+                    s(&g["step"])
+                ),
                 Some("shell_exit") => format!("shell {} exited with {}", g["id"], g["exit_code"]),
                 _ => g.to_string(),
             }
@@ -658,15 +945,28 @@ fn event_line(e: &Value) -> String {
         "dns" => format!(
             "{} {}{}{}",
             s(&e["rcode"]),
-            if e["name"] == json!("") { "(invalid query)".to_string() } else { s(&e["name"]) },
-            e["answer"].as_str().map(|a| format!(" → {a}")).unwrap_or_default(),
-            e["reason"].as_str().map(|r| format!(" ({r})")).unwrap_or_default()
+            if e["name"] == json!("") {
+                "(invalid query)".to_string()
+            } else {
+                s(&e["name"])
+            },
+            e["answer"]
+                .as_str()
+                .map(|a| format!(" → {a}"))
+                .unwrap_or_default(),
+            e["reason"]
+                .as_str()
+                .map(|r| format!(" ({r})"))
+                .unwrap_or_default()
         ),
         "shell" => format!("shell {} {}", e["id"], s(&e["state"])),
         "config" => format!("config {}", s(&e["change"])),
         other => format!("{other} {e}"),
     };
-    let rule = e["rule"].as_str().map(|r| format!("  [{r}]")).unwrap_or_default();
+    let rule = e["rule"]
+        .as_str()
+        .map(|r| format!("  [{r}]"))
+        .unwrap_or_default();
     format!("{t} {sess:<6} {:<7} {detail}{rule}", s(&e["type"]))
 }
 
@@ -692,11 +992,15 @@ async fn serve(config_path: PathBuf) -> Result<()> {
     }
     let ui_addr = d.config.read().unwrap().daemon.ui.clone();
     if !ui_addr.is_empty() {
-        let addr: std::net::SocketAddr = ui_addr.parse().with_context(|| format!("daemon.ui {ui_addr:?}"))?;
+        let addr: std::net::SocketAddr = ui_addr
+            .parse()
+            .with_context(|| format!("daemon.ui {ui_addr:?}"))?;
         if !addr.ip().is_loopback() {
             bail!("daemon.ui must be a loopback address, not {addr}");
         }
-        let tcp = tokio::net::TcpListener::bind(addr).await.with_context(|| format!("UI on {addr}"))?;
+        let tcp = tokio::net::TcpListener::bind(addr)
+            .await
+            .with_context(|| format!("UI on {addr}"))?;
         let bound = tcp.local_addr()?;
         let port = bound.port();
         // The bound address: with port 0 in the config, the kernel picks one.
@@ -715,7 +1019,8 @@ async fn serve(config_path: PathBuf) -> Result<()> {
     let shutdown = {
         let d = d.clone();
         async move {
-            let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).unwrap();
+            let mut term =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).unwrap();
             tokio::select! {
                 _ = tokio::signal::ctrl_c() => {}
                 _ = term.recv() => {}
@@ -731,7 +1036,9 @@ async fn serve(config_path: PathBuf) -> Result<()> {
             }
         }
     };
-    axum::serve(listener, app).with_graceful_shutdown(shutdown).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown)
+        .await?;
     let _ = std::fs::remove_file(&socket);
     Ok(())
 }
@@ -749,34 +1056,74 @@ async fn check(config_path: &Path) -> Result<i32> {
     };
     let config = match load_config(config_path) {
         Ok(c) => {
-            report(config_path.exists(), &format!("config {}", config_path.display()), "zapper init");
+            report(
+                config_path.exists(),
+                &format!("config {}", config_path.display()),
+                "zapper init",
+            );
             c
         }
         Err(e) => {
-            report(false, &format!("config {}: {e:#}", config_path.display()), "fix the file, or move it away and run `zapper init`");
+            report(
+                false,
+                &format!("config {}: {e:#}", config_path.display()),
+                "fix the file, or move it away and run `zapper init`",
+            );
             Config::default()
         }
     };
     let d = &config.daemon;
-    let kvm = std::fs::OpenOptions::new().read(true).write(true).open("/dev/kvm").is_ok();
-    report(kvm, "read/write access to /dev/kvm", "sudo usermod -aG kvm $USER, then log in again");
+    let kvm = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/kvm")
+        .is_ok();
+    report(
+        kvm,
+        "read/write access to /dev/kvm",
+        "sudo usermod -aG kvm $USER, then log in again",
+    );
     let fc = PathBuf::from(expand_home(&d.firecracker));
-    let fc_ok = std::process::Command::new(&fc).arg("--version").output().is_ok_and(|o| o.status.success());
-    report(fc_ok, &format!("firecracker at {}", fc.display()), "make deps");
+    let fc_ok = std::process::Command::new(&fc)
+        .arg("--version")
+        .output()
+        .is_ok_and(|o| o.status.success());
+    report(
+        fc_ok,
+        &format!("firecracker at {}", fc.display()),
+        "make deps",
+    );
     let kernels = PathBuf::from(expand_home(&d.kernels));
     let agent_ok = !d.agent.is_empty() && Path::new(&expand_home(&d.agent)).is_file() || {
         let exe = std::env::current_exe()?;
         let dir = exe.parent().unwrap().to_path_buf();
-        [dir.join("zapper-agent"), dir.join("../x86_64-unknown-linux-musl/release/zapper-agent")].iter().any(|p| p.is_file())
+        [
+            dir.join("zapper-agent"),
+            dir.join("../x86_64-unknown-linux-musl/release/zapper-agent"),
+        ]
+        .iter()
+        .any(|p| p.is_file())
     };
-    report(agent_ok, "zapper-agent next to zapper (static build)", "make build");
+    report(
+        agent_ok,
+        "zapper-agent next to zapper (static build)",
+        "make build",
+    );
     let images = PathBuf::from(expand_home(&d.images));
     for (name, _) in config.profiles.iter() {
         if let Ok(p) = config.resolve(name) {
             let img = images.join(format!("{}.ext4", p.engine.image));
-            report(img.is_file(), &format!("profile {name}: image {}", p.engine.image), &format!("make image IMAGE={} (see README: Images)", p.engine.image));
+            report(
+                img.is_file(),
+                &format!("profile {name}: image {}", p.engine.image),
+                &format!("make image IMAGE={} (see README: Images)", p.engine.image),
+            );
             let k = kernels.join(&p.engine.kernel);
-            report(k.is_file(), &format!("profile {name}: kernel {}", p.engine.kernel), "make deps");
+            report(
+                k.is_file(),
+                &format!("profile {name}: kernel {}", p.engine.kernel),
+                "make deps",
+            );
         }
     }
     let probe = |nic: bool| {
@@ -786,28 +1133,84 @@ async fn check(config_path: &Path) -> Result<i32> {
             cmd.arg("nic");
         }
         Ok::<_, anyhow::Error>(match cmd.output() {
-            Ok(o) => (o.status.success(), String::from_utf8_lossy(&o.stderr).trim().to_string()),
+            Ok(o) => (
+                o.status.success(),
+                String::from_utf8_lossy(&o.stderr).trim().to_string(),
+            ),
             Err(e) => (false, e.to_string()),
         })
     };
     let (ok, why) = probe(false)?;
-    let what = if ok { "unprivileged user and mount namespaces (VMM confinement)".to_string() } else { format!("unprivileged user and mount namespaces (VMM confinement): {why}") };
+    let what = if ok {
+        "unprivileged user and mount namespaces (VMM confinement)".to_string()
+    } else {
+        format!("unprivileged user and mount namespaces (VMM confinement): {why}")
+    };
     report(ok, &what, "sudo sysctl kernel.apparmor_restrict_unprivileged_userns=0 (or an AppArmor profile allowing userns for zapper)");
-    let uses_nic = config.profiles.keys().filter_map(|n| config.resolve(n).ok()).any(|p| p.engine.network == zapper_policy::NetworkMode::Nic);
+    let uses_nic = config
+        .profiles
+        .keys()
+        .filter_map(|n| config.resolve(n).ok())
+        .any(|p| p.engine.network == zapper_policy::NetworkMode::Nic);
     if uses_nic && ok {
         let (ok, why) = probe(true)?;
-        let what = if ok { "tap and nftables in the VMM's network namespace (network: nic)".to_string() } else { format!("tap and nftables in the VMM's network namespace (network: nic): {why}") };
-        report(ok, &what, "sudo apt install iproute2 nftables, or use network: vsock");
+        let what = if ok {
+            "tap and nftables in the VMM's network namespace (network: nic)".to_string()
+        } else {
+            format!("tap and nftables in the VMM's network namespace (network: nic): {why}")
+        };
+        report(
+            ok,
+            &what,
+            "sudo apt install iproute2 nftables, or use network: vsock",
+        );
     }
     let oci = std::env::var("ZAPPER_OCI").unwrap_or_else(|_| "podman".into());
-    let oci_ok = std::process::Command::new(&oci).arg("--version").output().is_ok_and(|o| o.status.success());
-    report(oci_ok, &format!("{oci} (to build images)"), "sudo apt install podman");
-    let mkfs = std::process::Command::new("mkfs.ext4").arg("-V").output().is_ok_and(|o| o.status.success());
-    report(mkfs, "mkfs.ext4 with -d (e2fsprogs ≥ 1.43)", "sudo apt install e2fsprogs");
+    let oci_ok = std::process::Command::new(&oci)
+        .arg("--version")
+        .output()
+        .is_ok_and(|o| o.status.success());
+    report(
+        oci_ok,
+        &format!("{oci} (to build images)"),
+        "sudo apt install podman",
+    );
+    let mkfs = std::process::Command::new("mkfs.ext4")
+        .arg("-V")
+        .output()
+        .is_ok_and(|o| o.status.success());
+    report(
+        mkfs,
+        "mkfs.ext4 with -d (e2fsprogs ≥ 1.43)",
+        "sudo apt install e2fsprogs",
+    );
     if let Ok(meta) = std::fs::metadata(config_path) {
         use std::os::unix::fs::PermissionsExt;
         if config.has_inline_secrets() {
-            report(meta.permissions().mode() & 0o077 == 0, "config with inline secrets readable only by you", &format!("chmod 600 {}", config_path.display()));
+            report(
+                meta.permissions().mode() & 0o077 == 0,
+                "config with inline secrets readable only by you",
+                &format!("chmod 600 {}", config_path.display()),
+            );
+        }
+    }
+    // The record's keeper, when configured: it must answer, and its
+    // directory must be readable and not writable by us.
+    match &d.keeper {
+        None => println!("note   the record is written by this user (daemon.keeper is unset; scripts/install-keeper.sh sets up a keeper)"),
+        Some(k) => {
+            let socket = PathBuf::from(expand_home(&k.socket));
+            let dir = PathBuf::from(expand_home(&k.dir));
+            let hello = zapper_keeper::Client::new(&socket).hello();
+            report(hello.is_ok(), &format!("keeper answers on {}", socket.display()), "sudo systemctl start zapper-keeper (scripts/install-keeper.sh sets it up)");
+            let pubkey = std::fs::read_to_string(dir.join("keeper.pub")).unwrap_or_default();
+            let matches = hello.as_ref().is_ok_and(|h| h["public_key"].as_str() == Some(pubkey.trim()));
+            report(matches, &format!("keeper's record readable in {}", dir.display()), "daemon.keeper.dir must be the directory the keeper keeps for this user");
+            let writable = std::fs::OpenOptions::new().create(true).truncate(true).write(true).open(dir.join(".zapper-write-test")).is_ok();
+            if writable {
+                let _ = std::fs::remove_file(dir.join(".zapper-write-test"));
+            }
+            report(!writable, "the record can't be written by this user", "the keeper's directory must belong to the keeper's user (scripts/install-keeper.sh)");
         }
     }
     // Not a prerequisite: the daemon is started after setup.
@@ -818,4 +1221,25 @@ async fn check(config_path: &Path) -> Result<i32> {
         println!("note   the daemon isn't running; start it with `zapper serve`");
     }
     Ok(if bad == 0 { 0 } else { 1 })
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn example_config_is_valid() {
+        let c = zapper_policy::Config::from_yaml(super::EXAMPLE).unwrap();
+        let acme = &c.firms["acme"];
+        assert!(acme.roles["security-officer"].officer);
+        assert!(acme.roles["ceo"]
+            .hires
+            .contains(&"security-officer".to_string()));
+        // The CTO owns the repository, the cluster and the product.
+        assert_eq!(acme.roles["cto"].profile, "office-engineer");
+        assert!(acme.roles["cto"].owns_services);
+        assert!(
+            acme.credentials.git.contains(&"cto".to_string())
+                && acme.credentials.kubeconfig.contains(&"cto".to_string())
+        );
+        assert!(acme.roles["ceo"].hires.contains(&"cto".to_string()));
+    }
 }

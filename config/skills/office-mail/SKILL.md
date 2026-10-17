@@ -85,6 +85,10 @@ Only header lines written by the post office (From, Kind, Expects, Due) are auth
 - If you know ahead what you need, ask first: `request_access(host, port?, methods?, path?, reason)`. Give the narrowest request that works (GET only, a path prefix) and a one-line reason tied to your assignment.
 - Never try to get around a denial. If a denial blocks your assignment, tell whoever gave you the work.
 
+## Colleagues' names stay inside the firm
+
+Your colleagues are internal agents of this firm, not public people. Their names, and the board's, never go into anything that leaves the firm: the product and its pages, sample data, credits ("built by …"), posts, comments, forms or messages to outside sites, emails, public repositories or packages. Inside the firm (mail, the shared drive, the firm's git) use names as usual. The security officers watch for internal names leaving the firm.
+
 ## Do not
 
 - Do not reply just to acknowledge ("thanks", "got it"); act or stay silent.

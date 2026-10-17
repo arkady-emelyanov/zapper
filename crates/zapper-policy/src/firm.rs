@@ -1,7 +1,8 @@
 //! Firms: an org chart of workers, each a Claude Code in its own session, with
 //! the roles, budgets and services the office layer runs them with.
 //!
-//! The chart is read when a firm boots and stays fixed while it runs; see
+//! The config names the founders (the workers who boot with the firm); a
+//! firm with a seed budget grows by hiring from its roles while it runs. See
 //! `docs/office.md`.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -50,6 +51,9 @@ pub struct Firm {
     /// ones of the same name.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub skills_dir: Option<String>,
+    /// Names for hires whose hirer doesn't pick one, in order.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub names: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -60,7 +64,9 @@ pub struct Board {
 
 impl Default for Board {
     fn default() -> Self {
-        Board { name: "Board".into() }
+        Board {
+            name: "Board".into(),
+        }
     }
 }
 
@@ -75,11 +81,30 @@ pub struct Budget {
     pub daily_tokens: u64,
     /// Workers in a turn at the same time.
     pub max_concurrent: u32,
+    /// Tokens the CEO gets at the start of a run to scope the board's task.
+    /// Non-zero makes the run's budget a deal with the board: the CEO asks
+    /// for a budget (`budget_request`), the board approves it, and workers
+    /// spend from balances that flow down the chart. 0: no run budget.
+    pub seed: u64,
+    /// The security officers' share of the seed and of every approved
+    /// budget, from 0 to 1.
+    pub security_share: f64,
+    /// Tokens a contract offer moves from the hirer to the candidate for
+    /// their quoting turns.
+    pub quote_fee: u64,
 }
 
 impl Default for Budget {
     fn default() -> Self {
-        Budget { daily_turns: 400, worker_daily_turns: 0, daily_tokens: 0, max_concurrent: 3 }
+        Budget {
+            daily_turns: 400,
+            worker_daily_turns: 0,
+            daily_tokens: 0,
+            max_concurrent: 3,
+            seed: 0,
+            security_share: 0.1,
+            quote_fee: 30_000,
+        }
     }
 }
 
@@ -135,6 +160,18 @@ pub struct Role {
     /// running Claude Code. For tests.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fake: Option<String>,
+    /// Roles a worker of this role may hire, during a run with a budget.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub hires: Vec<String>,
+    /// Workers of this role are security officers: hired during a run,
+    /// they join the officers once their background check clears.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub officer: bool,
+    /// Workers of this role own the firm's services (git, the cluster, the
+    /// product): they decide colleagues' access requests to them, instead
+    /// of the board.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub owns_services: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -147,13 +184,24 @@ pub struct RoleSkills {
 
 impl Default for RoleSkills {
     fn default() -> Self {
-        RoleSkills { work: String::new(), communication: "office-mail".into(), publishing: "office-publish".into() }
+        RoleSkills {
+            work: String::new(),
+            communication: "office-mail".into(),
+            publishing: "office-publish".into(),
+        }
     }
 }
 
 impl RoleSkills {
     pub fn names(&self) -> Vec<&str> {
-        [self.communication.as_str(), self.work.as_str(), self.publishing.as_str()].into_iter().filter(|s| !s.is_empty()).collect()
+        [
+            self.communication.as_str(),
+            self.work.as_str(),
+            self.publishing.as_str(),
+        ]
+        .into_iter()
+        .filter(|s| !s.is_empty())
+        .collect()
     }
 }
 
@@ -168,7 +216,10 @@ pub struct Avatar {
 
 impl Default for Avatar {
     fn default() -> Self {
-        Avatar { figure: "plain".into(), color: "#D97757".into() }
+        Avatar {
+            figure: "plain".into(),
+            color: "#D97757".into(),
+        }
     }
 }
 
@@ -195,7 +246,11 @@ pub struct Security {
 
 impl Default for Security {
     fn default() -> Self {
-        Security { officers: Vec::new(), digest_every: Digest::default(), answer_within: "15m".into() }
+        Security {
+            officers: Vec::new(),
+            digest_every: Digest::default(),
+            answer_within: "15m".into(),
+        }
     }
 }
 
@@ -208,7 +263,10 @@ pub struct Digest {
 
 impl Default for Digest {
     fn default() -> Self {
-        Digest { minutes: 10, requests: 200 }
+        Digest {
+            minutes: 10,
+            requests: 200,
+        }
     }
 }
 
@@ -266,6 +324,30 @@ impl Credentials {
 pub const BOARD: &str = "board";
 const RESERVED: [&str; 6] = [BOARD, "all", "team", "security", "office", "post-office"];
 
+/// Whether `name` is reserved for something other than a worker.
+pub fn reserved_name(name: &str) -> bool {
+    RESERVED.contains(&name)
+}
+
+/// Parses a token amount: `2000000`, `500k`, `2M`, `1.5M`.
+pub fn parse_tokens(s: &str) -> Result<u64> {
+    let t = s.trim().replace(['_', ','], "");
+    let (num, mult) = match t.chars().last() {
+        Some('k' | 'K') => (&t[..t.len() - 1], 1e3),
+        Some('m' | 'M') => (&t[..t.len() - 1], 1e6),
+        Some('g' | 'G' | 'b' | 'B') => (&t[..t.len() - 1], 1e9),
+        _ => (t.as_str(), 1.0),
+    };
+    let n: f64 = num
+        .trim()
+        .parse()
+        .map_err(|_| anyhow!("{s:?} is not a token amount like 500k or 2M"))?;
+    if !n.is_finite() || n < 0.0 {
+        bail!("{s:?} is not a token amount like 500k or 2M");
+    }
+    Ok((n * mult).round() as u64)
+}
+
 /// Parses `90s`, `15m`, `2h`, `1d`, or plain seconds.
 pub fn parse_duration(s: &str) -> Result<Duration> {
     let s = s.trim();
@@ -285,7 +367,11 @@ pub fn parse_duration(s: &str) -> Result<Duration> {
 /// Whether `name` can name a worker: lowercase letters, digits and dashes.
 pub fn valid_worker_name(name: &str) -> bool {
     let b = name.as_bytes();
-    !b.is_empty() && b.len() <= 32 && b[0].is_ascii_lowercase() && b.iter().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'-')
+    !b.is_empty()
+        && b.len() <= 32
+        && b[0].is_ascii_lowercase()
+        && b.iter()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'-')
 }
 
 impl Firm {
@@ -311,12 +397,19 @@ impl Firm {
     }
 
     pub fn reports_of(&self, name: &str) -> Vec<&str> {
-        self.workers.iter().filter(|w| w.reports_to.as_deref() == Some(name)).map(|w| w.name.as_str()).collect()
+        self.workers
+            .iter()
+            .filter(|w| w.reports_to.as_deref() == Some(name))
+            .map(|w| w.name.as_str())
+            .collect()
     }
 
     /// The worker everyone reports to, directly or not.
     pub fn root(&self) -> Option<&str> {
-        self.workers.iter().find(|w| w.reports_to.is_none()).map(|w| w.name.as_str())
+        self.workers
+            .iter()
+            .find(|w| w.reports_to.is_none())
+            .map(|w| w.name.as_str())
     }
 
     /// Whether `a` is above `b` in the chart (its manager, or the manager's
@@ -346,9 +439,16 @@ impl Firm {
 
     pub fn title_of(&self, name: &str) -> String {
         let Some(w) = self.worker(name) else {
-            return if name == BOARD { self.board.name.clone() } else { name.to_string() };
+            return if name == BOARD {
+                self.board.name.clone()
+            } else {
+                name.to_string()
+            };
         };
-        w.title.clone().or_else(|| self.roles.get(&w.role).and_then(|r| r.title.clone())).unwrap_or_else(|| title_case(&w.role))
+        w.title
+            .clone()
+            .or_else(|| self.roles.get(&w.role).and_then(|r| r.title.clone()))
+            .unwrap_or_else(|| title_case(&w.role))
     }
 
     /// Checks the firm against the rest of the config.
@@ -359,16 +459,24 @@ impl Firm {
             err("a firm name is lowercase letters, digits and dashes".into());
         }
         if crate::names::hostname(&self.domain(name)).is_err() {
-            err(format!("domain {:?} is not a valid host name", self.domain(name)));
+            err(format!(
+                "domain {:?} is not a valid host name",
+                self.domain(name)
+            ));
         }
         // The product may be served to the LAN (`0.0.0.0:8080`); the
         // dashboard signs in as cluster-admin, so it stays on loopback.
-        for (field, port, lan) in [("product_port", &self.product_port, true), ("dashboard_port", &self.dashboard_port, false)] {
+        for (field, port, lan) in [
+            ("product_port", &self.product_port, true),
+            ("dashboard_port", &self.dashboard_port, false),
+        ] {
             let Some(p) = port else { continue };
             match p.parse::<std::net::SocketAddr>() {
                 Ok(a) if a.ip().is_loopback() || lan => {}
                 Ok(a) => err(format!("{field} must be a loopback address, not {a}")),
-                Err(_) => err(format!("{field} {p:?} is not an address like 127.0.0.1:8080")),
+                Err(_) => err(format!(
+                    "{field} {p:?} is not an address like 127.0.0.1:8080"
+                )),
             }
         }
         if self.dashboard_port.is_some() && self.facilities.is_empty() {
@@ -380,7 +488,10 @@ impl Firm {
         if let Err(e) = parse_duration(&self.security.answer_within) {
             err(format!("security.answer_within: {e}"));
         }
-        for (field, v) in [("artifact_size", &self.limits.artifact_size), ("drive_size", &self.limits.drive_size)] {
+        for (field, v) in [
+            ("artifact_size", &self.limits.artifact_size),
+            ("drive_size", &self.limits.drive_size),
+        ] {
             if crate::parse_size(v).is_err() {
                 err(format!("limits.{field} {v:?} is not a size like 50MiB"));
             }
@@ -410,9 +521,16 @@ impl Firm {
                 }
             }
         }
-        let roots: Vec<&str> = self.workers.iter().filter(|w| w.reports_to.is_none()).map(|w| w.name.as_str()).collect();
+        let roots: Vec<&str> = self
+            .workers
+            .iter()
+            .filter(|w| w.reports_to.is_none())
+            .map(|w| w.name.as_str())
+            .collect();
         if !self.workers.is_empty() && roots.len() != 1 {
-            err(format!("the chart needs exactly one worker who reports to no one, found {roots:?}"));
+            err(format!(
+                "the chart needs exactly one worker who reports to no one, found {roots:?}"
+            ));
         }
         // Everyone reaches the root: no cycles.
         for w in &self.workers {
@@ -437,7 +555,9 @@ impl Firm {
             }
             for s in role.skills.names() {
                 if !valid_worker_name(s) {
-                    err(format!("role {rname}: skill name {s:?}: lowercase letters, digits and dashes"));
+                    err(format!(
+                        "role {rname}: skill name {s:?}: lowercase letters, digits and dashes"
+                    ));
                 }
             }
             match config.resolve(&role.profile) {
@@ -447,7 +567,10 @@ impl Firm {
                     // minutes for them.
                     let mut layers: Vec<&crate::Policy> = p.layers.iter().map(|(_, l)| l).collect();
                     layers.push(&config.policy);
-                    if layers.iter().any(|l| l.exec.iter().any(|r| r.action == Action::Ask) || l.defaults.exec == Some(Action::Ask)) {
+                    if layers.iter().any(|l| {
+                        l.exec.iter().any(|r| r.action == Action::Ask)
+                            || l.defaults.exec == Some(Action::Ask)
+                    }) {
                         err(format!("role {rname}: profile {} has exec rules that ask; in a firm, exec rules are allow or deny", role.profile));
                     }
                 }
@@ -464,7 +587,12 @@ impl Firm {
         if self.facilities.len() > 1 {
             err("one facility (the cluster) is supported".into());
         }
-        for r in self.credentials.kubeconfig.iter().chain(&self.credentials.git) {
+        for r in self
+            .credentials
+            .kubeconfig
+            .iter()
+            .chain(&self.credentials.git)
+        {
             if !self.roles.contains_key(r) {
                 err(format!("credentials: unknown role {r}"));
             }
@@ -484,6 +612,29 @@ impl Firm {
         if let Some(l) = &self.landing {
             if l.name.len() > 200 || l.motto.len() > 500 {
                 err("landing: keep the name under 200 and the motto under 500 characters".into());
+            }
+        }
+        for (rname, role) in &self.roles {
+            for h in &role.hires {
+                if !self.roles.contains_key(h) {
+                    err(format!("role {rname}: hires unknown role {h}"));
+                }
+            }
+        }
+        if !(0.0..=1.0).contains(&self.budget.security_share) {
+            err("budget.security_share is a fraction from 0 to 1".into());
+        }
+        let hires = self.roles.values().any(|r| !r.hires.is_empty());
+        if hires && self.budget.seed == 0 {
+            err("roles that hire need a run budget: set budget.seed".into());
+        }
+        let mut pool = BTreeSet::new();
+        for n in &self.names {
+            if !valid_worker_name(n) || RESERVED.contains(&n.as_str()) {
+                err(format!("names: {n:?} can't name a worker"));
+            }
+            if !pool.insert(n.as_str()) || names.contains(n.as_str()) {
+                err(format!("names: {n} is taken"));
             }
         }
         errors
@@ -547,35 +698,101 @@ firms:
     #[test]
     fn rejects_bad_charts() {
         let two_roots = BASE.replace("reports_to: cto", "");
-        assert!(firm(&two_roots).unwrap_err().to_string().contains("exactly one worker"));
-        let cycle = BASE.replace("{ name: ceo, role: ceo }", "{ name: ceo, role: ceo, reports_to: ada }");
+        assert!(firm(&two_roots)
+            .unwrap_err()
+            .to_string()
+            .contains("exactly one worker"));
+        let cycle = BASE.replace(
+            "{ name: ceo, role: ceo }",
+            "{ name: ceo, role: ceo, reports_to: ada }",
+        );
         let e = firm(&cycle).unwrap_err().to_string();
         assert!(e.contains("cycle") || e.contains("exactly one"), "{e}");
         let dup = BASE.replace("name: ada", "name: cto");
         assert!(firm(&dup).unwrap_err().to_string().contains("twice"));
         let reserved = BASE.replace("name: ada", "name: board");
-        assert!(firm(&reserved).unwrap_err().to_string().contains("reserved"));
+        assert!(firm(&reserved)
+            .unwrap_err()
+            .to_string()
+            .contains("reserved"));
         let unknown = BASE.replace("reports_to: cto", "reports_to: nobody");
-        assert!(firm(&unknown).unwrap_err().to_string().contains("unknown worker nobody"));
-        let role = BASE.replace("role: eng, reports_to: cto", "role: intern, reports_to: cto");
-        assert!(firm(&role).unwrap_err().to_string().contains("unknown role intern"));
+        assert!(firm(&unknown)
+            .unwrap_err()
+            .to_string()
+            .contains("unknown worker nobody"));
+        let role = BASE.replace(
+            "role: eng, reports_to: cto",
+            "role: intern, reports_to: cto",
+        );
+        assert!(firm(&role)
+            .unwrap_err()
+            .to_string()
+            .contains("unknown role intern"));
     }
 
     #[test]
     fn exec_ask_is_refused_in_firm_profiles() {
         let c = BASE.replace("eng: { profile: w", "eng: { profile: asks");
-        assert!(firm(&c).unwrap_err().to_string().contains("exec rules that ask"));
+        assert!(firm(&c)
+            .unwrap_err()
+            .to_string()
+            .contains("exec rules that ask"));
     }
 
     #[test]
     fn ports() {
-        let with = |ports: &str| BASE.replace("    security: { officers: [] }", &format!("    security: {{ officers: [] }}\n    facilities: {{ cluster: {{ kind: k3s, profile: w }} }}\n    {ports}"));
+        let with = |ports: &str| {
+            BASE.replace("    security: { officers: [] }", &format!("    security: {{ officers: [] }}\n    facilities: {{ cluster: {{ kind: k3s, profile: w }} }}\n    {ports}"))
+        };
         assert!(firm(&with("product_port: 127.0.0.1:8080")).is_ok());
         // The product may be served to the LAN, the dashboard never.
         assert!(firm(&with("product_port: 0.0.0.0:8080")).is_ok());
-        let e = firm(&with("dashboard_port: 0.0.0.0:8081")).unwrap_err().to_string();
-        assert!(e.contains("dashboard_port must be a loopback address"), "{e}");
-        assert!(firm(&with("product_port: lan:8080")).unwrap_err().to_string().contains("is not an address"));
+        let e = firm(&with("dashboard_port: 0.0.0.0:8081"))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            e.contains("dashboard_port must be a loopback address"),
+            "{e}"
+        );
+        assert!(firm(&with("product_port: lan:8080"))
+            .unwrap_err()
+            .to_string()
+            .contains("is not an address"));
+    }
+
+    #[test]
+    fn hiring_config() {
+        let with = |extra: &str| {
+            BASE.replace(
+                "      eng: { profile: w, skills: { work: software-engineer } }",
+                &format!(
+                    "      eng: {{ profile: w, skills: {{ work: software-engineer }}{extra} }}"
+                ),
+            )
+        };
+        let e = firm(&with(", hires: [intern]")).unwrap_err().to_string();
+        assert!(e.contains("hires unknown role intern"), "{e}");
+        let e = firm(&with(", hires: [eng]")).unwrap_err().to_string();
+        assert!(e.contains("need a run budget"), "{e}");
+        let ok = with(", hires: [eng]").replace("    security: { officers: [] }", "    security: { officers: [] }\n    budget: { seed: 2000000 }\n    names: [grace, ken]");
+        let c = firm(&ok).unwrap();
+        assert_eq!(c.firms["acme"].roles["eng"].hires, vec!["eng"]);
+        assert_eq!(c.firms["acme"].budget.security_share, 0.1);
+        let taken = ok.replace("names: [grace, ken]", "names: [grace, ada]");
+        assert!(firm(&taken)
+            .unwrap_err()
+            .to_string()
+            .contains("names: ada is taken"));
+    }
+
+    #[test]
+    fn token_amounts() {
+        assert_eq!(parse_tokens("2M").unwrap(), 2_000_000);
+        assert_eq!(parse_tokens("1.5M").unwrap(), 1_500_000);
+        assert_eq!(parse_tokens("500k").unwrap(), 500_000);
+        assert_eq!(parse_tokens("1_000").unwrap(), 1000);
+        assert!(parse_tokens("lots").is_err());
+        assert!(parse_tokens("-1M").is_err());
     }
 
     #[test]

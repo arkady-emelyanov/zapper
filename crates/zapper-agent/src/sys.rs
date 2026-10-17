@@ -21,7 +21,11 @@ pub fn cstr(s: &str) -> CString {
 /// Opens a vsock stream to `cid:port`.
 pub fn vsock_connect(cid: u32, port: u32) -> io::Result<File> {
     unsafe {
-        let fd = check(libc::socket(libc::AF_VSOCK, libc::SOCK_STREAM | libc::SOCK_CLOEXEC, 0))?;
+        let fd = check(libc::socket(
+            libc::AF_VSOCK,
+            libc::SOCK_STREAM | libc::SOCK_CLOEXEC,
+            0,
+        ))?;
         let fd = OwnedFd::from_raw_fd(fd);
         let addr = vsock_addr(cid, port);
         check(libc::connect(
@@ -46,7 +50,11 @@ pub struct VsockListener(OwnedFd);
 impl VsockListener {
     pub fn bind(port: u32) -> io::Result<Self> {
         unsafe {
-            let fd = check(libc::socket(libc::AF_VSOCK, libc::SOCK_STREAM | libc::SOCK_CLOEXEC, 0))?;
+            let fd = check(libc::socket(
+                libc::AF_VSOCK,
+                libc::SOCK_STREAM | libc::SOCK_CLOEXEC,
+                0,
+            ))?;
             let fd = OwnedFd::from_raw_fd(fd);
             let addr = vsock_addr(libc::VMADDR_CID_ANY, port);
             check(libc::bind(
@@ -75,11 +83,25 @@ impl VsockListener {
     }
 }
 
-pub fn mount(src: &str, target: &str, fstype: &str, flags: libc::c_ulong, data: &str) -> io::Result<()> {
+pub fn mount(
+    src: &str,
+    target: &str,
+    fstype: &str,
+    flags: libc::c_ulong,
+    data: &str,
+) -> io::Result<()> {
     let _ = std::fs::create_dir_all(target);
     let (s, t, f, d) = (cstr(src), cstr(target), cstr(fstype), cstr(data));
-    let data_ptr = if data.is_empty() { std::ptr::null() } else { d.as_ptr() as *const libc::c_void };
-    let fstype_ptr = if fstype.is_empty() { std::ptr::null() } else { f.as_ptr() };
+    let data_ptr = if data.is_empty() {
+        std::ptr::null()
+    } else {
+        d.as_ptr() as *const libc::c_void
+    };
+    let fstype_ptr = if fstype.is_empty() {
+        std::ptr::null()
+    } else {
+        f.as_ptr()
+    };
     check(unsafe { libc::mount(s.as_ptr(), t.as_ptr(), fstype_ptr, flags, data_ptr) })
         .map(drop)
         .map_err(|e| io::Error::new(e.kind(), format!("mount {target}: {e}")))
@@ -89,7 +111,13 @@ pub fn mount(src: &str, target: &str, fstype: &str, flags: libc::c_ulong, data: 
 pub fn bind(src: &str, target: &str, read_only: bool) -> io::Result<()> {
     mount(src, target, "", libc::MS_BIND, "")?;
     if read_only {
-        mount("", target, "", libc::MS_BIND | libc::MS_REMOUNT | libc::MS_RDONLY, "")?;
+        mount(
+            "",
+            target,
+            "",
+            libc::MS_BIND | libc::MS_REMOUNT | libc::MS_RDONLY,
+            "",
+        )?;
     }
     Ok(())
 }
@@ -97,13 +125,21 @@ pub fn bind(src: &str, target: &str, read_only: bool) -> io::Result<()> {
 /// Brings the loopback interface up.
 pub fn loopback_up() -> io::Result<()> {
     unsafe {
-        let fd = check(libc::socket(libc::AF_INET, libc::SOCK_DGRAM | libc::SOCK_CLOEXEC, 0))?;
+        let fd = check(libc::socket(
+            libc::AF_INET,
+            libc::SOCK_DGRAM | libc::SOCK_CLOEXEC,
+            0,
+        ))?;
         let fd = OwnedFd::from_raw_fd(fd);
         let mut req: libc::ifreq = std::mem::zeroed();
         for (i, b) in b"lo".iter().enumerate() {
             req.ifr_name[i] = *b as libc::c_char;
         }
-        check(libc::ioctl(fd.as_raw_fd(), libc::SIOCGIFFLAGS as _, &mut req))?;
+        check(libc::ioctl(
+            fd.as_raw_fd(),
+            libc::SIOCGIFFLAGS as _,
+            &mut req,
+        ))?;
         req.ifr_ifru.ifru_flags |= (libc::IFF_UP | libc::IFF_RUNNING) as i16;
         check(libc::ioctl(fd.as_raw_fd(), libc::SIOCSIFFLAGS as _, &req))?;
         Ok(())
@@ -118,17 +154,36 @@ pub struct Pty {
 pub fn openpty(rows: u16, cols: u16) -> io::Result<Pty> {
     let mut master = 0;
     let mut slave = 0;
-    let ws = libc::winsize { ws_row: rows, ws_col: cols, ws_xpixel: 0, ws_ypixel: 0 };
+    let ws = libc::winsize {
+        ws_row: rows,
+        ws_col: cols,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
     unsafe {
-        check(libc::openpty(&mut master, &mut slave, std::ptr::null_mut(), std::ptr::null(), &ws))?;
+        check(libc::openpty(
+            &mut master,
+            &mut slave,
+            std::ptr::null_mut(),
+            std::ptr::null(),
+            &ws,
+        ))?;
         libc::fcntl(master, libc::F_SETFD, libc::FD_CLOEXEC);
         libc::fcntl(slave, libc::F_SETFD, libc::FD_CLOEXEC);
-        Ok(Pty { master: File::from_raw_fd(master), slave: OwnedFd::from_raw_fd(slave) })
+        Ok(Pty {
+            master: File::from_raw_fd(master),
+            slave: OwnedFd::from_raw_fd(slave),
+        })
     }
 }
 
 pub fn set_winsize(fd: RawFd, rows: u16, cols: u16) {
-    let ws = libc::winsize { ws_row: rows, ws_col: cols, ws_xpixel: 0, ws_ypixel: 0 };
+    let ws = libc::winsize {
+        ws_row: rows,
+        ws_col: cols,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
     unsafe { libc::ioctl(fd, libc::TIOCSWINSZ as _, &ws) };
 }
 
@@ -141,7 +196,10 @@ pub fn pipe() -> io::Result<(OwnedFd, OwnedFd)> {
 /// Sends one fd over a unix socket. Async-signal-safe.
 pub unsafe fn send_fd(sock: RawFd, fd: RawFd) -> libc::c_int {
     let mut byte = 0u8;
-    let mut iov = libc::iovec { iov_base: &mut byte as *mut u8 as *mut libc::c_void, iov_len: 1 };
+    let mut iov = libc::iovec {
+        iov_base: &mut byte as *mut u8 as *mut libc::c_void,
+        iov_len: 1,
+    };
     let mut cmsg_buf = [0u64; 4];
     let mut msg: libc::msghdr = std::mem::zeroed();
     msg.msg_iov = &mut iov;
@@ -159,7 +217,10 @@ pub unsafe fn send_fd(sock: RawFd, fd: RawFd) -> libc::c_int {
 pub fn recv_fd(sock: RawFd) -> io::Result<OwnedFd> {
     unsafe {
         let mut byte = 0u8;
-        let mut iov = libc::iovec { iov_base: &mut byte as *mut u8 as *mut libc::c_void, iov_len: 1 };
+        let mut iov = libc::iovec {
+            iov_base: &mut byte as *mut u8 as *mut libc::c_void,
+            iov_len: 1,
+        };
         let mut cmsg_buf = [0u64; 4];
         let mut msg: libc::msghdr = std::mem::zeroed();
         msg.msg_iov = &mut iov;
@@ -167,13 +228,15 @@ pub fn recv_fd(sock: RawFd) -> io::Result<OwnedFd> {
         msg.msg_control = cmsg_buf.as_mut_ptr() as *mut libc::c_void;
         msg.msg_controllen = libc::CMSG_SPACE(4) as _;
         if libc::recvmsg(sock, &mut msg, libc::MSG_CMSG_CLOEXEC) <= 0 {
-            return Err(io::Error::new(io::ErrorKind::Other, "no fd received"));
+            return Err(io::Error::other("no fd received"));
         }
         let cmsg = libc::CMSG_FIRSTHDR(&msg);
         if cmsg.is_null() || (*cmsg).cmsg_type != libc::SCM_RIGHTS {
-            return Err(io::Error::new(io::ErrorKind::Other, "no fd received"));
+            return Err(io::Error::other("no fd received"));
         }
-        Ok(OwnedFd::from_raw_fd(*(libc::CMSG_DATA(cmsg) as *const libc::c_int)))
+        Ok(OwnedFd::from_raw_fd(
+            *(libc::CMSG_DATA(cmsg) as *const libc::c_int),
+        ))
     }
 }
 
@@ -225,8 +288,16 @@ pub fn exec_filter() -> Vec<libc::sock_filter> {
 
 /// Installs `prog` and returns the listener fd. Async-signal-safe.
 pub unsafe fn install_filter(prog: &[libc::sock_filter]) -> libc::c_int {
-    let fprog = libc::sock_fprog { len: prog.len() as u16, filter: prog.as_ptr() as *mut _ };
-    libc::syscall(libc::SYS_seccomp, SECCOMP_SET_MODE_FILTER, SECCOMP_FILTER_FLAG_NEW_LISTENER, &fprog) as libc::c_int
+    let fprog = libc::sock_fprog {
+        len: prog.len() as u16,
+        filter: prog.as_ptr() as *mut _,
+    };
+    libc::syscall(
+        libc::SYS_seccomp,
+        SECCOMP_SET_MODE_FILTER,
+        SECCOMP_FILTER_FLAG_NEW_LISTENER,
+        &fprog,
+    ) as libc::c_int
 }
 
 #[repr(C)]
@@ -271,7 +342,11 @@ pub fn notif_send(fd: RawFd, id: u64, errno: i32) -> io::Result<()> {
         id,
         val: 0,
         error: -errno,
-        flags: if errno == 0 { SECCOMP_USER_NOTIF_FLAG_CONTINUE } else { 0 },
+        flags: if errno == 0 {
+            SECCOMP_USER_NOTIF_FLAG_CONTINUE
+        } else {
+            0
+        },
     };
     check(unsafe { libc::ioctl(fd, IOCTL_NOTIF_SEND as _, &resp) }).map(drop)
 }
@@ -331,5 +406,9 @@ pub fn chown(path: &Path, uid: u32, gid: u32) {
 }
 
 pub fn c_array(items: &[CString]) -> Vec<*const libc::c_char> {
-    items.iter().map(|s| s.as_ptr()).chain(std::iter::once(std::ptr::null())).collect()
+    items
+        .iter()
+        .map(|s| s.as_ptr())
+        .chain(std::iter::once(std::ptr::null()))
+        .collect()
 }

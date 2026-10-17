@@ -17,9 +17,16 @@ const CONSOLE_LIMIT: u64 = 1 << 20;
 pub use zapper_policy::parse_size;
 
 async fn run(cmd: &mut Command) -> Result<()> {
-    let out = cmd.stdin(Stdio::null()).output().await.with_context(|| format!("running {cmd:?}"))?;
+    let out = cmd
+        .stdin(Stdio::null())
+        .output()
+        .await
+        .with_context(|| format!("running {cmd:?}"))?;
     if !out.status.success() {
-        bail!("{cmd:?} failed: {}", String::from_utf8_lossy(&out.stderr).trim());
+        bail!(
+            "{cmd:?} failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
     }
     Ok(())
 }
@@ -70,15 +77,28 @@ pub fn build_initrd(agent: &Path, out: &Path) -> Result<()> {
 /// Makes the session's root disk: a private copy of the image grown to size.
 pub async fn root_disk(image: &Path, out: &Path, size: u64) -> Result<()> {
     if !image.exists() {
-        bail!("image {} not found; build it with `zapper image build`", image.display());
+        bail!(
+            "image {} not found; build it with `zapper image build`",
+            image.display()
+        );
     }
-    run(Command::new("cp").arg("--reflink=auto").arg("--sparse=always").arg(image).arg(out)).await?;
+    run(Command::new("cp")
+        .arg("--reflink=auto")
+        .arg("--sparse=always")
+        .arg(image)
+        .arg(out))
+    .await?;
     let current = tokio::fs::metadata(out).await?.len();
     if size > current {
         let f = tokio::fs::OpenOptions::new().write(true).open(out).await?;
         f.set_len(size).await?;
         // e2fsck exits 1 when it fixed something, which is fine here.
-        let _ = Command::new("e2fsck").args(["-fy", "-E", "discard"]).arg(out).stdin(Stdio::null()).output().await;
+        let _ = Command::new("e2fsck")
+            .args(["-fy", "-E", "discard"])
+            .arg(out)
+            .stdin(Stdio::null())
+            .output()
+            .await;
         run(Command::new("resize2fs").arg("-f").arg(out)).await?;
     }
     Ok(())
@@ -92,7 +112,11 @@ pub async fn mount_disk(mount: &Mount, workdir: &Path, out: &Path) -> Result<Pat
         bail!("mount {}: not a directory", host.display());
     }
     let du = Command::new("du").arg("-sb").arg(&host).output().await?;
-    let used: u64 = String::from_utf8_lossy(&du.stdout).split_whitespace().next().and_then(|n| n.parse().ok()).unwrap_or(0);
+    let used: u64 = String::from_utf8_lossy(&du.stdout)
+        .split_whitespace()
+        .next()
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(0);
     let extra = match (&mount.extra, mount.mode) {
         (Some(e), _) => parse_size(e)?,
         (None, MountMode::Rw) => 1 << 30,
@@ -100,8 +124,12 @@ pub async fn mount_disk(mount: &Mount, workdir: &Path, out: &Path) -> Result<Pat
     };
     // ext4 metadata overhead: inodes, journal.
     let size = (used + used / 5 + extra).max(32 << 20);
-    run(Command::new("mkfs.ext4").args(["-q", "-F", "-E", "root_owner=1000:1000", "-d"]).arg(&host).arg(out).arg(format!("{}k", size / 1024)))
-        .await?;
+    run(Command::new("mkfs.ext4")
+        .args(["-q", "-F", "-E", "root_owner=1000:1000", "-d"])
+        .arg(&host)
+        .arg(out)
+        .arg(format!("{}k", size / 1024)))
+    .await?;
     Ok(host)
 }
 
@@ -139,8 +167,15 @@ pub async fn start(spec: VmSpec<'_>) -> Result<Child> {
     for (i, (path, ro)) in spec.disks.iter().enumerate() {
         drives.push(json!({ "drive_id": format!("d{i}"), "path_on_host": path, "is_root_device": false, "is_read_only": ro }));
     }
-    let net_args = if spec.nic { crate::netns::boot_args() } else { String::new() };
-    let boot_args = format!("console=ttyS0 reboot=k panic=-1 pci=off quiet loglevel=3 rdinit=/init {net_args} {}", spec.engine.boot_args);
+    let net_args = if spec.nic {
+        crate::netns::boot_args()
+    } else {
+        String::new()
+    };
+    let boot_args = format!(
+        "console=ttyS0 reboot=k panic=-1 pci=off quiet loglevel=3 rdinit=/init {net_args} {}",
+        spec.engine.boot_args
+    );
     let mut config = json!({
         "boot-source": { "kernel_image_path": spec.kernel, "initrd_path": spec.initrd, "boot_args": boot_args.trim() },
         "drives": drives,
@@ -188,13 +223,26 @@ pub async fn start(spec: VmSpec<'_>) -> Result<Child> {
         .spawn()
         .with_context(|| format!("starting {}", spec.firecracker.display()))?;
     let console = spec.dir.join("console.log");
-    for stream in [child.stdout.take().map(|s| Box::new(s) as Box<dyn tokio::io::AsyncRead + Unpin + Send>), child.stderr.take().map(|s| Box::new(s) as _)]
-        .into_iter()
-        .flatten()
+    for stream in [
+        child
+            .stdout
+            .take()
+            .map(|s| Box::new(s) as Box<dyn tokio::io::AsyncRead + Unpin + Send>),
+        child.stderr.take().map(|s| Box::new(s) as _),
+    ]
+    .into_iter()
+    .flatten()
     {
         let console = console.clone();
         tokio::spawn(async move {
-            let Ok(mut out) = tokio::fs::OpenOptions::new().create(true).append(true).open(&console).await else { return };
+            let Ok(mut out) = tokio::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&console)
+                .await
+            else {
+                return;
+            };
             let mut stream = stream;
             let mut buf = vec![0u8; 8192];
             let mut written = 0u64;

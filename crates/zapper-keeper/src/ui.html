@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>zapper keeper</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { --bg:#F5F4EE; --panel:#FAF9F5; --card:#FFFFFF; --line:#E8E6DC; --text:#2F2C24; --muted:#83807A; --accent:#D97757; --ok:#5E8D5A; --bad:#C2493D; --soft:rgba(217,119,87,.12);
+    --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; --serif: ui-serif, Georgia, serif; --mono: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#262624; --panel:#1F1E1D; --card:#2C2B29; --line:#3A3936; --text:#ECEAE3; --muted:#A29F95; --ok:#8DB889; --bad:#E07A6F; --soft:rgba(217,119,87,.16); } }
+  * { box-sizing: border-box; }
+  body { margin:0; font: 14px/1.5 var(--sans); background: var(--bg); color: var(--text); }
+  header { display:flex; align-items:center; gap: 12px; padding: 12px 24px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  header h1 { font: 22px var(--serif); margin: 0; }
+  main { padding: 20px 24px; max-width: 1200px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 18px; margin-bottom: 14px; }
+  .muted { color: var(--muted); } .small { font-size: 12.5px; } .mono { font-family: var(--mono); font-size: 12.5px; }
+  .kv { display:grid; grid-template-columns: 150px minmax(0,1fr); gap: 4px 14px; }
+  .crumbs { margin: 4px 0 10px; } .crumbs a, .link { color: var(--accent); cursor: pointer; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; }
+  tr.dir td:first-child { font-weight: 600; cursor: pointer; }
+  button { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: 8px; padding: 3px 10px; cursor: pointer; }
+  .ok { color: var(--ok); } .bad { color: var(--bad); }
+  .pill { display:inline-block; padding: 0 8px; border-radius: 999px; border: 1px solid currentColor; font-size: 12px; }
+  .wrap { word-break: break-all; }
+</style>
+</head>
+<body>
+<header><h1>zapper keeper</h1><span class="muted">the record, append-only: read and verify</span></header>
+<main>
+  <div class="card" id="status">Loading…</div>
+  <div class="card"><div class="crumbs" id="crumbs"></div><div id="list"></div></div>
+  <div class="card" id="result" hidden></div>
+</main>
+<script>
+'use strict';
+// Everything shown is from the record, written by workers and the daemon:
+// rendered as text only.
+const $ = (id) => document.getElementById(id);
+const token = new URLSearchParams(location.search).get('token') || '';
+history.replaceState(null, '', '/');
+function el(tag, props, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(props || {})) {
+    if (v == null || v === false) continue;
+    if (k.startsWith('on')) e.addEventListener(k.slice(2), v); else if (k === 'class') e.className = v; else e.setAttribute(k, v);
+  }
+  for (const k of kids.flat()) if (k != null && k !== '') e.append(k instanceof Node ? k : document.createTextNode(String(k)));
+  return e;
+}
+async function api(path) {
+  const r = await fetch(path, { headers: { 'X-Keeper-Token': token } });
+  if (!r.ok) throw new Error((await r.text()).trim() || r.status);
+  return r.json();
+}
+const bytes = (n) => n >= 1 << 30 ? (n / (1 << 30)).toFixed(1) + ' GiB' : n >= 1 << 20 ? (n / (1 << 20)).toFixed(1) + ' MiB' : n >= 1024 ? Math.round(n / 1024) + ' KiB' : n + ' B';
+const when = (t) => t ? new Date(t * 1000).toLocaleString() : '–';
+let dir = '';
+
+async function status() {
+  try {
+    const s = await api('/api/status');
+    $('status').replaceChildren(el('div', { class: 'kv' },
+      el('span', { class: 'muted' }, 'Directory'), el('span', { class: 'mono' }, s.dir),
+      el('span', { class: 'muted' }, 'Writer'), el('span', {}, 'uid ' + s.writer_uid + ': the only one who can append; nobody can change what is written'),
+      el('span', { class: 'muted' }, 'Public key'), el('span', { class: 'mono wrap' }, s.public_key),
+      el('span', { class: 'muted' }, 'Disk'), el('span', {}, s.free_bytes == null ? '–' : bytes(s.free_bytes) + ' free; appends stop below ' + bytes(s.min_free)),
+      el('span', { class: 'muted' }, 'Running since'), el('span', {}, when(s.started))));
+  } catch (e) { $('status').replaceChildren(el('span', { class: 'bad' }, token ? 'Error: ' + e.message : 'Open the URL in the keeper-ui file of the record directory: it carries the token.')); }
+}
+
+async function list(d) {
+  dir = d;
+  const crumbs = [el('a', { onclick: () => list('') }, 'record')];
+  const parts = d ? d.split('/') : [];
+  parts.forEach((p, i) => crumbs.push(' / ', el('a', { onclick: () => list(parts.slice(0, i + 1).join('/')) }, p)));
+  crumbs.push('  ', el('button', { onclick: () => verify(d) }, 'Verify ' + (d ? 'this directory' : 'everything')));
+  $('crumbs').replaceChildren(...crumbs);
+  try {
+    const v = await api('/api/list?dir=' + encodeURIComponent(d));
+    const rows = [
+      ...v.dirs.map((x) => el('tr', { class: 'dir', onclick: () => list((d ? d + '/' : '') + x.name) }, el('td', {}, x.name + '/'), el('td'), el('td'), el('td'), el('td'))),
+      ...v.files.map((x) => el('tr', {}, el('td', { class: 'mono' }, x.name), el('td', {}, bytes(x.size)), el('td', {}, String(x.lines)),
+        el('td', {}, x.signed == null ? el('span', { class: 'muted' }, 'not yet') : x.signed + ' lines, ' + when(x.signed_at)),
+        el('td', {}, el('button', { onclick: () => verify((d ? d + '/' : '') + x.name) }, 'Verify')))),
+    ];
+    $('list').replaceChildren(rows.length ? el('table', {}, el('thead', {}, el('tr', {}, ['name', 'size', 'lines', 'last signed', ''].map((h) => el('th', {}, h)))), el('tbody', {}, rows)) : el('div', { class: 'muted' }, 'Empty.'));
+  } catch (e) { $('list').replaceChildren(el('span', { class: 'bad' }, e.message)); }
+}
+
+async function verify(p) {
+  const box = $('result');
+  box.hidden = false;
+  box.replaceChildren(el('span', { class: 'muted' }, 'Verifying ' + (p || 'the whole record') + '…'));
+  try {
+    const v = await api('/api/verify?path=' + encodeURIComponent(p));
+    const bad = v.files.filter((f) => !f.ok);
+    box.replaceChildren(
+      el('div', {}, el('span', { class: 'pill ' + (v.ok ? 'ok' : 'bad') }, v.ok ? 'intact' : 'changed'), ' ', v.files.length + ' file' + (v.files.length === 1 ? '' : 's') + ' under ' + (p || 'the record') + (v.ok ? ': every line matches its chain, every checkpoint is signed by this keeper.' : ': ' + bad.length + ' do not match.')),
+      el('table', { style: 'margin-top:8px' }, el('tbody', {}, v.files.map((f) => el('tr', {},
+        el('td', { class: 'mono' }, f.file),
+        el('td', { class: f.ok ? 'ok' : 'bad' }, f.ok ? f.lines + ' lines, ' + f.signed + ' signed' : f.error))))));
+  } catch (e) { box.replaceChildren(el('span', { class: 'bad' }, e.message)); }
+}
+
+status();
+list('');
+setInterval(status, 15000);
+</script>
+</body>
+</html>

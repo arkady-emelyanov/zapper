@@ -1,8 +1,10 @@
 //! Append-only JSON-lines files of a run: the firm's journal and the workers'
-//! transcripts. The daemon keeps offsets into them, not their contents.
+//! transcripts. The daemon keeps offsets into them, not their contents. They
+//! are part of the record: written through `record`, and so through the
+//! keeper when there is one.
 
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
@@ -16,8 +18,9 @@ use crate::daemon::now;
 pub const MAX_LINE: usize = 256 * 1024;
 
 pub struct Journal {
+    /// Where it is read from.
     path: PathBuf,
-    file: Mutex<File>,
+    file: Mutex<crate::daemon::record::Writer>,
     offset: AtomicU64,
     seq: AtomicU64,
 }
@@ -31,14 +34,25 @@ pub struct At {
 
 impl Journal {
     pub fn create(path: &Path) -> Result<Journal> {
-        let file = std::fs::OpenOptions::new().create(true).append(true).open(path).with_context(|| format!("creating {}", path.display()))?;
-        let offset = file.metadata()?.len();
+        let file = crate::daemon::record::Writer::open(path)
+            .with_context(|| format!("creating {}", path.display()))?;
+        let path = crate::daemon::record::view(path);
+        let offset = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
         // An existing journal continues its sequence.
-        let last = std::fs::read(path).ok().and_then(|b| {
+        let last = std::fs::read(&path).ok().and_then(|b| {
             let tail = &b[b.len().saturating_sub(MAX_LINE + 1)..];
-            String::from_utf8_lossy(tail).lines().rev().find_map(|l| serde_json::from_str::<Value>(l).ok().and_then(|v| v["seq"].as_u64()))
+            String::from_utf8_lossy(tail).lines().rev().find_map(|l| {
+                serde_json::from_str::<Value>(l)
+                    .ok()
+                    .and_then(|v| v["seq"].as_u64())
+            })
         });
-        Ok(Journal { path: path.to_path_buf(), file: Mutex::new(file), offset: AtomicU64::new(offset), seq: AtomicU64::new(last.unwrap_or(0) + 1) })
+        Ok(Journal {
+            path,
+            file: Mutex::new(file),
+            offset: AtomicU64::new(offset),
+            seq: AtomicU64::new(last.unwrap_or(0) + 1),
+        })
     }
 
     /// Appends `{seq, ts, type, …fields}` and returns where it went.
@@ -63,14 +77,23 @@ impl Journal {
         }
         let mut line = serde_json::to_string(&entry).unwrap_or_default();
         if line.len() > MAX_LINE {
-            line = json!({ "seq": seq, "ts": now(), "type": "truncated", "bytes": line.len() }).to_string();
+            line = json!({ "seq": seq, "ts": now(), "type": "truncated", "bytes": line.len() })
+                .to_string();
         }
-        line.push('\n');
-        let offset = self.offset.fetch_add(line.len() as u64, Ordering::Relaxed);
-        if let Err(e) = file.write_all(line.as_bytes()) {
-            tracing::warn!("journal {}: {e}", self.path.display());
+        // Offsets count only what was written.
+        if let Err(e) = file.line(line.as_bytes()) {
+            tracing::warn!("journal {}: {e:#}", self.path.display());
+            return At {
+                offset: self.offset.load(Ordering::Relaxed),
+                len: 0,
+            };
         }
-        At { offset, len: line.len() as u32 }
+        let len = line.len() as u64 + 1;
+        let offset = self.offset.fetch_add(len, Ordering::Relaxed);
+        At {
+            offset,
+            len: len as u32,
+        }
     }
 
     /// Reads the entry at `at`.
@@ -93,7 +116,8 @@ mod tests {
 
     #[test]
     fn append_and_read_back() {
-        let dir = std::env::temp_dir().join(format!("zapper-journal-{}", crate::daemon::random_id(6)));
+        let dir =
+            std::env::temp_dir().join(format!("zapper-journal-{}", crate::daemon::random_id(6)));
         std::fs::create_dir_all(&dir).unwrap();
         let j = Journal::create(&dir.join("j.jsonl")).unwrap();
         let a = j.append("mail", json!({ "subject": "hi" }));
@@ -107,7 +131,11 @@ mod tests {
         drop(j);
         let j = Journal::create(&dir.join("j.jsonl")).unwrap();
         let d = j.append("run", json!({ "state": "ended" }));
-        assert_eq!(j.read(d).unwrap()["seq"], 4, "a reopened journal continues its sequence");
+        assert_eq!(
+            j.read(d).unwrap()["seq"],
+            4,
+            "a reopened journal continues its sequence"
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

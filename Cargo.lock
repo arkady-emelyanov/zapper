@@ -1604,6 +1604,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "webpki-roots 0.26.11",
+ "zapper-keeper",
  "zapper-policy",
 ]
 
@@ -1619,6 +1620,17 @@ dependencies = [
  "serde_yaml",
  "ureq",
  "zapper-policy",
+]
+
+[[package]]
+name = "zapper-keeper"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "libc",
+ "ring",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

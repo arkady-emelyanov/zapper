@@ -19,7 +19,10 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio_stream::wrappers::BroadcastStream;
 use zapper_policy::proto::ShellRequest;
-use zapper_policy::{evaluate_exec, evaluate_net, needs_inspection, AnyRule, Config, ExecRequest, Kind, NetRequest, Policy, Profile, Scope};
+use zapper_policy::{
+    evaluate_exec, evaluate_net, needs_inspection, AnyRule, Config, ExecRequest, Kind, NetRequest,
+    Policy, Profile, Scope,
+};
 
 use super::session::{self, NewSession};
 use super::{spec, Daemon, EventBody, Remember};
@@ -37,7 +40,11 @@ impl IntoResponse for ApiError {
 impl From<anyhow::Error> for ApiError {
     fn from(e: anyhow::Error) -> Self {
         let msg = format!("{e:#}");
-        let code = if msg.starts_with("no ") { StatusCode::NOT_FOUND } else { StatusCode::BAD_REQUEST };
+        let code = if msg.starts_with("no ") {
+            StatusCode::NOT_FOUND
+        } else {
+            StatusCode::BAD_REQUEST
+        };
         ApiError(code, msg)
     }
 }
@@ -82,6 +89,7 @@ fn read_routes() -> Router<Arc<Daemon>> {
         .route("/sessions/{id}/requests/{n}", get(get_request))
         .route("/sessions/{id}/terminals/{n}/stream", get(terminal_stream))
         .route("/events", get(events))
+        .route("/record", get(record_status))
         .route("/approvals", get(list_approvals))
         .merge(super::office::http::read_routes())
 }
@@ -93,7 +101,10 @@ pub fn api(daemon: Arc<Daemon>) -> Router {
         .route("/config/reload", post(reload))
         .route("/rules", post(add_rule))
         .route("/rules/{id}", axum::routing::delete(delete_rule))
-        .route("/profiles/{name}", get(get_profile).put(put_profile).delete(delete_profile))
+        .route(
+            "/profiles/{name}",
+            get(get_profile).put(put_profile).delete(delete_profile),
+        )
         .route("/sessions", post(create_session))
         .route("/sessions/{id}", axum::routing::delete(delete_session))
         .route("/sessions/{id}/stop", post(stop_session))
@@ -101,7 +112,9 @@ pub fn api(daemon: Arc<Daemon>) -> Router {
         .route("/evaluate", post(evaluate))
         .route("/approvals/{id}", post(answer))
         .merge(super::office::http::board_routes());
-    Router::new().nest("/v1", read_routes().merge(write)).with_state(daemon)
+    Router::new()
+        .nest("/v1", read_routes().merge(write))
+        .with_state(daemon)
 }
 
 /// The UI: the read routes, plus answering approvals.
@@ -113,8 +126,17 @@ pub fn ui(daemon: Arc<Daemon>, port: u16) -> Router {
         .route("/terminal", get(super::ui::terminal))
         .route("/assets/xterm.js", get(super::ui::xterm_js))
         .route("/assets/xterm.css", get(super::ui::xterm_css))
-        .nest("/api", read_routes().route("/approvals/{id}", post(answer)).merge(super::office::http::board_routes()))
-        .layer(middleware::from_fn_with_state((daemon.clone(), port), ui_guard))
+        .nest(
+            "/api",
+            read_routes()
+                .route("/approvals/{id}", post(answer))
+                .route("/ui/events", post(ui_events))
+                .merge(super::office::http::board_routes()),
+        )
+        .layer(middleware::from_fn_with_state(
+            (daemon.clone(), port),
+            ui_guard,
+        ))
         .with_state(daemon)
 }
 
@@ -124,17 +146,34 @@ pub fn ui(daemon: Arc<Daemon>, port: u16) -> Router {
 /// something also needs the `X-Zapper-UI` header, which another site's page
 /// can't send without a CORS preflight that is never granted, and an Origin
 /// naming the UI itself.
-async fn ui_guard(State((d, port)): State<(Arc<Daemon>, u16)>, req: Request, next: Next) -> Response {
-    let host = req.headers().get(header::HOST).and_then(|h| h.to_str().ok()).unwrap_or("");
-    let local = [format!("127.0.0.1:{port}"), format!("localhost:{port}"), format!("[::1]:{port}")];
+async fn ui_guard(
+    State((d, port)): State<(Arc<Daemon>, u16)>,
+    req: Request,
+    next: Next,
+) -> Response {
+    let host = req
+        .headers()
+        .get(header::HOST)
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("");
+    let local = [
+        format!("127.0.0.1:{port}"),
+        format!("localhost:{port}"),
+        format!("[::1]:{port}"),
+    ];
     if !local.iter().any(|l| l == host) {
         return (StatusCode::FORBIDDEN, "bad Host header").into_response();
     }
-    let query: HashMap<String, String> = req.uri().query().map(|q| url_decode_pairs(q)).unwrap_or_default();
+    let query: HashMap<String, String> =
+        req.uri().query().map(url_decode_pairs).unwrap_or_default();
     if query.get("token") == Some(&d.ui_token) {
-        let cookie = format!("zapper_token={}; HttpOnly; SameSite=Strict; Path=/", d.ui_token);
+        let cookie = format!(
+            "zapper_token={}; HttpOnly; SameSite=Strict; Path=/",
+            d.ui_token
+        );
         let mut resp = Redirect::to(req.uri().path()).into_response();
-        resp.headers_mut().insert(header::SET_COOKIE, cookie.parse().unwrap());
+        resp.headers_mut()
+            .insert(header::SET_COOKIE, cookie.parse().unwrap());
         return resp;
     }
     let cookie_ok = req
@@ -145,13 +184,28 @@ async fn ui_guard(State((d, port)): State<(Arc<Daemon>, u16)>, req: Request, nex
         .flat_map(|c| c.split(';'))
         .any(|c| c.trim() == format!("zapper_token={}", d.ui_token));
     if !cookie_ok {
-        return (StatusCode::UNAUTHORIZED, "open the URL printed by `zapper serve`").into_response();
+        return (
+            StatusCode::UNAUTHORIZED,
+            "open the URL printed by `zapper serve`",
+        )
+            .into_response();
     }
-    if !matches!(*req.method(), axum::http::Method::GET | axum::http::Method::HEAD) {
-        let origin = req.headers().get(header::ORIGIN).and_then(|h| h.to_str().ok()).unwrap_or("");
+    if !matches!(
+        *req.method(),
+        axum::http::Method::GET | axum::http::Method::HEAD
+    ) {
+        let origin = req
+            .headers()
+            .get(header::ORIGIN)
+            .and_then(|h| h.to_str().ok())
+            .unwrap_or("");
         let marked = req.headers().get("x-zapper-ui").is_some_and(|v| v == "1");
         if !marked || !local.iter().any(|l| origin == format!("http://{l}")) {
-            return (StatusCode::FORBIDDEN, "missing X-Zapper-UI or a local Origin").into_response();
+            return (
+                StatusCode::FORBIDDEN,
+                "missing X-Zapper-UI or a local Origin",
+            )
+                .into_response();
         }
     }
     let mut resp = next.run(req).await;
@@ -177,7 +231,10 @@ fn percent_decode(s: &str) -> String {
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;
     while i < b.len() {
-        let hex = b.get(i + 1..i + 3).and_then(|h| std::str::from_utf8(h).ok()).and_then(|h| u8::from_str_radix(h, 16).ok());
+        let hex = b
+            .get(i + 1..i + 3)
+            .and_then(|h| std::str::from_utf8(h).ok())
+            .and_then(|h| u8::from_str_radix(h, 16).ok());
         match (b[i], hex) {
             (b'%', Some(v)) => {
                 out.push(v);
@@ -253,13 +310,20 @@ async fn list_rules(State(d): D, Query(q): Query<ScopeQuery>) -> R<Json<Vec<Valu
     let mut out = Vec::new();
     let c = d.config.read().unwrap();
     let mut layers: Vec<(Scope, Policy)> = vec![(Scope::Global, c.policy.clone())];
-    layers.extend(c.profiles.iter().map(|(n, p)| (Scope::Profile(n.clone()), p.policy.clone())));
+    layers.extend(
+        c.profiles
+            .iter()
+            .map(|(n, p)| (Scope::Profile(n.clone()), p.policy.clone())),
+    );
     for (id, s) in d.sessions.read().unwrap().iter() {
         layers.push((Scope::Session(id.clone()), s.policy.read().unwrap().clone()));
     }
     for run in d.office.runs.read().unwrap().values() {
         for (role, p) in &run.roles {
-            layers.push((Scope::Role(format!("{}/{role}", run.firm)), p.read().unwrap().clone()));
+            layers.push((
+                Scope::Role(format!("{}/{role}", run.firm)),
+                p.read().unwrap().clone(),
+            ));
         }
     }
     for (scope, policy) in layers {
@@ -280,24 +344,43 @@ struct NewRule {
 }
 
 async fn add_rule(State(d): D, body: String) -> R<Json<Value>> {
-    let NewRule { scope, position, mut rule } = parse_body(&body)?;
+    let NewRule {
+        scope,
+        position,
+        mut rule,
+    } = parse_body(&body)?;
     let scope: Scope = scope.parse()?;
     if let Scope::Session(id) = &scope {
         if rule.kind() == Kind::Fs {
-            return Err(ApiError(StatusCode::BAD_REQUEST, "fs rules apply at boot; add them to a profile".into()));
+            return Err(ApiError(
+                StatusCode::BAD_REQUEST,
+                "fs rules apply at boot; add them to a profile".into(),
+            ));
         }
         let s = d.session(id)?;
         let rule = s.add_rule(rule, position);
-        d.emit(Some(&s), EventBody::Config { change: format!("rule {} added to {scope}", rule.id().unwrap_or("?")) });
+        d.emit(
+            Some(&s),
+            EventBody::Config {
+                change: format!("rule {} added to {scope}", rule.id().unwrap_or("?")),
+            },
+        );
         return Ok(Json(rule_json(&scope, &rule)));
     }
     let added = d.change(&format!("rule added to {scope}"), |c| {
         if rule.id().is_none() {
             let taken = c.rule_ids();
             let kind = rule.kind();
-            rule.set_id((1..).map(|n| format!("{kind}-{n}")).find(|i| !taken.contains(i)).unwrap());
+            rule.set_id(
+                (1..)
+                    .map(|n| format!("{kind}-{n}"))
+                    .find(|i| !taken.contains(i))
+                    .unwrap(),
+            );
         }
-        c.policy_mut(&scope).ok_or_else(|| anyhow::anyhow!("no {scope}"))?.insert(rule.clone(), position);
+        c.policy_mut(&scope)
+            .ok_or_else(|| anyhow::anyhow!("no {scope}"))?
+            .insert(rule.clone(), position);
         Ok(rule)
     })?;
     Ok(Json(rule_json(&scope, &added)))
@@ -308,7 +391,12 @@ async fn delete_rule(State(d): D, Path(id): Path<String>) -> R<Json<Value>> {
     let runs: Vec<_> = d.office.runs.read().unwrap().values().cloned().collect();
     for run in runs {
         if run.security.lock().unwrap().standing.contains_key(&id) {
-            super::office::security::revoke(&run, zapper_policy::BOARD, &id, "removed by the operator")?;
+            super::office::security::revoke(
+                &run,
+                zapper_policy::BOARD,
+                &id,
+                "removed by the operator",
+            )?;
             return Ok(Json(json!({ "id": id, "revoked": true })));
         }
     }
@@ -321,7 +409,9 @@ async fn delete_rule(State(d): D, Path(id): Path<String>) -> R<Json<Value>> {
         return Err(ApiError(StatusCode::NOT_FOUND, format!("no rule {id}")));
     }
     let (scope, rule) = d.change(&format!("rule {id} removed"), |c| {
-        let scope = c.find_rule(&id).ok_or_else(|| anyhow::anyhow!("no rule {id}"))?;
+        let scope = c
+            .find_rule(&id)
+            .ok_or_else(|| anyhow::anyhow!("no rule {id}"))?;
         let rule = c.policy_mut(&scope).unwrap().remove(&id).unwrap();
         Ok((scope, rule))
     })?;
@@ -348,9 +438,16 @@ async fn list_profiles(State(d): D) -> Json<Value> {
     Json(json!(out))
 }
 
-async fn get_profile(State(d): D, Path(name): Path<String>, Query(f): Query<Format>) -> R<Response> {
+async fn get_profile(
+    State(d): D,
+    Path(name): Path<String>,
+    Query(f): Query<Format>,
+) -> R<Response> {
     let c = d.config.read().unwrap();
-    let p = c.profiles.get(&name).ok_or_else(|| anyhow::anyhow!("no profile {name}"))?;
+    let p = c
+        .profiles
+        .get(&name)
+        .ok_or_else(|| anyhow::anyhow!("no profile {name}"))?;
     let resolved = c.resolve(&name)?;
     let v = json!({ "profile": p, "resolved": resolved });
     Ok(match f.format.as_deref() {
@@ -370,18 +467,56 @@ async fn put_profile(State(d): D, Path(name): Path<String>, body: String) -> R<J
 
 async fn delete_profile(State(d): D, Path(name): Path<String>) -> R<Json<Value>> {
     d.change(&format!("profile {name} removed"), |c| {
-        c.profiles.remove(&name).ok_or_else(|| anyhow::anyhow!("no profile {name}"))?;
+        c.profiles
+            .remove(&name)
+            .ok_or_else(|| anyhow::anyhow!("no profile {name}"))?;
         Ok(())
     })?;
     Ok(Json(json!({ "ok": true })))
 }
 
 async fn list_sessions(State(d): D) -> Json<Vec<session::SessionInfo>> {
-    Json(d.sessions.read().unwrap().values().map(|s| s.info()).collect())
+    Json(
+        d.sessions
+            .read()
+            .unwrap()
+            .values()
+            .map(|s| s.info())
+            .collect(),
+    )
 }
 
 async fn get_session(State(d): D, Path(id): Path<String>) -> R<Json<session::SessionInfo>> {
     Ok(Json(d.session(&id)?.info()))
+}
+
+/// The UI's events (clicks), from the pages, to the configured sinks.
+async fn ui_events(State(d): D, text: String) -> R<Json<Value>> {
+    if d.ui_events.is_empty() {
+        return Ok(Json(json!({ "taken": 0 })));
+    }
+    if text.len() > 256 << 10 {
+        return Err(ApiError(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "too many events at once".into(),
+        ));
+    }
+    let v: Value = serde_json::from_str(&text)
+        .map_err(|e| ApiError(StatusCode::BAD_REQUEST, format!("body: {e}")))?;
+    let n = d
+        .ui_events
+        .take(&v)
+        .map_err(|e| ApiError(StatusCode::BAD_REQUEST, format!("{e:#}")))?;
+    Ok(Json(json!({ "taken": n })))
+}
+
+/// Who keeps the record, and whether it is being written.
+async fn record_status() -> Json<Value> {
+    Json(
+        tokio::task::spawn_blocking(super::record::status)
+            .await
+            .unwrap_or_default(),
+    )
 }
 
 /// The session's audit log; for a session that has ended, from its directory.
@@ -391,12 +526,20 @@ async fn get_audit(State(d): D, Path(id): Path<String>) -> R<Response> {
         Err(_) => {
             // The id goes into a path: accept only the form session ids have.
             if !super::is_session_id(&id) {
-                return Err(ApiError(StatusCode::BAD_REQUEST, format!("{id:?} is not a session id")));
+                return Err(ApiError(
+                    StatusCode::BAD_REQUEST,
+                    format!("{id:?} is not a session id"),
+                ));
             }
-            d.paths.state.join("sessions").join(&id).join("audit.jsonl")
+            super::record::view(&d.paths.state.join("sessions").join(&id).join("audit.jsonl"))
         }
     };
-    let text = tokio::fs::read_to_string(&path).await.map_err(|_| ApiError(StatusCode::NOT_FOUND, format!("no audit log for session {id}")))?;
+    let text = tokio::fs::read_to_string(&path).await.map_err(|_| {
+        ApiError(
+            StatusCode::NOT_FOUND,
+            format!("no audit log for session {id}"),
+        )
+    })?;
     Ok(([(header::CONTENT_TYPE, "application/x-ndjson")], text).into_response())
 }
 
@@ -410,28 +553,53 @@ async fn list_requests(State(d): D, Path(id): Path<String>) -> R<Json<Vec<Value>
 /// One request with its headers and bodies.
 async fn get_request(State(d): D, Path((id, n)): Path<(String, u64)>) -> R<Json<Value>> {
     let s = d.session(&id)?;
-    let r = s.requests.lock().unwrap().get(n).ok_or_else(|| anyhow::anyhow!("no request {n}"))?;
+    let r = s
+        .requests
+        .lock()
+        .unwrap()
+        .get(n)
+        .ok_or_else(|| anyhow::anyhow!("no request {n}"))?;
     Ok(Json(r))
 }
 
-async fn list_terminals(State(d): D, Path(id): Path<String>) -> R<Json<Vec<session::TerminalInfo>>> {
+async fn list_terminals(
+    State(d): D,
+    Path(id): Path<String>,
+) -> R<Json<Vec<session::TerminalInfo>>> {
     let s = d.session(&id)?;
-    let terms = s.terminals.lock().unwrap().values().map(|t| t.info()).collect();
+    let terms = s
+        .terminals
+        .lock()
+        .unwrap()
+        .values()
+        .map(|t| t.info())
+        .collect();
     Ok(Json(terms))
 }
 
 /// A terminal's kept output, then its live output, as server-sent events:
 /// `{"o": base64}` output, `{"r": [rows, cols]}` a resize, `{"end": code}`
 /// when it closes. Read-only: nothing goes back to the terminal.
-async fn terminal_stream(State(d): D, Path((id, n)): Path<(String, u64)>) -> R<Sse<impl Stream<Item = Result<SseEvent, Infallible>>>> {
+async fn terminal_stream(
+    State(d): D,
+    Path((id, n)): Path<(String, u64)>,
+) -> R<Sse<impl Stream<Item = Result<SseEvent, Infallible>>>> {
     use base64::Engine as _;
     let s = d.session(&id)?;
-    let term = s.terminals.lock().unwrap().get(&n).cloned().ok_or_else(|| anyhow::anyhow!("no terminal {n}"))?;
+    let term = s
+        .terminals
+        .lock()
+        .unwrap()
+        .get(&n)
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("no terminal {n}"))?;
     let (snapshot, rx) = term.watch();
     let live = BroadcastStream::new(rx).filter_map(|r| async move { r.ok() });
     let stream = stream::iter(snapshot).chain(live).map(|chunk| {
         let data = match chunk {
-            session::TermChunk::Output(bytes) => json!({ "o": base64::engine::general_purpose::STANDARD.encode(bytes) }),
+            session::TermChunk::Output(bytes) => {
+                json!({ "o": base64::engine::general_purpose::STANDARD.encode(bytes) })
+            }
             session::TermChunk::Resize(rows, cols) => json!({ "r": [rows, cols] }),
             session::TermChunk::End(code) => json!({ "end": code }),
         };
@@ -451,13 +619,20 @@ struct CreateSession {
 async fn create_session(State(d): D, body: String) -> R<Json<session::SessionInfo>> {
     let req: CreateSession = parse_body(&body)?;
     if !req.workdir.is_absolute() {
-        return Err(ApiError(StatusCode::BAD_REQUEST, "workdir must be absolute".into()));
+        return Err(ApiError(
+            StatusCode::BAD_REQUEST,
+            "workdir must be absolute".into(),
+        ));
     }
     let mut policy = Policy::default();
     for r in req.rules {
         policy.insert(r, None);
     }
-    let s = session::create(d.clone(), NewSession::plain(req.profile, req.workdir, policy)).await?;
+    let s = session::create(
+        d.clone(),
+        NewSession::plain(req.profile, req.workdir, policy),
+    )
+    .await?;
     Ok(Json(s.info()))
 }
 
@@ -486,16 +661,36 @@ struct AttachQuery {
 
 /// Upgrades the connection to a terminal in the guest; frames as in
 /// `zapper_policy::proto::Frame`.
-async fn attach(State(d): D, Path(id): Path<String>, Query(q): Query<AttachQuery>, req: Request) -> R<Response> {
+async fn attach(
+    State(d): D,
+    Path(id): Path<String>,
+    Query(q): Query<AttachQuery>,
+    req: Request,
+) -> R<Response> {
     let s = d.session(&id)?;
-    let tty = q.tty.as_deref().and_then(|t| t.split_once('x')).and_then(|(r, c)| Some((r.parse().ok()?, c.parse().ok()?)));
+    let tty = q
+        .tty
+        .as_deref()
+        .and_then(|t| t.split_once('x'))
+        .and_then(|(r, c)| Some((r.parse().ok()?, c.parse().ok()?)));
     let argv: Vec<String> = match &q.argv {
-        Some(a) => serde_json::from_str(a).map_err(|e| ApiError(StatusCode::BAD_REQUEST, format!("argv: {e}")))?,
+        Some(a) => serde_json::from_str(a)
+            .map_err(|e| ApiError(StatusCode::BAD_REQUEST, format!("argv: {e}")))?,
         None => vec![],
     };
-    let shell = ShellRequest { id: 0, argv, tty, env: Default::default(), system: q.system };
+    let shell = ShellRequest {
+        id: 0,
+        argv,
+        tty,
+        env: Default::default(),
+        system: q.system,
+    };
     let (guest, shell_id) = s.open_shell(shell.clone()).await?;
-    let argv = if shell.argv.is_empty() { s.resolved.agent.command.clone() } else { shell.argv };
+    let argv = if shell.argv.is_empty() {
+        s.resolved.agent.command.clone()
+    } else {
+        shell.argv
+    };
     let on_upgrade = hyper::upgrade::on(req);
     tokio::spawn(async move {
         if let Ok(up) = on_upgrade.await {
@@ -535,7 +730,9 @@ async fn evaluate(State(d): D, body: String) -> R<Json<Value>> {
     if let Some(n) = e.net {
         let inspected = needs_inspection(&layers, &n.host, n.port);
         let (decision, effects) = evaluate_net(&layers, &n);
-        return Ok(Json(json!({ "decision": decision, "inspected": inspected, "secrets": effects.secrets })));
+        return Ok(Json(
+            json!({ "decision": decision, "inspected": inspected, "secrets": effects.secrets }),
+        ));
     }
     if let Some(x) = e.exec {
         return Ok(Json(json!({ "decision": evaluate_exec(&layers, &x) })));
@@ -550,8 +747,15 @@ struct EventsQuery {
     history: bool,
 }
 
-async fn events(State(d): D, Query(q): Query<EventsQuery>) -> Sse<impl Stream<Item = Result<SseEvent, Infallible>>> {
-    let history = if q.history { d.recent_events(q.session.as_deref()) } else { vec![] };
+async fn events(
+    State(d): D,
+    Query(q): Query<EventsQuery>,
+) -> Sse<impl Stream<Item = Result<SseEvent, Infallible>>> {
+    let history = if q.history {
+        d.recent_events(q.session.as_deref())
+    } else {
+        vec![]
+    };
     let session = q.session.clone();
     let live = BroadcastStream::new(d.events.subscribe()).filter_map(move |e| {
         let session = session.clone();
@@ -560,7 +764,9 @@ async fn events(State(d): D, Query(q): Query<EventsQuery>) -> Sse<impl Stream<It
             (session.is_none() || e.session == session).then_some(e)
         }
     });
-    let stream = stream::iter(history).chain(live).map(|e| Ok(SseEvent::default().json_data(&e).unwrap_or_default()));
+    let stream = stream::iter(history)
+        .chain(live)
+        .map(|e| Ok(SseEvent::default().json_data(&e).unwrap_or_default()));
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
 

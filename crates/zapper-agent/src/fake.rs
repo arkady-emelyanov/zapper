@@ -18,7 +18,8 @@
 //! ```
 //!
 //! `$message`, `$thread`, `$from`, `$subject` come from the wake's first
-//! message, `$request` from its first access request, `$artifact` from the
+//! message, `$request` from its first access request, `$screening` from its
+//! first background check, `$artifact` from the
 //! last publish, `$last` is the last tool result's text.
 
 use std::collections::HashSet;
@@ -41,19 +42,44 @@ impl Mcp {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
         let state: Value = serde_json::from_slice(&std::fs::read(format!("{home}/.claude.json"))?)?;
         let server = &state["mcpServers"]["office"];
-        let cmd = server["command"].as_str().ok_or_else(|| anyhow!("no office MCP server in ~/.claude.json"))?;
-        let args: Vec<String> = server["args"].as_array().into_iter().flatten().filter_map(|a| a.as_str().map(str::to_string)).collect();
-        let mut child = Command::new(cmd).args(&args).stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().context("starting the office MCP server")?;
-        let mut m = Mcp { stdin: child.stdin.take().unwrap(), stdout: BufReader::new(child.stdout.take().unwrap()), _child: child, next: 1 };
+        let cmd = server["command"]
+            .as_str()
+            .ok_or_else(|| anyhow!("no office MCP server in ~/.claude.json"))?;
+        let args: Vec<String> = server["args"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|a| a.as_str().map(str::to_string))
+            .collect();
+        let mut child = Command::new(cmd)
+            .args(&args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .context("starting the office MCP server")?;
+        let mut m = Mcp {
+            stdin: child.stdin.take().unwrap(),
+            stdout: BufReader::new(child.stdout.take().unwrap()),
+            _child: child,
+            next: 1,
+        };
         m.request("initialize", json!({ "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": { "name": "fake-claude", "version": "0" } }))?;
-        writeln!(m.stdin, "{}", json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }))?;
+        writeln!(
+            m.stdin,
+            "{}",
+            json!({ "jsonrpc": "2.0", "method": "notifications/initialized" })
+        )?;
         Ok(m)
     }
 
     fn request(&mut self, method: &str, params: Value) -> Result<Value> {
         let id = self.next;
         self.next += 1;
-        writeln!(self.stdin, "{}", json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }))?;
+        writeln!(
+            self.stdin,
+            "{}",
+            json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params })
+        )?;
         self.stdin.flush()?;
         loop {
             let mut line = String::new();
@@ -81,6 +107,8 @@ struct Wake {
     kind: String,
     subject: String,
     request: String,
+    screening: String,
+    contract: String,
 }
 
 fn after<'a>(text: &'a str, marker: &str) -> Option<&'a str> {
@@ -88,11 +116,16 @@ fn after<'a>(text: &'a str, marker: &str) -> Option<&'a str> {
 }
 
 fn word(s: &str) -> String {
-    s.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_').collect()
+    s.chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .collect()
 }
 
 fn parse_wake(text: &str) -> Wake {
-    let mut w = Wake { text: text.to_string(), ..Default::default() };
+    let mut w = Wake {
+        text: text.to_string(),
+        ..Default::default()
+    };
     if let Some(rest) = after(text, "\nMessage: ").or_else(|| after(text, "Message: ")) {
         w.message = word(rest);
     }
@@ -110,6 +143,19 @@ fn parse_wake(text: &str) -> Wake {
     }
     if let Some(rest) = after(text, "Access request ") {
         w.request = word(rest);
+    }
+    if let Some(rest) = after(text, "Background check ") {
+        w.screening = word(rest);
+    }
+    // The first contract id: "Contract offer k-1", "contract k-1".
+    let mut rest = text;
+    while let Some(i) = rest.find("ontract ") {
+        rest = &rest[i + 8..];
+        let id = word(rest.strip_prefix("offer ").unwrap_or(rest));
+        if id.starts_with("k-") {
+            w.contract = id;
+            break;
+        }
     }
     w
 }
@@ -133,9 +179,39 @@ fn substitute(v: &Value, vars: &[(&str, String)]) -> Value {
             json!(s)
         }
         Value::Array(a) => Value::Array(a.iter().map(|x| substitute(x, vars)).collect()),
-        Value::Object(o) => Value::Object(o.iter().map(|(k, x)| (k.clone(), substitute(x, vars))).collect()),
+        Value::Object(o) => Value::Object(
+            o.iter()
+                .map(|(k, x)| (k.clone(), substitute(x, vars)))
+                .collect(),
+        ),
         other => other.clone(),
     }
+}
+
+/// Runs the Stop hook from the settings, as Claude Code does: the reason
+/// when it blocks the stop.
+fn stop_hook() -> Option<String> {
+    let home = std::env::var("HOME").ok()?;
+    let settings: Value = serde_json::from_str(
+        &std::fs::read_to_string(format!("{home}/.claude/settings.json")).ok()?,
+    )
+    .ok()?;
+    let cmd = settings["hooks"]["Stop"][0]["hooks"][0]["command"]
+        .as_str()?
+        .to_string();
+    let mut child = Command::new("sh")
+        .args(["-c", &cmd])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .ok()?;
+    let _ = child
+        .stdin
+        .take()?
+        .write_all(br#"{"hook_event_name":"Stop","stop_hook_active":false}"#);
+    let out = child.wait_with_output().ok()?;
+    let v: Value = serde_json::from_slice(&out.stdout).ok()?;
+    (v["decision"] == "block").then(|| v["reason"].as_str().unwrap_or("").to_string())
 }
 
 fn emit(v: Value) {
@@ -155,7 +231,9 @@ pub fn run(script: &str) -> i32 {
 }
 
 fn play(script: &str) -> Result<()> {
-    let script: Value = serde_yaml::from_str(&std::fs::read_to_string(script).with_context(|| format!("reading {script}"))?)?;
+    let script: Value = serde_yaml::from_str(
+        &std::fs::read_to_string(script).with_context(|| format!("reading {script}"))?,
+    )?;
     let rules = script["rules"].as_array().cloned().unwrap_or_default();
     let session = format!("fake-{}", std::process::id());
     let mut mcp: Option<Mcp> = None;
@@ -164,7 +242,9 @@ fn play(script: &str) -> Result<()> {
     let mut turns = 0u64;
     for line in std::io::stdin().lock().lines() {
         let line = line?;
-        let Ok(msg) = serde_json::from_str::<Value>(&line) else { continue };
+        let Ok(msg) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
         if msg["type"] != "user" {
             continue;
         }
@@ -172,58 +252,98 @@ fn play(script: &str) -> Result<()> {
         turns += 1;
         let text: String = match &msg["message"]["content"] {
             Value::String(s) => s.clone(),
-            Value::Array(a) => a.iter().filter_map(|c| c["text"].as_str()).collect::<Vec<_>>().join("\n"),
+            Value::Array(a) => a
+                .iter()
+                .filter_map(|c| c["text"].as_str())
+                .collect::<Vec<_>>()
+                .join("\n"),
             _ => String::new(),
         };
-        emit(json!({ "type": "system", "subtype": "init", "session_id": session, "tools": [], "model": "fake" }));
-        let wake = parse_wake(&text);
-        let rule = rules.iter().enumerate().find(|(i, r)| !(r["when"]["once"] == json!(true) && fired.contains(i)) && matches(&r["when"], &wake));
+        emit(
+            json!({ "type": "system", "subtype": "init", "session_id": session, "tools": [], "model": "fake" }),
+        );
         let mut last = String::new();
         let mut errors = 0;
-        if let Some((i, rule)) = rule {
-            fired.insert(i);
-            for action in rule["do"].as_array().into_iter().flatten() {
-                let vars = [
-                    ("$message", wake.message.clone()),
-                    ("$thread", wake.thread.clone()),
-                    ("$from", wake.from.clone()),
-                    ("$subject", wake.subject.clone()),
-                    ("$request", wake.request.clone()),
-                    ("$artifact", artifact.clone()),
-                    ("$last", last.clone()),
-                ];
-                let Some((name, args)) = action.as_object().and_then(|o| o.iter().next()) else { continue };
-                let args = substitute(args, &vars);
-                match name.as_str() {
-                    "say" => emit(json!({ "type": "assistant", "session_id": session, "message": { "role": "assistant", "content": [{ "type": "text", "text": args }] } })),
-                    "sleep" => std::thread::sleep(std::time::Duration::from_secs_f64(args.as_f64().unwrap_or(1.0))),
-                    "shell" => {
-                        let cmd = args.as_str().unwrap_or("true");
-                        emit(json!({ "type": "assistant", "session_id": session, "message": { "role": "assistant", "content": [{ "type": "tool_use", "id": "t", "name": "Bash", "input": { "command": cmd } }] } }));
-                        let out = Command::new("sh").args(["-c", cmd]).output();
-                        last = match out {
-                            Ok(o) => String::from_utf8_lossy(&o.stdout).into_owned() + &String::from_utf8_lossy(&o.stderr),
-                            Err(e) => e.to_string(),
-                        };
-                        emit(json!({ "type": "user", "session_id": session, "message": { "role": "user", "content": [{ "type": "tool_result", "tool_use_id": "t", "content": last }] } }));
-                    }
-                    tool => {
-                        emit(json!({ "type": "assistant", "session_id": session, "message": { "role": "assistant", "content": [{ "type": "tool_use", "id": "t", "name": format!("mcp__office__{tool}"), "input": args }] } }));
-                        if mcp.is_none() {
-                            mcp = Some(Mcp::start()?);
+        // A turn: the wake, then whatever the Stop hook hands over.
+        let mut text = text;
+        for _ in 0..5 {
+            let wake = parse_wake(&text);
+            let rule = rules.iter().enumerate().find(|(i, r)| {
+                !(r["when"]["once"] == json!(true) && fired.contains(i))
+                    && matches(&r["when"], &wake)
+            });
+            if let Some((i, rule)) = rule {
+                fired.insert(i);
+                for action in rule["do"].as_array().into_iter().flatten() {
+                    let vars = [
+                        ("$message", wake.message.clone()),
+                        ("$thread", wake.thread.clone()),
+                        ("$from", wake.from.clone()),
+                        ("$subject", wake.subject.clone()),
+                        ("$request", wake.request.clone()),
+                        ("$screening", wake.screening.clone()),
+                        ("$contract", wake.contract.clone()),
+                        ("$artifact", artifact.clone()),
+                        ("$last", last.clone()),
+                    ];
+                    let Some((name, args)) = action.as_object().and_then(|o| o.iter().next())
+                    else {
+                        continue;
+                    };
+                    let args = substitute(args, &vars);
+                    match name.as_str() {
+                        "say" => emit(
+                            json!({ "type": "assistant", "session_id": session, "message": { "role": "assistant", "content": [{ "type": "text", "text": args }] } }),
+                        ),
+                        "sleep" => std::thread::sleep(std::time::Duration::from_secs_f64(
+                            args.as_f64().unwrap_or(1.0),
+                        )),
+                        "shell" => {
+                            let cmd = args.as_str().unwrap_or("true");
+                            emit(
+                                json!({ "type": "assistant", "session_id": session, "message": { "role": "assistant", "content": [{ "type": "tool_use", "id": "t", "name": "Bash", "input": { "command": cmd } }] } }),
+                            );
+                            let out = Command::new("sh").args(["-c", cmd]).output();
+                            last = match out {
+                                Ok(o) => {
+                                    String::from_utf8_lossy(&o.stdout).into_owned()
+                                        + &String::from_utf8_lossy(&o.stderr)
+                                }
+                                Err(e) => e.to_string(),
+                            };
+                            emit(
+                                json!({ "type": "user", "session_id": session, "message": { "role": "user", "content": [{ "type": "tool_result", "tool_use_id": "t", "content": last }] } }),
+                            );
                         }
-                        let r = mcp.as_mut().unwrap().request("tools/call", json!({ "name": tool, "arguments": args }))?;
-                        last = r["content"][0]["text"].as_str().unwrap_or("").to_string();
-                        if r["isError"] == json!(true) {
-                            errors += 1;
-                        } else if tool == "drive_publish" {
-                            if let Ok(v) = serde_json::from_str::<Value>(&last) {
-                                artifact = v["ref"].as_str().unwrap_or("").to_string();
+                        tool => {
+                            emit(
+                                json!({ "type": "assistant", "session_id": session, "message": { "role": "assistant", "content": [{ "type": "tool_use", "id": "t", "name": format!("mcp__office__{tool}"), "input": args }] } }),
+                            );
+                            if mcp.is_none() {
+                                mcp = Some(Mcp::start()?);
                             }
+                            let r = mcp.as_mut().unwrap().request(
+                                "tools/call",
+                                json!({ "name": tool, "arguments": args }),
+                            )?;
+                            last = r["content"][0]["text"].as_str().unwrap_or("").to_string();
+                            if r["isError"] == json!(true) {
+                                errors += 1;
+                            } else if tool == "drive_publish" {
+                                if let Ok(v) = serde_json::from_str::<Value>(&last) {
+                                    artifact = v["ref"].as_str().unwrap_or("").to_string();
+                                }
+                            }
+                            emit(
+                                json!({ "type": "user", "session_id": session, "message": { "role": "user", "content": [{ "type": "tool_result", "tool_use_id": "t", "content": last, "is_error": r["isError"] }] } }),
+                            );
                         }
-                        emit(json!({ "type": "user", "session_id": session, "message": { "role": "user", "content": [{ "type": "tool_result", "tool_use_id": "t", "content": last, "is_error": r["isError"] }] } }));
                     }
                 }
+            }
+            match stop_hook() {
+                Some(reason) => text = reason,
+                None => break,
             }
         }
         emit(json!({
@@ -243,11 +363,28 @@ mod tests {
     fn reads_the_wake() {
         let text = "New mail: 1 message(s).\n\n── 1 of 1 ──\nThread: \"Landing page v1\" (t-3)\nMessage: m-7\nFrom: cto (CTO, your manager)\nKind: assignment · Expects: done\n";
         let w = parse_wake(text);
-        assert_eq!((w.message.as_str(), w.thread.as_str(), w.from.as_str(), w.kind.as_str(), w.subject.as_str()), ("m-7", "t-3", "cto", "assignment", "Landing page v1"));
+        assert_eq!(
+            (
+                w.message.as_str(),
+                w.thread.as_str(),
+                w.from.as_str(),
+                w.kind.as_str(),
+                w.subject.as_str()
+            ),
+            ("m-7", "t-3", "cto", "assignment", "Landing page v1")
+        );
         assert!(matches(&json!({ "from": "cto", "kind": "assignment" }), &w));
         assert!(!matches(&json!({ "from": "board" }), &w));
         let r = parse_wake("Access request r-12 — decision needed.");
         assert_eq!(r.request, "r-12");
-        assert_eq!(substitute(&json!({ "m": "$message!" }), &[("$message", "m-7".into())]), json!({ "m": "m-7!" }));
+        assert_eq!(parse_wake("**Contract offer k-3: Audit**").contract, "k-3");
+        assert_eq!(
+            parse_wake("a contract with **Counter-offer for contract k-2**").contract,
+            "k-2"
+        );
+        assert_eq!(
+            substitute(&json!({ "m": "$message!" }), &[("$message", "m-7".into())]),
+            json!({ "m": "m-7!" })
+        );
     }
 }

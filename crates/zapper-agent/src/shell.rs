@@ -10,7 +10,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
-use zapper_policy::proto::{Frame, GuestEvent, GuestSpec, ShellRequest, HOST_CID, MAX_FRAME, MAX_LINE, SHELL_PORT};
+use zapper_policy::proto::{
+    Frame, GuestEvent, GuestSpec, ShellRequest, HOST_CID, MAX_FRAME, MAX_LINE, SHELL_PORT,
+};
 use zapper_policy::ExecRequest;
 
 use crate::control::Control;
@@ -29,7 +31,9 @@ pub fn serve(control: Control, spec: GuestSpec) -> ! {
     };
     let spec = Arc::new(spec);
     loop {
-        let Ok((conn, cid)) = listener.accept() else { continue };
+        let Ok((conn, cid)) = listener.accept() else {
+            continue;
+        };
         // Only the host may open terminals: a guest process could otherwise
         // reach this port over vsock loopback.
         if cid != HOST_CID {
@@ -48,7 +52,10 @@ pub fn serve(control: Control, spec: GuestSpec) -> ! {
 fn session(conn: File, control: &Control, spec: &GuestSpec) -> Result<()> {
     let mut reader = BufReader::new(conn.try_clone()?);
     let mut line = Vec::new();
-    reader.by_ref().take(MAX_LINE as u64).read_until(b'\n', &mut line)?;
+    reader
+        .by_ref()
+        .take(MAX_LINE as u64)
+        .read_until(b'\n', &mut line)?;
     let req: ShellRequest = serde_json::from_slice(&line).context("shell request")?;
     let writer = Arc::new(Mutex::new(conn));
     let send = {
@@ -59,14 +66,21 @@ fn session(conn: File, control: &Control, spec: &GuestSpec) -> Result<()> {
     let mut env = spec.env.clone();
     env.extend(req.env.clone());
     let as_root = spec.root || req.system;
-    let (home, user) = if as_root { ("/root".to_string(), "root".to_string()) } else { (spec.home.clone(), spec.user.clone()) };
-    env.entry("PATH".into()).or_insert_with(|| DEFAULT_PATH.into());
+    let (home, user) = if as_root {
+        ("/root".to_string(), "root".to_string())
+    } else {
+        (spec.home.clone(), spec.user.clone())
+    };
+    env.entry("PATH".into())
+        .or_insert_with(|| DEFAULT_PATH.into());
     env.insert("HOME".into(), home);
     env.insert("USER".into(), user.clone());
     env.insert("LOGNAME".into(), user);
-    env.entry("SHELL".into()).or_insert_with(|| "/bin/bash".into());
+    env.entry("SHELL".into())
+        .or_insert_with(|| "/bin/bash".into());
     if req.tty.is_some() {
-        env.entry("TERM".into()).or_insert_with(|| "xterm-256color".into());
+        env.entry("TERM".into())
+            .or_insert_with(|| "xterm-256color".into());
     }
     let child = match spawn(&req, &env, spec) {
         Ok(c) => c,
@@ -94,7 +108,11 @@ fn session(conn: File, control: &Control, spec: &GuestSpec) -> Result<()> {
                     Ok(0) | Err(_) => break,
                     Ok(n) => {
                         let data = buf[..n].to_vec();
-                        if !send(if stderr { Frame::Stderr(data) } else { Frame::Data(data) }) {
+                        if !send(if stderr {
+                            Frame::Stderr(data)
+                        } else {
+                            Frame::Data(data)
+                        }) {
                             break;
                         }
                     }
@@ -148,7 +166,10 @@ fn session(conn: File, control: &Control, spec: &GuestSpec) -> Result<()> {
         }
     }
     send(Frame::Exit(code));
-    control.event(GuestEvent::ShellExit { id: req.id, exit_code: code });
+    control.event(GuestEvent::ShellExit {
+        id: req.id,
+        exit_code: code,
+    });
     let w = writer.lock().unwrap();
     unsafe { libc::shutdown(w.as_raw_fd(), libc::SHUT_RDWR) };
     Ok(())
@@ -176,7 +197,8 @@ fn which(cmd: &str, path: &str) -> Option<PathBuf> {
     }
     path.split(':').map(|d| Path::new(d).join(cmd)).find(|p| {
         use std::os::unix::fs::PermissionsExt;
-        p.metadata().is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+        p.metadata()
+            .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
     })
 }
 
@@ -184,36 +206,64 @@ fn spawn(req: &ShellRequest, env: &BTreeMap<String, String>, spec: &GuestSpec) -
     if req.argv.is_empty() {
         bail!("no command");
     }
-    let exe = which(&req.argv[0], env.get("PATH").map(String::as_str).unwrap_or(DEFAULT_PATH))
-        .with_context(|| format!("{}: command not found", req.argv[0]))?;
+    let exe = which(
+        &req.argv[0],
+        env.get("PATH").map(String::as_str).unwrap_or(DEFAULT_PATH),
+    )
+    .with_context(|| format!("{}: command not found", req.argv[0]))?;
     // Everything the child needs is prepared before fork: after it, only
     // async-signal-safe calls.
     let exe = sys::cstr(&exe.to_string_lossy());
     let argv: Vec<CString> = req.argv.iter().map(|a| sys::cstr(a)).collect();
-    let envp: Vec<CString> = env.iter().map(|(k, v)| sys::cstr(&format!("{k}={v}"))).collect();
+    let envp: Vec<CString> = env
+        .iter()
+        .map(|(k, v)| sys::cstr(&format!("{k}={v}")))
+        .collect();
     let (argv_p, envp_p) = (sys::c_array(&argv), sys::c_array(&envp));
-    let cwd = sys::cstr(if spec.workdir.is_empty() { "/" } else { &spec.workdir });
+    let cwd = sys::cstr(if spec.workdir.is_empty() {
+        "/"
+    } else {
+        &spec.workdir
+    });
     let filter = sys::exec_filter();
     let drop_privs = !spec.root && !req.system;
     // Said by the child if exec fails; prepared here, as the child may only
     // make async-signal-safe calls.
-    let denied = format!("zapper: {}: exec denied by policy (zapper events shows the rule)\r\n", req.argv[0]);
+    let denied = format!(
+        "zapper: {}: exec denied by policy (zapper events shows the rule)\r\n",
+        req.argv[0]
+    );
     let failed = format!("zapper: {}: exec failed\r\n", req.argv[0]);
 
     let pty = match req.tty {
         Some((rows, cols)) => Some(sys::openpty(rows, cols)?),
         None => None,
     };
-    let pipes = if pty.is_none() { Some((sys::pipe()?, sys::pipe()?, sys::pipe()?)) } else { None };
+    let pipes = if pty.is_none() {
+        Some((sys::pipe()?, sys::pipe()?, sys::pipe()?))
+    } else {
+        None
+    };
     let fd_pair = if spec.supervise_exec && !req.system {
         let mut fds = [0; 2];
-        sys::check(unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM | libc::SOCK_CLOEXEC, 0, fds.as_mut_ptr()) })?;
+        sys::check(unsafe {
+            libc::socketpair(
+                libc::AF_UNIX,
+                libc::SOCK_STREAM | libc::SOCK_CLOEXEC,
+                0,
+                fds.as_mut_ptr(),
+            )
+        })?;
         unsafe { Some((OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1]))) }
     } else {
         None
     };
     let (stdin_fd, stdout_fd, stderr_fd) = match (&pty, &pipes) {
-        (Some(p), _) => (p.slave.as_raw_fd(), p.slave.as_raw_fd(), p.slave.as_raw_fd()),
+        (Some(p), _) => (
+            p.slave.as_raw_fd(),
+            p.slave.as_raw_fd(),
+            p.slave.as_raw_fd(),
+        ),
         (None, Some((i, o, e))) => (i.0.as_raw_fd(), o.1.as_raw_fd(), e.1.as_raw_fd()),
         _ => unreachable!(),
     };
@@ -229,14 +279,24 @@ fn spawn(req: &ShellRequest, env: &BTreeMap<String, String>, spec: &GuestSpec) -
             let mut set: libc::sigset_t = std::mem::zeroed();
             libc::sigemptyset(&mut set);
             libc::sigprocmask(libc::SIG_SETMASK, &set, std::ptr::null_mut());
-            for sig in [libc::SIGPIPE, libc::SIGINT, libc::SIGQUIT, libc::SIGTERM, libc::SIGHUP, libc::SIGCHLD] {
+            for sig in [
+                libc::SIGPIPE,
+                libc::SIGINT,
+                libc::SIGQUIT,
+                libc::SIGTERM,
+                libc::SIGHUP,
+                libc::SIGCHLD,
+            ] {
                 libc::signal(sig, libc::SIG_DFL);
             }
             libc::setsid();
             if pty.is_some() {
                 libc::ioctl(stdin_fd, libc::TIOCSCTTY as _, 0);
             }
-            if libc::dup2(stdin_fd, 0) < 0 || libc::dup2(stdout_fd, 1) < 0 || libc::dup2(stderr_fd, 2) < 0 {
+            if libc::dup2(stdin_fd, 0) < 0
+                || libc::dup2(stdout_fd, 1) < 0
+                || libc::dup2(stderr_fd, 2) < 0
+            {
                 fail(126);
             }
             if libc::chdir(cwd.as_ptr()) < 0 {
@@ -262,7 +322,11 @@ fn spawn(req: &ShellRequest, env: &BTreeMap<String, String>, spec: &GuestSpec) -
                 libc::close(fd);
             }
             libc::execve(exe.as_ptr(), argv_p.as_ptr(), envp_p.as_ptr());
-            let msg = if *libc::__errno_location() == libc::EACCES { &denied } else { &failed };
+            let msg = if *libc::__errno_location() == libc::EACCES {
+                &denied
+            } else {
+                &failed
+            };
             libc::write(2, msg.as_ptr() as *const libc::c_void, msg.len());
             fail(126);
         }
@@ -280,7 +344,13 @@ fn spawn(req: &ShellRequest, env: &BTreeMap<String, String>, spec: &GuestSpec) -
             drop(p.slave);
             let master_fd = p.master.as_raw_fd();
             let out = p.master.try_clone()?;
-            Child { pid, outputs: vec![(out, false)], input: Some(p.master), master_fd: Some(master_fd), notify }
+            Child {
+                pid,
+                outputs: vec![(out, false)],
+                input: Some(p.master),
+                master_fd: Some(master_fd),
+                notify,
+            }
         }
         (None, Some((i, o, e))) => Child {
             pid,
@@ -299,7 +369,11 @@ fn supervise(listener: OwnedFd, control: Control) {
     let fd = listener.as_raw_fd();
     let listener = Arc::new(listener);
     loop {
-        let mut pfd = libc::pollfd { fd, events: libc::POLLIN, revents: 0 };
+        let mut pfd = libc::pollfd {
+            fd,
+            events: libc::POLLIN,
+            revents: 0,
+        };
         if unsafe { libc::poll(&mut pfd, 1, -1) } < 0 {
             continue;
         }
@@ -366,10 +440,20 @@ fn read_exec(n: &sys::SeccompNotif) -> Option<ExecRequest> {
         base.unwrap_or_default().join(&raw)
     };
     let path = std::fs::canonicalize(&path).unwrap_or(path);
-    Some(ExecRequest { path: path.to_string_lossy().into_owned(), argv, cwd: cwd.map(|c| c.to_string_lossy().into_owned()) })
+    Some(ExecRequest {
+        path: path.to_string_lossy().into_owned(),
+        argv,
+        cwd: cwd.map(|c| c.to_string_lossy().into_owned()),
+    })
 }
 
 fn proc_uid(pid: u32) -> Option<u32> {
     let status = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
-    status.lines().find_map(|l| l.strip_prefix("Uid:")?.split_whitespace().next()?.parse().ok())
+    status.lines().find_map(|l| {
+        l.strip_prefix("Uid:")?
+            .split_whitespace()
+            .next()?
+            .parse()
+            .ok()
+    })
 }

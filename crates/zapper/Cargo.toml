@@ -7,6 +7,7 @@ license.workspace = true
 
 [dependencies]
 zapper-policy = { path = "../zapper-policy" }
+zapper-keeper = { path = "../zapper-keeper" }
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true

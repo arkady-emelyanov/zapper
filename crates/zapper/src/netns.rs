@@ -72,13 +72,19 @@ fn run(name: &str, args: &[&str], stdin: Option<&str>) -> Result<()> {
     if stdin.is_some() {
         cmd.stdin(Stdio::piped());
     }
-    let mut child = cmd.spawn().with_context(|| format!("running {name} (install iproute2 / nftables)"))?;
+    let mut child = cmd
+        .spawn()
+        .with_context(|| format!("running {name} (install iproute2 / nftables)"))?;
     if let Some(input) = stdin {
         child.stdin.take().unwrap().write_all(input.as_bytes())?;
     }
     let out = child.wait_with_output()?;
     if !out.status.success() {
-        bail!("{name} {}: {}", args.join(" "), String::from_utf8_lossy(&out.stderr).trim());
+        bail!(
+            "{name} {}: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
     }
     Ok(())
 }
@@ -88,7 +94,11 @@ fn run(name: &str, args: &[&str], stdin: Option<&str>) -> Result<()> {
 pub fn setup() -> Result<()> {
     run("ip", &["link", "set", "lo", "up"], None)?;
     run("ip", &["tuntap", "add", TAP, "mode", "tap"], None)?;
-    run("ip", &["addr", "add", &format!("{GATEWAY}/30"), "dev", TAP], None)?;
+    run(
+        "ip",
+        &["addr", "add", &format!("{GATEWAY}/30"), "dev", TAP],
+        None,
+    )?;
     run("ip", &["link", "set", TAP, "up"], None)?;
     run("nft", &["-f", "-"], Some(&ruleset()))?;
     Ok(())
@@ -112,7 +122,9 @@ pub fn serve(dir: &Path) -> Result<()> {
     thread::spawn(move || {
         let mut buf = [0u8; 1500];
         loop {
-            let Ok((n, peer)) = udp.recv_from(&mut buf) else { continue };
+            let Ok((n, peer)) = udp.recv_from(&mut buf) else {
+                continue;
+            };
             let (query, socket, udp) = (buf[..n].to_vec(), socket.clone(), udp.try_clone());
             thread::spawn(move || {
                 if let (Ok(answer), Ok(udp)) = (relay_dns(&query, &socket), udp) {
@@ -129,11 +141,22 @@ fn original_dst(conn: &TcpStream) -> io::Result<SocketAddrV4> {
     const SO_ORIGINAL_DST: libc::c_int = 80;
     let mut addr: libc::sockaddr_in = unsafe { std::mem::zeroed() };
     let mut len = std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t;
-    let r = unsafe { libc::getsockopt(conn.as_raw_fd(), libc::SOL_IP, SO_ORIGINAL_DST, &mut addr as *mut _ as *mut libc::c_void, &mut len) };
+    let r = unsafe {
+        libc::getsockopt(
+            conn.as_raw_fd(),
+            libc::SOL_IP,
+            SO_ORIGINAL_DST,
+            &mut addr as *mut _ as *mut libc::c_void,
+            &mut len,
+        )
+    };
     if r != 0 {
         return Err(io::Error::last_os_error());
     }
-    Ok(SocketAddrV4::new(Ipv4Addr::from(u32::from_be(addr.sin_addr.s_addr)), u16::from_be(addr.sin_port)))
+    Ok(SocketAddrV4::new(
+        Ipv4Addr::from(u32::from_be(addr.sin_addr.s_addr)),
+        u16::from_be(addr.sin_port),
+    ))
 }
 
 fn relay_tcp(conn: TcpStream, socket: &Path) -> io::Result<()> {

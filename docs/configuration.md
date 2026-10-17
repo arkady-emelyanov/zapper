@@ -47,6 +47,8 @@ firms:      name → org chart, budgets, officers, the firm's services  (office.
 | `ask_timeout_secs` | `60` | How long an `ask` waits before it denies |
 | `max_sessions` | `16` | Sessions starting or running at the same time |
 | `private_networks` | `[]` | CIDRs of private networks sessions may reach ([network](network.md#address-checks)) |
+| `ui_events` | `[stdout]` | Where the UI's events (every click on the office and sessions pages, with what was clicked and the page's context) go. `stdout` prints a JSON line per event (`{"ui_event": {...}}`) on the daemon's standard output; `[]` turns them off. Sinks are pluggable (`daemon/uievents.rs`) |
+| `keeper` | unset | `{socket, dir}`: the record kept by `zapper-keeper` as a separate user, append-only ([security: the record](security.md#the-record)); `scripts/install-keeper.sh` prints the values. Read at start: changing it needs a restart |
 
 ### profiles
 

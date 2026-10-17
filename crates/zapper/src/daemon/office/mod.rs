@@ -5,6 +5,7 @@
 //! A run starts fresh with every `firm up` and is written to
 //! `state/firms/<firm>/runs/<id>/` as it happens; the daemon keeps indexes.
 
+pub mod contracts;
 pub mod drive;
 pub mod facility;
 pub mod foreman;
@@ -16,10 +17,11 @@ pub mod ops;
 pub mod prompts;
 pub mod security;
 pub mod skills;
+pub mod workforce;
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock, Weak};
 use std::time::Duration;
 
@@ -43,7 +45,12 @@ pub struct Office {
 
 impl Office {
     pub fn run(&self, firm: &str) -> Result<Arc<FirmRun>> {
-        self.runs.read().unwrap().get(firm).cloned().ok_or_else(|| anyhow!("no run of firm {firm}; start it with `zapper firm up {firm}`"))
+        self.runs
+            .read()
+            .unwrap()
+            .get(firm)
+            .cloned()
+            .ok_or_else(|| anyhow!("no run of firm {firm}; start it with `zapper firm up {firm}`"))
     }
 
     pub fn active(&self, firm: &str) -> Result<Arc<FirmRun>> {
@@ -84,7 +91,9 @@ pub struct WorkerRt {
     pub name: String,
     pub role: String,
     pub title: String,
-    pub officer: bool,
+    /// A security officer now: officers change during a run (see
+    /// `FirmRun::set_officers`).
+    officer: AtomicBool,
     pub session: Mutex<Option<Arc<Session>>>,
     pub state: Mutex<(WorkerState, Option<String>)>,
     /// Messages not yet shown to the worker.
@@ -95,14 +104,38 @@ pub struct WorkerRt {
     pub access_queue: Mutex<Vec<String>>,
     /// The officer has a traffic digest to read.
     pub digest_due: AtomicBool,
+    /// Times the Stop hook extended the current turn with new mail.
+    pub extended: std::sync::atomic::AtomicU32,
     pub wake: Notify,
     /// The thread the current turn is about, for new threads it starts.
     pub context: Mutex<Option<String>>,
 }
 
 impl WorkerRt {
+    pub fn new(firm: &Firm, w: &zapper_policy::Worker) -> WorkerRt {
+        WorkerRt {
+            name: w.name.clone(),
+            role: w.role.clone(),
+            title: firm.title_of(&w.name),
+            officer: AtomicBool::new(firm.is_officer(&w.name)),
+            session: Mutex::new(None),
+            state: Mutex::new((WorkerState::Off, None)),
+            queue: Mutex::new(vec![]),
+            notes: Mutex::new(vec![]),
+            access_queue: Mutex::new(vec![]),
+            digest_due: AtomicBool::new(false),
+            extended: std::sync::atomic::AtomicU32::new(0),
+            wake: Notify::new(),
+            context: Mutex::new(None),
+        }
+    }
+
     pub fn state(&self) -> WorkerState {
         self.state.lock().unwrap().0
+    }
+
+    pub fn officer(&self) -> bool {
+        self.officer.load(Ordering::Relaxed)
     }
 
     pub fn session(&self) -> Option<Arc<Session>> {
@@ -124,15 +157,37 @@ pub struct FirmRun {
     pub firm: String,
     pub id: String,
     pub dir: PathBuf,
+    /// The firm's config as the run started: roles, budgets, limits,
+    /// services. The chart is in `chart`.
     pub config: Firm,
+    /// The live org chart: the founders, and whoever was hired since. A leaf
+    /// lock: nothing else is locked while it is held.
+    pub chart: Arc<RwLock<Firm>>,
     pub domain: String,
     pub started: f64,
     pub state: Mutex<RunState>,
     pub journal: Journal,
     pub post: Mutex<PostOffice>,
-    pub workers: BTreeMap<String, Arc<WorkerRt>>,
+    workers: RwLock<BTreeMap<String, Arc<WorkerRt>>>,
+    /// The run's budget: the board's grants, balances, budget requests.
+    pub ledger: Mutex<workforce::Ledger>,
+    /// The model each role's workers run, as the run started.
+    pub models: BTreeMap<String, Option<String>>,
+    /// The company's name for this run.
+    pub company: String,
+    /// The board's extra instructions for founders, by name.
+    pub prompts: BTreeMap<String, String>,
+    /// The board's own articles of the charter, for every worker.
+    pub articles: String,
+    /// Names that were in the firm and left: they can't be hired again.
+    pub departed: Mutex<BTreeMap<String, String>>,
+    /// Hires to boot: the run's booter boots their VMs and starts their
+    /// foremen, outside the office request that hired them.
+    pub boots: tokio::sync::mpsc::UnboundedSender<Arc<WorkerRt>>,
     pub drive: Mutex<drive::Drive>,
     pub security: Mutex<security::Security>,
+    /// Contract offers, negotiations and contracts.
+    pub contracts: Mutex<contracts::Contracts>,
     /// Officers' standing approvals per role.
     pub roles: BTreeMap<String, Arc<RwLock<Policy>>>,
     pub turns: Arc<Semaphore>,
@@ -161,13 +216,26 @@ impl FirmLink {
 /// `20261016-140501-k3z`, sortable by time.
 fn run_id() -> String {
     let t = time::OffsetDateTime::now_utc();
-    format!("{:04}{:02}{:02}-{:02}{:02}{:02}-{}", t.year(), t.month() as u8, t.day(), t.hour(), t.minute(), t.second(), random_id(3))
+    format!(
+        "{:04}{:02}{:02}-{:02}{:02}{:02}-{}",
+        t.year(),
+        t.month() as u8,
+        t.day(),
+        t.hour(),
+        t.minute(),
+        t.second(),
+        random_id(3)
+    )
 }
 
 /// Whether `s` has the form `run_id` makes, so it can go into a path.
 pub fn is_run_id(s: &str) -> bool {
     let b = s.as_bytes();
-    b.len() == 19 && b[8] == b'-' && b[15] == b'-' && b[..8].iter().chain(&b[9..15]).all(u8::is_ascii_digit) && b[16..].iter().all(|c| super::ID_CHARS.contains(c))
+    b.len() == 19
+        && b[8] == b'-'
+        && b[15] == b'-'
+        && b[..8].iter().chain(&b[9..15]).all(u8::is_ascii_digit)
+        && b[16..].iter().all(|c| super::ID_CHARS.contains(c))
 }
 
 pub fn firm_dir(d: &Daemon, firm: &str) -> PathBuf {
@@ -180,11 +248,29 @@ fn utc_day(ts: f64) -> i64 {
 
 impl FirmRun {
     pub fn ended(&self) -> bool {
-        matches!(*self.state.lock().unwrap(), RunState::Ended | RunState::Stopping)
+        matches!(
+            *self.state.lock().unwrap(),
+            RunState::Ended | RunState::Stopping
+        )
     }
 
-    pub fn worker(&self, name: &str) -> Result<&Arc<WorkerRt>> {
-        self.workers.get(name).ok_or_else(|| anyhow!("no worker {name}"))
+    pub fn worker(&self, name: &str) -> Result<Arc<WorkerRt>> {
+        self.rt(name).ok_or_else(|| anyhow!("no worker {name}"))
+    }
+
+    /// A worker's runtime, if they are in the firm now.
+    pub fn rt(&self, name: &str) -> Option<Arc<WorkerRt>> {
+        self.workers.read().unwrap().get(name).cloned()
+    }
+
+    /// Every worker in the firm now.
+    pub fn rts(&self) -> Vec<Arc<WorkerRt>> {
+        self.workers.read().unwrap().values().cloned().collect()
+    }
+
+    /// A copy of the live chart.
+    pub fn chart(&self) -> Firm {
+        self.chart.read().unwrap().clone()
     }
 
     pub fn set_state(&self, worker: &WorkerRt, state: WorkerState, detail: Option<String>) {
@@ -194,11 +280,19 @@ impl FirmRun {
         }
         *cur = (state, detail.clone());
         drop(cur);
-        self.journal.append("worker", json!({ "worker": worker.name, "state": state, "detail": detail }));
+        self.journal.append(
+            "worker",
+            json!({ "worker": worker.name, "state": state, "detail": detail }),
+        );
     }
 
     /// Sends mail and hands it to the recipients' foremen.
     pub fn send(&self, d: Draft) -> Result<mail::Sent> {
+        contracts::may_mail(
+            self,
+            &d.from,
+            &d.to.iter().chain(&d.cc).cloned().collect::<Vec<_>>(),
+        )?;
         let sent = self.post.lock().unwrap().send(&self.journal, d, now())?;
         self.deliver(&sent);
         Ok(sent)
@@ -206,7 +300,7 @@ impl FirmRun {
 
     pub fn deliver(&self, sent: &mail::Sent) {
         for r in &sent.recipients {
-            if let Some(w) = self.workers.get(r) {
+            if let Some(w) = self.rt(r) {
                 w.queue.lock().unwrap().push(sent.id.clone());
                 w.wake.notify_one();
             }
@@ -218,7 +312,11 @@ impl FirmRun {
         let d = Draft::new(mail::OFFICE, vec![to.to_string()], subject, body, Kind::Fyi);
         // The post office's lock ends with this statement, before the
         // workers' queues are touched.
-        let sent = self.post.lock().unwrap().send_notice(&self.journal, d, now());
+        let sent = self
+            .post
+            .lock()
+            .unwrap()
+            .send_notice(&self.journal, d, now());
         match sent {
             Ok(sent) => self.deliver(&sent),
             Err(e) => tracing::warn!(firm = %self.firm, "notice to {to}: {e:#}"),
@@ -228,14 +326,21 @@ impl FirmRun {
     /// Whether `worker` may start a turn under the budget; tells the board
     /// once a day when it may not.
     pub fn budget_allows(&self, worker: &str) -> bool {
+        if !workforce::allows(self, worker) {
+            return false;
+        }
         let b = &self.config.budget;
         let mut u = self.usage.lock().unwrap();
         let today = utc_day(now());
         if u.day != today {
-            *u = Usage { day: today, ..Default::default() };
+            *u = Usage {
+                day: today,
+                ..Default::default()
+            };
         }
         let worker_turns = u.worker_turns.get(worker).copied().unwrap_or(0);
-        let firm_over = (b.daily_turns > 0 && u.turns >= b.daily_turns) || (b.daily_tokens > 0 && u.tokens >= b.daily_tokens);
+        let firm_over = (b.daily_turns > 0 && u.turns >= b.daily_turns)
+            || (b.daily_tokens > 0 && u.tokens >= b.daily_tokens);
         let worker_over = b.worker_daily_turns > 0 && worker_turns >= b.worker_daily_turns;
         if !(firm_over || worker_over) {
             return true;
@@ -257,10 +362,14 @@ impl FirmRun {
     }
 
     pub fn count_turn(&self, worker: &str, tokens: u64) {
+        self.ledger.lock().unwrap().spend(worker, tokens);
         let mut u = self.usage.lock().unwrap();
         let today = utc_day(now());
         if u.day != today {
-            *u = Usage { day: today, ..Default::default() };
+            *u = Usage {
+                day: today,
+                ..Default::default()
+            };
         }
         u.turns += 1;
         u.tokens += tokens;
@@ -268,15 +377,16 @@ impl FirmRun {
     }
 
     pub fn status(&self) -> Value {
+        let ledger = self.ledger.lock().unwrap().status();
         let workers: Vec<Value> = self
-            .workers
-            .values()
+            .rts()
+            .iter()
             .map(|w| {
                 let (state, detail) = w.state.lock().unwrap().clone();
                 let po = self.post.lock().unwrap();
                 let desk = po.desk(&w.name);
                 json!({
-                    "name": w.name, "role": w.role, "title": w.title, "officer": w.officer,
+                    "name": w.name, "role": w.role, "title": w.title, "officer": w.officer(),
                     "state": state, "detail": detail,
                     "session": w.session().map(|s| s.id.clone()),
                     "unread": po.unread(&w.name).len(),
@@ -285,44 +395,75 @@ impl FirmRun {
                 })
             })
             .collect();
+        let chart = chart(&self.firm, &self.chart(), &self.models);
         let u = self.usage.lock().unwrap();
         json!({
-            "firm": self.firm, "run": self.id, "state": *self.state.lock().unwrap(), "started": self.started,
-            "domain": self.domain, "workers": workers,
+            "firm": self.firm, "company": self.company, "run": self.id, "state": *self.state.lock().unwrap(), "started": self.started,
+            "domain": self.domain, "workers": workers, "chart": chart, "funds": ledger,
             "usage": { "day": u.day, "turns": u.turns, "tokens": u.tokens, "worker_turns": u.worker_turns },
             "budget": self.config.budget,
             "board_unread": self.post.lock().unwrap().unread(BOARD).len(),
             "facilities": self.facility.status(),
+            "contracts": contracts::list(self),
         })
     }
 }
 
-/// The chart as the UI draws it, written at the start of a run.
-fn chart(name: &str, firm: &Firm, config: &Config) -> Value {
+/// The chart as the UI draws it: at the start of a run, and live.
+fn chart(name: &str, firm: &Firm, models: &BTreeMap<String, Option<String>>) -> Value {
     let workers: Vec<Value> = firm
         .workers
         .iter()
-        .map(|w| {
-            let role = firm.roles.get(&w.role);
-            json!({
-                "name": w.name, "role": w.role, "title": firm.title_of(&w.name),
-                "reports_to": w.reports_to, "officer": firm.is_officer(&w.name),
-                "avatar": role.map(|r| json!(r.avatar)), "model": role.and_then(|r| effective_model(r, config)),
-            })
-        })
+        .map(|w| worker_json(firm, models, w))
         .collect();
     json!({ "firm": name, "description": firm.description, "board": firm.board.name, "domain": firm.domain(name), "workers": workers })
 }
 
+/// One worker of the chart, as the UI draws it.
+pub(super) fn worker_json(
+    firm: &Firm,
+    models: &BTreeMap<String, Option<String>>,
+    w: &zapper_policy::Worker,
+) -> Value {
+    let role = firm.roles.get(&w.role);
+    json!({
+        "name": w.name, "role": w.role, "title": firm.title_of(&w.name),
+        "reports_to": w.reports_to, "officer": firm.is_officer(&w.name),
+        "avatar": role.map(|r| json!(r.avatar)), "model": models.get(&w.role).cloned().flatten(),
+    })
+}
+
+/// The model each role's workers run.
+fn role_models(firm: &Firm, config: &Config) -> BTreeMap<String, Option<String>> {
+    firm.roles
+        .iter()
+        .map(|(n, r)| (n.clone(), effective_model(r, config)))
+        .collect()
+}
+
 /// The model a role's workers run: the role's, else its profile's.
 pub fn effective_model(role: &zapper_policy::Role, config: &Config) -> Option<String> {
-    role.model.clone().or_else(|| config.resolve(&role.profile).ok().and_then(|p| p.agent.model))
+    role.model.clone().or_else(|| {
+        config
+            .resolve(&role.profile)
+            .ok()
+            .and_then(|p| p.agent.model)
+    })
 }
 
 /// Memory still available on the host, in MiB.
-fn mem_available_mib() -> Option<u64> {
+pub(super) fn mem_available_mib() -> Option<u64> {
     let info = std::fs::read_to_string("/proc/meminfo").ok()?;
-    info.lines().find_map(|l| l.strip_prefix("MemAvailable:")?.trim().strip_suffix("kB")?.trim().parse::<u64>().ok()).map(|k| k / 1024)
+    info.lines()
+        .find_map(|l| {
+            l.strip_prefix("MemAvailable:")?
+                .trim()
+                .strip_suffix("kB")?
+                .trim()
+                .parse::<u64>()
+                .ok()
+        })
+        .map(|k| k / 1024)
 }
 
 /// Checks that the firm fits before booting anything.
@@ -338,9 +479,23 @@ fn check_resources(d: &Daemon, config: &Config, firm: &Firm) -> Result<()> {
         mib += config.resolve(&f.profile)?.engine.memory_mib as u64;
         count += 1;
     }
-    let running = d.sessions.read().unwrap().values().filter(|s| !matches!(*s.status.borrow(), session::Status::Stopped(_) | session::Status::Failed(_))).count();
+    let running = d
+        .sessions
+        .read()
+        .unwrap()
+        .values()
+        .filter(|s| {
+            !matches!(
+                *s.status.borrow(),
+                session::Status::Stopped(_) | session::Status::Failed(_)
+            )
+        })
+        .count();
     if running + count > config.daemon.max_sessions {
-        bail!("the firm needs {count} sessions and {running} are running; daemon.max_sessions is {}", config.daemon.max_sessions);
+        bail!(
+            "the firm needs {count} sessions and {running} are running; daemon.max_sessions is {}",
+            config.daemon.max_sessions
+        );
     }
     if let Some(avail) = mem_available_mib() {
         if mib > avail {
@@ -351,14 +506,245 @@ fn check_resources(d: &Daemon, config: &Config, firm: &Firm) -> Result<()> {
 }
 
 /// Starts a fresh run of a firm: boots its facilities, then its workers.
-pub async fn up(d: &Arc<Daemon>, name: &str) -> Result<Arc<FirmRun>> {
+/// The board's parameters for one run; the config stays as it is.
+#[derive(Debug, Default, Clone, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct StartOptions {
+    /// The company's name, shown in the UI and on the landing page.
+    pub company: Option<String>,
+    /// The CEO's name, instead of the config's.
+    pub ceo: Option<String>,
+    /// The seed budget, in tokens or text like `500k`.
+    pub seed: Option<serde_json::Value>,
+    /// The security officer's name (the config's first officer), instead
+    /// of the config's.
+    pub officer: Option<String>,
+    /// Extra instructions for the CEO and the officer, in their preamble,
+    /// taking precedence over their skills.
+    pub ceo_prompt: Option<String>,
+    pub officer_prompt: Option<String>,
+    /// Who holds security at the start: `officer` (the config's founding
+    /// officers, the default) or `ceo` (the CEO alone, until they hire an
+    /// officer).
+    pub security: Option<String>,
+    /// The board's own articles for the charter: every worker reads them.
+    pub articles: Option<String>,
+    /// The charter's terms, instead of the config's.
+    pub security_share: Option<f64>,
+    pub max_concurrent: Option<u32>,
+    pub daily_turns: Option<u32>,
+}
+
+/// A run's firm as the board started it.
+#[derive(Debug)]
+struct Started {
+    firm: Firm,
+    company: String,
+    prompts: BTreeMap<String, String>,
+    articles: String,
+}
+
+/// Longest extra prompt the board gives a founder.
+const MAX_PROMPT: usize = 20_000;
+
+/// Renames a founder for this run, everywhere the chart names them.
+fn rename(firm: &mut Firm, old: &str, new: &str) -> Result<()> {
+    if new == old {
+        return Ok(());
+    }
+    if !zapper_policy::valid_worker_name(new) || zapper_policy::reserved_name(new) {
+        bail!(
+            "{new:?} can't be a name: lowercase letters, digits and dashes, starting with a letter"
+        );
+    }
+    if firm.worker(new).is_some() {
+        bail!("{new} is already in the firm");
+    }
+    for w in firm.workers.iter_mut() {
+        if w.name == old {
+            w.name = new.to_string();
+        }
+        if w.reports_to.as_deref() == Some(old) {
+            w.reports_to = Some(new.to_string());
+        }
+    }
+    for o in firm.security.officers.iter_mut() {
+        if o == old {
+            *o = new.to_string();
+        }
+    }
+    firm.names.retain(|n| n != new);
+    Ok(())
+}
+
+/// The company's name when the board gives none.
+pub fn default_company(name: &str, firm: &Firm) -> String {
+    firm.landing
+        .as_ref()
+        .map(|l| l.display_name(name))
+        .unwrap_or_else(|| format!("{} Inc.", zapper_policy::title_case(name)))
+}
+
+/// The firm as this run starts it: the config's, with the board's
+/// parameters applied and the result checked like the config.
+fn with_options(name: &str, mut firm: Firm, config: &Config, o: &StartOptions) -> Result<Started> {
+    let company = o
+        .company
+        .as_deref()
+        .map(str::trim)
+        .filter(|c| !c.is_empty())
+        .map(|c| c.chars().take(80).collect::<String>())
+        .unwrap_or_else(|| default_company(name, &firm));
+    if company.chars().any(char::is_control) {
+        bail!("the company's name can't have control characters");
+    }
+    if let Some(l) = firm.landing.as_mut() {
+        l.name = company.clone();
+    }
+    if let Some(ceo) = o
+        .ceo
+        .as_deref()
+        .map(|c| c.trim().to_ascii_lowercase())
+        .filter(|c| !c.is_empty())
+    {
+        let old = firm
+            .root()
+            .map(str::to_string)
+            .ok_or_else(|| anyhow!("the firm has no CEO"))?;
+        rename(&mut firm, &old, &ceo)?;
+    }
+    match o.security.as_deref().map(str::trim).unwrap_or("officer") {
+        "officer" | "" => {
+            if let Some(officer) = o
+                .officer
+                .as_deref()
+                .map(|c| c.trim().to_ascii_lowercase())
+                .filter(|c| !c.is_empty())
+            {
+                let old = firm
+                    .security
+                    .officers
+                    .first()
+                    .cloned()
+                    .ok_or_else(|| anyhow!("the firm has no security officer to name"))?;
+                rename(&mut firm, &old, &officer)?;
+            }
+        }
+        "ceo" => {
+            if o.officer.as_deref().is_some_and(|x| !x.trim().is_empty())
+                || o.officer_prompt
+                    .as_deref()
+                    .is_some_and(|x| !x.trim().is_empty())
+            {
+                bail!("the CEO holds security: there is no officer to name or instruct");
+            }
+            ceo_holds_security(&mut firm)?;
+        }
+        other => bail!("security: {other:?}; `officer` or `ceo`"),
+    }
+    // The board's extra instructions for the founders.
+    let mut prompts = BTreeMap::new();
+    for (who, text) in [
+        (firm.root().map(str::to_string), &o.ceo_prompt),
+        (firm.security.officers.first().cloned(), &o.officer_prompt),
+    ] {
+        let Some(text) = text.as_deref().map(str::trim).filter(|t| !t.is_empty()) else {
+            continue;
+        };
+        let who = who.ok_or_else(|| anyhow!("no founder for that prompt"))?;
+        if text.len() > MAX_PROMPT {
+            bail!("keep a founder's extra prompt under {MAX_PROMPT} bytes");
+        }
+        prompts.insert(who, text.to_string());
+    }
+    let articles = o
+        .articles
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or("")
+        .to_string();
+    if articles.len() > MAX_PROMPT {
+        bail!("keep the board's articles under {MAX_PROMPT} bytes");
+    }
+    if let Some(share) = o.security_share {
+        firm.budget.security_share = share;
+    }
+    if let Some(n) = o.max_concurrent {
+        firm.budget.max_concurrent = n;
+    }
+    if let Some(n) = o.daily_turns {
+        firm.budget.daily_turns = n;
+    }
+    if let Some(seed) = &o.seed {
+        firm.budget.seed = match seed {
+            Value::Number(n) => n
+                .as_u64()
+                .ok_or_else(|| anyhow!("seed: a whole number of tokens"))?,
+            Value::String(s) => zapper_policy::parse_tokens(s)?,
+            Value::Null => firm.budget.seed,
+            _ => bail!("seed: tokens, like 500k"),
+        };
+    }
+    let errors = firm.validate(name, config);
+    if !errors.is_empty() {
+        bail!("{}", errors.join("; "));
+    }
+    Ok(Started {
+        firm,
+        company,
+        prompts,
+        articles,
+    })
+}
+
+/// The founding officers stay out of the run and the CEO holds security,
+/// until they hire an officer.
+fn ceo_holds_security(firm: &mut Firm) -> Result<()> {
+    let root = firm
+        .root()
+        .map(str::to_string)
+        .ok_or_else(|| anyhow!("the firm has no CEO"))?;
+    let out: Vec<String> = firm
+        .security
+        .officers
+        .iter()
+        .filter(|o| **o != root)
+        .cloned()
+        .collect();
+    for o in &out {
+        let manager = firm.manager_of(o).unwrap_or(&root).to_string();
+        firm.workers.retain(|w| w.name != *o);
+        for w in firm.workers.iter_mut() {
+            if w.reports_to.as_deref() == Some(o) {
+                w.reports_to = Some(manager.clone());
+            }
+        }
+        if !firm.names.contains(o) {
+            firm.names.push(o.clone());
+        }
+    }
+    firm.security.officers = vec![root];
+    Ok(())
+}
+
+pub async fn up_with(d: &Arc<Daemon>, name: &str, opts: &StartOptions) -> Result<Arc<FirmRun>> {
     if let Ok(r) = d.office.run(name) {
         if !r.ended() {
             bail!("firm {name} is already running (run {})", r.id);
         }
     }
     let config = d.config.read().unwrap().clone();
-    let firm = config.firms.get(name).cloned().ok_or_else(|| anyhow!("no firm {name}"))?;
+    let firm = config
+        .firms
+        .get(name)
+        .cloned()
+        .ok_or_else(|| anyhow!("no firm {name}"))?;
+    let Started {
+        firm,
+        company,
+        prompts,
+        articles,
+    } = with_options(name, firm, &config, opts)?;
     check_resources(d, &config, &firm)?;
     let id = run_id();
     let dir = firm_dir(d, name).join("runs").join(&id);
@@ -367,69 +753,128 @@ pub async fn up(d: &Arc<Daemon>, name: &str) -> Result<Arc<FirmRun>> {
     }
     let journal = Journal::create(&dir.join("journal.jsonl"))?;
     let domain = firm.domain(name);
-    let roles = firm.roles.keys().map(|r| (r.clone(), Arc::new(RwLock::new(Policy::default())))).collect();
+    let roles = firm
+        .roles
+        .keys()
+        .map(|r| (r.clone(), Arc::new(RwLock::new(Policy::default()))))
+        .collect();
     let workers = firm
         .workers
         .iter()
-        .map(|w| {
-            let rt = WorkerRt {
-                name: w.name.clone(),
-                role: w.role.clone(),
-                title: firm.title_of(&w.name),
-                officer: firm.is_officer(&w.name),
-                session: Mutex::new(None),
-                state: Mutex::new((WorkerState::Off, None)),
-                queue: Mutex::new(vec![]),
-                notes: Mutex::new(vec![]),
-                access_queue: Mutex::new(vec![]),
-                digest_due: AtomicBool::new(false),
-                wake: Notify::new(),
-                context: Mutex::new(None),
-            };
-            (w.name.clone(), Arc::new(rt))
-        })
+        .map(|w| (w.name.clone(), Arc::new(WorkerRt::new(&firm, w))))
         .collect();
     let started = now();
+    let models = role_models(&firm, &config);
+    let live = Arc::new(RwLock::new(firm.clone()));
+    let (boots, boot_rx) = tokio::sync::mpsc::unbounded_channel();
     let run = Arc::new(FirmRun {
+        boots,
         firm: name.to_string(),
         id: id.clone(),
         dir: dir.clone(),
-        post: Mutex::new(PostOffice::new(&firm)),
+        post: Mutex::new(PostOffice::new(&firm, live.clone())),
+        chart: live,
+        ledger: Mutex::new(workforce::Ledger::new(&firm)),
+        models: models.clone(),
+        company: company.clone(),
+        prompts: prompts.clone(),
+        articles: articles.clone(),
+        departed: Mutex::new(BTreeMap::new()),
         drive: Mutex::new(drive::Drive::new(&firm)?),
         security: Mutex::new(security::Security::default()),
+        contracts: Mutex::new(contracts::Contracts::default()),
         roles,
         turns: Arc::new(Semaphore::new(firm.budget.max_concurrent as usize)),
-        usage: Mutex::new(Usage { day: utc_day(started), ..Default::default() }),
+        usage: Mutex::new(Usage {
+            day: utc_day(started),
+            ..Default::default()
+        }),
         facility: facility::Facilities::default(),
         config: firm.clone(),
         domain: domain.clone(),
         started,
         state: Mutex::new(RunState::Starting),
         journal,
-        workers,
+        workers: RwLock::new(workers),
         stopping: Notify::new(),
     });
-    let info = json!({ "firm": name, "run": id, "started": started, "chart": chart(name, &firm, &config), "budget": firm.budget, "agent_version": env!("CARGO_PKG_VERSION") });
-    super::write_private(&dir.join("run.json"), serde_json::to_string_pretty(&info)?.as_bytes())?;
+    let info = json!({ "firm": name, "company": company, "prompts": prompts, "articles": articles, "run": id, "started": started, "chart": chart(name, &firm, &models), "budget": firm.budget, "agent_version": env!("CARGO_PKG_VERSION") });
+    super::write_private(
+        &dir.join("run.json"),
+        serde_json::to_string_pretty(&info)?.as_bytes(),
+    )?;
     // The whole config the run started with, for replay: profiles, rules,
     // firms. Inline secret values are hidden, as in `zapper config startup`.
-    super::write_private(&dir.join(RUN_CONFIG), super::redact(config.clone()).to_yaml().as_bytes())?;
-    run.journal.append("run", json!({ "state": "starting", "chart": chart(name, &firm, &config), "budget": firm.budget }));
-    d.office.runs.write().unwrap().insert(name.to_string(), run.clone());
+    super::write_private(
+        &dir.join(RUN_CONFIG),
+        super::redact(config.clone()).to_yaml().as_bytes(),
+    )?;
+    run.journal.append("run", json!({ "state": "starting", "company": company, "prompts": prompts, "articles": articles, "chart": chart(name, &firm, &models), "budget": firm.budget }));
+    workforce::seed(&run);
+    d.office
+        .runs
+        .write()
+        .unwrap()
+        .insert(name.to_string(), run.clone());
 
     if let Err(e) = boot(d, &run, &config).await {
         let msg = format!("{e:#}");
-        run.journal.append("run", json!({ "state": "failed", "error": msg }));
+        run.journal
+            .append("run", json!({ "state": "failed", "error": msg }));
         down(d, &run, "boot failed").await;
         bail!("firm {name}: {msg}");
     }
     *run.state.lock().unwrap() = RunState::Running;
     run.journal.append("run", json!({ "state": "running" }));
-    for w in run.workers.values() {
-        tokio::spawn(foreman::run(d.clone(), run.clone(), w.clone()));
+    for w in run.rts() {
+        tokio::spawn(foreman::run(d.clone(), run.clone(), w));
     }
-    tokio::spawn(ticker(run.clone()));
+    tokio::spawn(ticker(d.clone(), run.clone()));
+    tokio::spawn(booter(d.clone(), run.clone(), boot_rx));
     Ok(run)
+}
+
+/// Boots the VMs of workers hired during the run, and starts their foremen.
+async fn booter(
+    d: Arc<Daemon>,
+    run: Arc<FirmRun>,
+    mut rx: tokio::sync::mpsc::UnboundedReceiver<Arc<WorkerRt>>,
+) {
+    while let Some(w) = rx.recv().await {
+        if run.ended() {
+            return;
+        }
+        let Some(role) = run.config.roles.get(&w.role).cloned() else {
+            continue;
+        };
+        let config = d.config.read().unwrap().clone();
+        let (d, run) = (d.clone(), run.clone());
+        tokio::spawn(async move {
+            run.set_state(&w, WorkerState::Booting, None);
+            match boot_worker(&d, &run, &config, &w, &role).await {
+                // Let go while booting: stop the VM again.
+                Ok(()) if run.ended() || run.rt(&w.name).is_none() => {
+                    if let Some(s) = w.session.lock().unwrap().take() {
+                        let d = d.clone();
+                        tokio::spawn(async move {
+                            session::stop(&d, &s, "let go").await;
+                            d.sessions.write().unwrap().remove(&s.id);
+                        });
+                    }
+                }
+                Ok(()) => {
+                    tokio::spawn(foreman::run(d.clone(), run.clone(), w));
+                }
+                Err(e) => {
+                    run.set_state(&w, WorkerState::Error, Some(format!("{e:#}")));
+                    run.journal.append(
+                        "op_error",
+                        json!({ "worker": w.name, "op": "boot", "error": format!("{e:#}") }),
+                    );
+                }
+            }
+        });
+    }
 }
 
 async fn boot(d: &Arc<Daemon>, run: &Arc<FirmRun>, config: &Config) -> Result<()> {
@@ -437,7 +882,7 @@ async fn boot(d: &Arc<Daemon>, run: &Arc<FirmRun>, config: &Config) -> Result<()
     facility::start(d, run, config).await?;
     skills::prepare(run, config)?;
     let mut tasks = Vec::new();
-    for w in run.workers.values().cloned() {
+    for w in run.rts() {
         let (d, run) = (d.clone(), run.clone());
         let role = firm.roles[&w.role].clone();
         let config = config.clone();
@@ -462,45 +907,94 @@ async fn boot(d: &Arc<Daemon>, run: &Arc<FirmRun>, config: &Config) -> Result<()
     }
 }
 
-async fn boot_worker(d: &Arc<Daemon>, run: &Arc<FirmRun>, config: &Config, w: &Arc<WorkerRt>, role: &zapper_policy::Role) -> Result<()> {
+pub(super) async fn boot_worker(
+    d: &Arc<Daemon>,
+    run: &Arc<FirmRun>,
+    config: &Config,
+    w: &Arc<WorkerRt>,
+    role: &zapper_policy::Role,
+) -> Result<()> {
     let profile = config.resolve(&role.profile)?;
     let user = profile.agent.user.clone();
     let home = format!("/home/{user}");
     let services = facility::services_for(run, &w.role);
-    let mut files = vec![GuestFile { path: format!("{home}/.claude/CLAUDE.md"), content: prompts::preamble(&run.firm, &run.config, &w.name, &services), mode: 0o644, user_owned: true }];
+    let mut files = vec![GuestFile {
+        path: format!("{home}/.claude/CLAUDE.md"),
+        content: prompts::preamble(
+            &run.firm,
+            &run.chart(),
+            &run.config,
+            &w.name,
+            &services,
+            run.prompts.get(&w.name).map(String::as_str),
+            &run.articles,
+        ) + &contracts::of(run, &w.name)
+            .map(|c| contracts::preamble(&c))
+            .unwrap_or_default(),
+        mode: 0o644,
+        user_owned: true,
+    }];
     files.extend(facility::credentials_for(run, &w.name, &w.role, &home)?);
     // A headless browser command, for the image's Playwright.
-    files.push(GuestFile { path: "/usr/local/bin/browse".into(), content: include_str!("browse.js").into(), mode: 0o755, user_owned: false });
+    files.push(GuestFile {
+        path: "/usr/local/bin/browse".into(),
+        content: include_str!("browse.js").into(),
+        mode: 0o755,
+        user_owned: false,
+    });
     if let Some(script) = &role.fake {
-        let text = std::fs::read_to_string(zapper_policy::expand_home(script)).with_context(|| format!("fake script {script}"))?;
-        files.push(GuestFile { path: format!("{home}/.office/fake.yaml"), content: text, mode: 0o644, user_owned: true });
+        let text = std::fs::read_to_string(zapper_policy::expand_home(script))
+            .with_context(|| format!("fake script {script}"))?;
+        files.push(GuestFile {
+            path: format!("{home}/.office/fake.yaml"),
+            content: text,
+            mode: 0o644,
+            user_owned: true,
+        });
     }
     let mut overlay = json!({
         "mcp_servers": { "office": { "command": ops::AGENT_PATH, "args": ["office", "mcp"] } },
+        // Mail that arrives while Claude works is handed over before it
+        // stops, in the same turn (foreman::stop_check).
+        "settings": { "hooks": { "Stop": [{ "hooks": [{ "type": "command", "command": format!("{} office stop-hook", ops::AGENT_PATH), "timeout": 30 }] }] } },
     });
     if let Some(m) = &role.model {
         overlay["model"] = json!(m);
     }
     let skills_dir = run.dir.join("skills").join(&w.role);
-    let link = FirmLink { firm: run.firm.clone(), member: w.name.clone(), worker: true, run: Arc::downgrade(run), role: Some((w.role.clone(), run.roles[&w.role].clone())) };
+    let link = FirmLink {
+        firm: run.firm.clone(),
+        member: w.name.clone(),
+        worker: true,
+        run: Arc::downgrade(run),
+        role: Some((w.role.clone(), run.roles[&w.role].clone())),
+    };
     let new = NewSession {
         profile: role.profile.clone(),
         workdir: run.dir.join("empty"),
         policy: Policy::default(),
         firm: Some(link),
         files,
-        mounts: vec![Mount { host: skills_dir.to_string_lossy().into_owned(), guest: format!("{home}/.claude/skills"), mode: MountMode::Ro, extra: None }],
+        mounts: vec![Mount {
+            host: skills_dir.to_string_lossy().into_owned(),
+            guest: format!("{home}/.claude/skills"),
+            mode: MountMode::Ro,
+            extra: None,
+        }],
         agent_overlay: Some(overlay),
         forwards: vec![],
     };
     let s = session::create(d.clone(), new).await?;
-    run.journal.append("worker_session", json!({ "worker": w.name, "session": s.id }));
+    run.journal.append(
+        "worker_session",
+        json!({ "worker": w.name, "session": s.id }),
+    );
     *w.session.lock().unwrap() = Some(s);
     Ok(())
 }
 
 /// Follow-ups, digests and expiries.
-async fn ticker(run: Arc<FirmRun>) {
+async fn ticker(d: Arc<Daemon>, run: Arc<FirmRun>) {
     let mut last_digest = now();
     loop {
         tokio::select! {
@@ -515,6 +1009,7 @@ async fn ticker(run: Arc<FirmRun>) {
             run.deliver(s);
         }
         security::tick(&run, &mut last_digest);
+        contracts::tick(&d, &run);
     }
 }
 
@@ -528,11 +1023,11 @@ pub async fn down(d: &Arc<Daemon>, run: &Arc<FirmRun>, reason: &str) {
         *st = RunState::Stopping;
     }
     run.stopping.notify_waiters();
-    for w in run.workers.values() {
+    for w in run.rts() {
         w.wake.notify_one();
     }
     let mut tasks = Vec::new();
-    for w in run.workers.values() {
+    for w in run.rts() {
         if let Some(s) = w.session.lock().unwrap().take() {
             let d = d.clone();
             tasks.push(tokio::spawn(async move {
@@ -540,14 +1035,15 @@ pub async fn down(d: &Arc<Daemon>, run: &Arc<FirmRun>, reason: &str) {
                 d.sessions.write().unwrap().remove(&s.id);
             }));
         }
-        run.set_state(w, WorkerState::Off, None);
+        run.set_state(&w, WorkerState::Off, None);
     }
     for t in tasks {
         let _ = t.await;
     }
     facility::stop(d, run).await;
     *run.state.lock().unwrap() = RunState::Ended;
-    run.journal.append("run", json!({ "state": "ended", "reason": reason }));
+    run.journal
+        .append("run", json!({ "state": "ended", "reason": reason }));
 }
 
 pub fn pause(run: &FirmRun, paused: bool) -> Result<()> {
@@ -559,8 +1055,11 @@ pub fn pause(run: &FirmRun, paused: bool) -> Result<()> {
         (s, _) => bail!("the run is {s:?}"),
     }
     drop(st);
-    run.journal.append("run", json!({ "state": if paused { "paused" } else { "running" } }));
-    for w in run.workers.values() {
+    run.journal.append(
+        "run",
+        json!({ "state": if paused { "paused" } else { "running" } }),
+    );
+    for w in run.rts() {
         w.wake.notify_one();
     }
     Ok(())
@@ -575,12 +1074,18 @@ pub fn board_send(run: &FirmRun, v: &Value) -> Result<mail::Sent> {
 /// Ends the journals of runs a previous daemon left running: they can't be
 /// resumed, and a replay should say how they ended.
 pub fn close_orphans(state: &std::path::Path) {
-    let Ok(firms) = std::fs::read_dir(state.join("firms")) else { return };
+    let Ok(firms) = std::fs::read_dir(state.join("firms")) else {
+        return;
+    };
     for firm in firms.flatten() {
-        let Ok(runs) = std::fs::read_dir(firm.path().join("runs")) else { continue };
+        let Ok(runs) = std::fs::read_dir(firm.path().join("runs")) else {
+            continue;
+        };
         for run in runs.flatten() {
             let path = run.path().join("journal.jsonl");
-            let Ok(text) = std::fs::read(&path) else { continue };
+            let Ok(text) = std::fs::read(super::record::view(&path)) else {
+                continue;
+            };
             let tail = &text[text.len().saturating_sub(64 * 1024)..];
             let ended = String::from_utf8_lossy(tail)
                 .lines()
@@ -590,7 +1095,10 @@ pub fn close_orphans(state: &std::path::Path) {
                 .is_some_and(|v| v["state"] == "ended" || v["state"] == "failed");
             if !ended {
                 if let Ok(j) = Journal::create(&path) {
-                    j.append("run", json!({ "state": "ended", "reason": "the daemon stopped" }));
+                    j.append(
+                        "run",
+                        json!({ "state": "ended", "reason": "the daemon stopped" }),
+                    );
                 }
             }
         }
@@ -610,7 +1118,7 @@ pub fn list_runs(d: &Daemon, firm: &str) -> Vec<Value> {
                 return None;
             }
             let info: Value = std::fs::read(e.path().join("run.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(json!({}));
-            let journal = e.path().join("journal.jsonl");
+            let journal = super::record::view(&e.path().join("journal.jsonl"));
             let size = std::fs::metadata(&journal).map(|m| m.len()).unwrap_or(0);
             let sum = run_summary(&journal);
             Some(json!({
@@ -638,14 +1146,32 @@ pub fn run_config(dir: &std::path::Path) -> Value {
     let config = std::fs::read_to_string(dir.join(RUN_CONFIG)).ok();
     // skills/<role>/<skill>/…: SKILL.md as text, other files by name.
     let mut skills = Vec::new();
-    let mut roles: Vec<_> = std::fs::read_dir(dir.join("skills")).into_iter().flatten().flatten().filter(|e| e.path().is_dir()).collect();
+    let mut roles: Vec<_> = std::fs::read_dir(dir.join("skills"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.path().is_dir())
+        .collect();
     roles.sort_by_key(|e| e.file_name());
     for role in roles {
-        let mut list: Vec<_> = std::fs::read_dir(role.path()).into_iter().flatten().flatten().filter(|e| e.path().is_dir()).collect();
+        let mut list: Vec<_> = std::fs::read_dir(role.path())
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|e| e.path().is_dir())
+            .collect();
         list.sort_by_key(|e| e.file_name());
         for sk in list {
-            let text = std::fs::read(sk.path().join("SKILL.md")).ok().map(|b| String::from_utf8_lossy(&b[..b.len().min(256 << 10)]).into_owned());
-            let mut files: Vec<String> = std::fs::read_dir(sk.path()).into_iter().flatten().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| n != "SKILL.md").collect();
+            let text = std::fs::read(sk.path().join("SKILL.md"))
+                .ok()
+                .map(|b| String::from_utf8_lossy(&b[..b.len().min(256 << 10)]).into_owned());
+            let mut files: Vec<String> = std::fs::read_dir(sk.path())
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .filter(|n| n != "SKILL.md")
+                .collect();
             files.sort();
             skills.push(json!({ "role": role.file_name().to_string_lossy(), "skill": sk.file_name().to_string_lossy(), "text": text, "files": files }));
         }
@@ -665,9 +1191,19 @@ struct RunSummary {
 
 fn run_summary(journal: &std::path::Path) -> RunSummary {
     use std::io::BufRead;
-    let mut sum = RunSummary { kickoff: None, messages: 0, last: None, ended: false };
-    let Ok(f) = std::fs::File::open(journal) else { return sum };
-    for line in std::io::BufReader::new(f).split(b'\n').map_while(Result::ok) {
+    let mut sum = RunSummary {
+        kickoff: None,
+        messages: 0,
+        last: None,
+        ended: false,
+    };
+    let Ok(f) = std::fs::File::open(journal) else {
+        return sum;
+    };
+    for line in std::io::BufReader::new(f)
+        .split(b'\n')
+        .map_while(Result::ok)
+    {
         // Most lines are not needed whole: look before parsing.
         let mail = has(&line, br#""type":"mail""#);
         let run = has(&line, br#""type":"run""#);
@@ -677,7 +1213,9 @@ fn run_summary(journal: &std::path::Path) -> RunSummary {
             }
             continue;
         }
-        let Ok(v) = serde_json::from_slice::<Value>(&line) else { continue };
+        let Ok(v) = serde_json::from_slice::<Value>(&line) else {
+            continue;
+        };
         if let Some(ts) = v["ts"].as_f64() {
             sum.last = Some(ts);
         }
@@ -685,8 +1223,16 @@ fn run_summary(journal: &std::path::Path) -> RunSummary {
             sum.messages += 1;
             if sum.kickoff.is_none() && v["from"] == BOARD {
                 let body = v["body"].as_str().unwrap_or("");
-                let preview: String = body.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(240).collect();
-                sum.kickoff = Some(json!({ "subject": v["subject"], "preview": preview, "to": v["to"], "ts": v["ts"] }));
+                let preview: String = body
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+                    .chars()
+                    .take(240)
+                    .collect();
+                sum.kickoff = Some(
+                    json!({ "subject": v["subject"], "preview": preview, "to": v["to"], "ts": v["ts"] }),
+                );
             }
         } else if run {
             sum.ended = matches!(v["state"].as_str(), Some("ended" | "failed"));
@@ -704,7 +1250,17 @@ fn ts_of(line: &[u8]) -> Option<f64> {
     let key = br#""ts":"#;
     let at = line.windows(key.len()).position(|w| w == key)? + key.len();
     let rest = &line[at..];
-    let end = rest.iter().position(|b| !(b.is_ascii_digit() || *b == b'.' || *b == b'-' || *b == b'e' || *b == b'E' || *b == b'+')).unwrap_or(rest.len());
+    let end = rest
+        .iter()
+        .position(|b| {
+            !(b.is_ascii_digit()
+                || *b == b'.'
+                || *b == b'-'
+                || *b == b'e'
+                || *b == b'E'
+                || *b == b'+')
+        })
+        .unwrap_or(rest.len());
     std::str::from_utf8(&rest[..end]).ok()?.parse().ok()
 }
 
@@ -713,7 +1269,11 @@ pub fn run_dir(d: &Daemon, firm: &str, run: &str) -> Result<PathBuf> {
     if !zapper_policy::valid_worker_name(firm) {
         bail!("{firm:?} is not a firm name");
     }
-    let id = if run == "current" { d.office.run(firm)?.id.clone() } else { run.to_string() };
+    let id = if run == "current" {
+        d.office.run(firm)?.id.clone()
+    } else {
+        run.to_string()
+    };
     if !is_run_id(&id) {
         bail!("{run:?} is not a run id");
     }
@@ -738,8 +1298,87 @@ pub fn prune(d: &Daemon, firm: &str, run: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn start_options() {
+        let c = zapper_policy::Config::from_yaml(
+            "profiles: { w: {} }\nfirms:\n  acme:\n    budget: { seed: 1000 }\n    landing: {}\n    facilities: { cluster: { kind: k3s, profile: w } }\n    roles: { ceo: { profile: w, skills: { work: ceo }, hires: [sec] }, sec: { profile: w, skills: { work: security-review } } }\n    workers:\n      - { name: barbara, role: ceo }\n      - { name: radia, role: sec, reports_to: barbara }\n    security: { officers: [radia] }\n    names: [alice, grace]\n",
+        )
+        .unwrap();
+        let firm = c.firms["acme"].clone();
+        let o = super::StartOptions {
+            company: Some("Widgets Ltd".into()),
+            ceo: Some("Alice".into()),
+            officer: Some("sam".into()),
+            seed: Some(serde_json::json!("2k")),
+            ceo_prompt: Some("Ship in a day.".into()),
+            articles: Some("No crypto.".into()),
+            max_concurrent: Some(2),
+            ..Default::default()
+        };
+        let super::Started {
+            firm: f,
+            company,
+            prompts,
+            articles,
+        } = super::with_options("acme", firm.clone(), &c, &o).unwrap();
+        assert_eq!(articles, "No crypto.");
+        assert_eq!(f.budget.max_concurrent, 2);
+        assert_eq!(company, "Widgets Ltd");
+        assert_eq!(f.landing.as_ref().unwrap().name, "Widgets Ltd");
+        assert_eq!(f.root(), Some("alice"));
+        assert_eq!(f.security.officers, vec!["sam"]);
+        assert_eq!(f.manager_of("sam"), Some("alice"));
+        assert_eq!(f.budget.seed, 2000);
+        assert!(
+            !f.names.contains(&"alice".to_string()),
+            "a founder's name leaves the pool"
+        );
+        assert_eq!(
+            prompts.get("alice").map(String::as_str),
+            Some("Ship in a day.")
+        );
+        // Defaults, a clash and a bad name.
+        let s = super::with_options("acme", firm.clone(), &c, &Default::default()).unwrap();
+        assert_eq!(s.company, "Acme Inc.");
+        // The CEO alone holds security: the founding officer stays out.
+        let ceo = super::StartOptions {
+            security: Some("ceo".into()),
+            ..Default::default()
+        };
+        let f = super::with_options("acme", firm.clone(), &c, &ceo)
+            .unwrap()
+            .firm;
+        assert_eq!(f.security.officers, vec!["barbara"]);
+        assert!(f.worker("radia").is_none() && f.names.contains(&"radia".to_string()));
+        let both = super::StartOptions {
+            security: Some("ceo".into()),
+            officer: Some("sam".into()),
+            ..Default::default()
+        };
+        assert!(super::with_options("acme", firm.clone(), &c, &both).is_err());
+        let share = super::StartOptions {
+            security_share: Some(1.5),
+            ..Default::default()
+        };
+        assert!(super::with_options("acme", firm.clone(), &c, &share).is_err());
+        let clash = super::StartOptions {
+            officer: Some("barbara".into()),
+            ..Default::default()
+        };
+        assert!(super::with_options("acme", firm.clone(), &c, &clash)
+            .unwrap_err()
+            .to_string()
+            .contains("already in the firm"));
+        let bad = super::StartOptions {
+            ceo: Some("9 lives".into()),
+            ..Default::default()
+        };
+        assert!(super::with_options("acme", firm, &c, &bad).is_err());
+    }
+
+    #[test]
     fn run_summaries() {
-        let dir = std::env::temp_dir().join(format!("zapper-runsum-{}", crate::daemon::random_id(6)));
+        let dir =
+            std::env::temp_dir().join(format!("zapper-runsum-{}", crate::daemon::random_id(6)));
         std::fs::create_dir_all(&dir).unwrap();
         let j = dir.join("journal.jsonl");
         std::fs::write(&j, concat!(
@@ -756,7 +1395,10 @@ mod tests {
         assert_eq!(s.last, Some(30.0));
         assert!(s.ended);
         std::fs::write(&j, r#"{"seq":1,"ts":10.0,"type":"run","state":"running"}"#).unwrap();
-        assert!(super::run_summary(&j).kickoff.is_none(), "a run the board never wrote to has no kickoff");
+        assert!(
+            super::run_summary(&j).kickoff.is_none(),
+            "a run the board never wrote to has no kickoff"
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 

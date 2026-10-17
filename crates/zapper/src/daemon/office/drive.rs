@@ -99,7 +99,12 @@ fn sha256(path: &Path) -> Result<(String, u64)> {
         size += n as u64;
         ctx.update(&buf[..n]);
     }
-    let hex: String = ctx.finish().as_ref().iter().map(|b| format!("{b:02x}")).collect();
+    let hex: String = ctx
+        .finish()
+        .as_ref()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
     Ok((hex, size))
 }
 
@@ -113,7 +118,9 @@ pub fn guest_path(p: &str, home: &str) -> Result<String> {
         bail!("{p:?}: no . or .. components");
     }
     let p = p.trim_end_matches('/');
-    let ok = ["/work", home, "/tmp"].iter().any(|root| p == *root || p.starts_with(&format!("{root}/")));
+    let ok = ["/work", home, "/tmp"]
+        .iter()
+        .any(|root| p == *root || p.starts_with(&format!("{root}/")));
     if !ok {
         bail!("{p:?}: only paths under /work, {home} or /tmp");
     }
@@ -122,12 +129,26 @@ pub fn guest_path(p: &str, home: &str) -> Result<String> {
 
 /// Runs a command as root in the guest, feeding `input` to it and writing its
 /// output to `out`; returns its exit code and stderr.
-pub async fn guest_command<R, W>(s: &Session, argv: Vec<String>, input: Option<R>, mut out: W, limit: u64) -> Result<(i32, String)>
+pub async fn guest_command<R, W>(
+    s: &Session,
+    argv: Vec<String>,
+    input: Option<R>,
+    mut out: W,
+    limit: u64,
+) -> Result<(i32, String)>
 where
     R: tokio::io::AsyncRead + Unpin + Send + 'static,
     W: tokio::io::AsyncWrite + Unpin,
 {
-    let (stream, _) = s.open_shell(ShellRequest { id: 0, argv, tty: None, env: Default::default(), system: true }).await?;
+    let (stream, _) = s
+        .open_shell(ShellRequest {
+            id: 0,
+            argv,
+            tty: None,
+            env: Default::default(),
+            system: true,
+        })
+        .await?;
     let (mut r, mut w) = stream.into_split();
     let feeder = tokio::spawn(async move {
         if let Some(mut input) = input {
@@ -227,7 +248,13 @@ impl Drive {
         })
     }
 
-    pub fn list(&self, who: &str, kind: Option<&str>, author: Option<&str>, query: Option<&str>) -> Vec<Value> {
+    pub fn list(
+        &self,
+        who: &str,
+        kind: Option<&str>,
+        author: Option<&str>,
+        query: Option<&str>,
+    ) -> Vec<Value> {
         let q = query.map(str::to_ascii_lowercase);
         self.artifacts
             .values()
@@ -236,7 +263,12 @@ impl Drive {
             .filter(|a| kind.is_none_or(|k| a.kind == k))
             .filter(|a| author.is_none_or(|x| a.author == x))
             .filter(|a| {
-                q.as_ref().is_none_or(|q| a.title.to_ascii_lowercase().contains(q) || a.versions.last().is_some_and(|v| v.summary.to_ascii_lowercase().contains(q)))
+                q.as_ref().is_none_or(|q| {
+                    a.title.to_ascii_lowercase().contains(q)
+                        || a.versions
+                            .last()
+                            .is_some_and(|v| v.summary.to_ascii_lowercase().contains(q))
+                })
             })
             .map(Artifact::summary)
             .collect()
@@ -246,13 +278,31 @@ impl Drive {
     pub fn resolve(&self, r: &str, who: &str) -> Result<(&Artifact, &Version)> {
         let r = r.trim().trim_start_matches("drive:");
         let (id, ver) = match r.split_once('@') {
-            Some((id, v)) => (id, Some(v.trim_start_matches('v').parse::<u32>().map_err(|_| anyhow!("bad version in {r}"))?)),
+            Some((id, v)) => (
+                id,
+                Some(
+                    v.trim_start_matches('v')
+                        .parse::<u32>()
+                        .map_err(|_| anyhow!("bad version in {r}"))?,
+                ),
+            ),
             None => (r, None),
         };
-        let a = self.artifacts.get(id).filter(|a| a.visible_to(who)).ok_or_else(|| anyhow!("no artifact {id}"))?;
+        let a = self
+            .artifacts
+            .get(id)
+            .filter(|a| a.visible_to(who))
+            .ok_or_else(|| anyhow!("no artifact {id}"))?;
         let v = match ver {
-            Some(n) => a.versions.iter().find(|v| v.version == n).ok_or_else(|| anyhow!("{id} has no version {n}"))?,
-            None => a.versions.last().ok_or_else(|| anyhow!("{id} has no versions"))?,
+            Some(n) => a
+                .versions
+                .iter()
+                .find(|v| v.version == n)
+                .ok_or_else(|| anyhow!("{id} has no version {n}"))?,
+            None => a
+                .versions
+                .last()
+                .ok_or_else(|| anyhow!("{id} has no versions"))?,
         };
         Ok((a, v))
     }
@@ -262,13 +312,24 @@ fn audience(v: &Value) -> Result<Value> {
     match v {
         Value::Null => Ok(json!("firm")),
         Value::String(s) if s == "firm" || s == "board" => Ok(v.clone()),
-        Value::Array(a) if a.iter().all(|x| x.as_str().is_some_and(zapper_policy::valid_worker_name)) && a.len() <= 64 => Ok(v.clone()),
+        Value::Array(a)
+            if a.iter()
+                .all(|x| x.as_str().is_some_and(zapper_policy::valid_worker_name))
+                && a.len() <= 64 =>
+        {
+            Ok(v.clone())
+        }
         _ => bail!("audience is \"firm\", \"board\", or a list of names"),
     }
 }
 
 /// Copies files out of the worker's VM into the drive.
-pub async fn publish(run: &Arc<FirmRun>, worker: &str, s: &Session, a: PublishArgs) -> Result<Value> {
+pub async fn publish(
+    run: &Arc<FirmRun>,
+    worker: &str,
+    s: &Session,
+    a: PublishArgs,
+) -> Result<Value> {
     if a.kind == "code" {
         bail!("code is not published to the drive: push it to the firm's git repository (a branch, if it is not ready for main) and mail the branch name and commit");
     }
@@ -293,9 +354,15 @@ pub async fn publish(run: &Arc<FirmRun>, worker: &str, s: &Session, a: PublishAr
     let aud = audience(&a.audience)?;
     if let Some(id) = &a.artifact {
         let d = run.drive.lock().unwrap();
-        let art = d.artifacts.get(id).ok_or_else(|| anyhow!("no artifact {id}"))?;
+        let art = d
+            .artifacts
+            .get(id)
+            .ok_or_else(|| anyhow!("no artifact {id}"))?;
         if art.author != worker {
-            bail!("{id} is {}'s; publish your own artifact, or ask them to add a version", art.author);
+            bail!(
+                "{id} is {}'s; publish your own artifact, or ask them to add a version",
+                art.author
+            );
         }
     }
     let home = format!("/home/{}", s.resolved.agent.user);
@@ -311,7 +378,10 @@ pub async fn publish(run: &Arc<FirmRun>, worker: &str, s: &Session, a: PublishAr
         argv.extend(["-C".into(), parent.into(), format!("./{base}")]);
     }
     let limit = run.drive.lock().unwrap().artifact_limit;
-    let tmp = run.dir.join("drive").join(format!("tmp-{}", crate::daemon::random_id(8)));
+    let tmp = run
+        .dir
+        .join("drive")
+        .join(format!("tmp-{}", crate::daemon::random_id(8)));
     std::fs::create_dir_all(&tmp)?;
     let result = async {
         // The archive comes from the guest: it is parsed here, keeping only
@@ -319,7 +389,15 @@ pub async fn publish(run: &Arc<FirmRun>, worker: &str, s: &Session, a: PublishAr
         // a tool that would also create links and devices.
         let archive = tmp.join("archive.tar");
         let file = tokio::fs::File::create(&archive).await?;
-        let (code, err) = guest_command(s, argv, None::<tokio::io::Empty>, file, limit + limit / 4 + (1 << 20)).await.context("copying out of the VM")?;
+        let (code, err) = guest_command(
+            s,
+            argv,
+            None::<tokio::io::Empty>,
+            file,
+            limit + limit / 4 + (1 << 20),
+        )
+        .await
+        .context("copying out of the VM")?;
         if code != 0 {
             bail!("reading the files failed: {}", err.trim());
         }
@@ -338,13 +416,20 @@ pub async fn publish(run: &Arc<FirmRun>, worker: &str, s: &Session, a: PublishAr
             let (hash, size) = sha256(&path)?;
             total += size;
             if total > limit {
-                bail!("the artifact is larger than {}", run.config.limits.artifact_size);
+                bail!(
+                    "the artifact is larger than {}",
+                    run.config.limits.artifact_size
+                );
             }
             let blob = run.dir.join("drive").join(&hash);
             if !blob.exists() {
                 std::fs::rename(&path, &blob)?;
             }
-            entries.push(File { path: rel, sha256: hash, size });
+            entries.push(File {
+                path: rel,
+                sha256: hash,
+                size,
+            });
         }
         Ok::<_, anyhow::Error>((entries, total))
     }
@@ -353,7 +438,11 @@ pub async fn publish(run: &Arc<FirmRun>, worker: &str, s: &Session, a: PublishAr
     let (files, total) = result?;
     let mut d = run.drive.lock().unwrap();
     if d.used + total > d.drive_limit {
-        bail!("the shared drive is full ({} of {})", d.used, run.config.limits.drive_size);
+        bail!(
+            "the shared drive is full ({} of {})",
+            d.used,
+            run.config.limits.drive_size
+        );
     }
     d.used += total;
     let id = match &a.artifact {
@@ -378,15 +467,27 @@ pub async fn publish(run: &Arc<FirmRun>, worker: &str, s: &Session, a: PublishAr
         art.thread = a.thread.clone();
     }
     let version = art.versions.len() as u32 + 1;
-    let changes = if version == 1 && a.changes.trim().is_empty() { "First version.".to_string() } else { a.changes.trim().to_string() };
-    art.versions.push(Version { version, created: now(), summary: a.summary.clone(), changes: changes.clone(), files: files.clone() });
+    let changes = if version == 1 && a.changes.trim().is_empty() {
+        "First version.".to_string()
+    } else {
+        a.changes.trim().to_string()
+    };
+    art.versions.push(Version {
+        version,
+        created: now(),
+        summary: a.summary.clone(),
+        changes: changes.clone(),
+        files: files.clone(),
+    });
     let entry = json!({
         "artifact": id, "version": version, "title": art.title, "kind": art.kind, "author": worker,
         "audience": art.audience, "thread": art.thread, "summary": a.summary, "changes": changes, "files": files,
     });
     drop(d);
     run.journal.append("published", entry);
-    Ok(json!({ "artifact": id, "version": version, "ref": format!("drive:{id}@v{version}"), "files": files.len(), "size": total }))
+    Ok(
+        json!({ "artifact": id, "version": version, "ref": format!("drive:{id}@v{version}"), "files": files.len(), "size": total }),
+    )
 }
 
 /// Largest upload from the board: files from the operator's own computer,
@@ -405,13 +506,21 @@ fn upload_name(name: &str) -> Result<String> {
 
 /// Stores files the board uploaded as one artifact by the board, visible to
 /// the firm, for attaching to mail.
-pub fn publish_board(run: &Arc<FirmRun>, files: Vec<(String, Vec<u8>)>, title: &str, thread: Option<String>) -> Result<Value> {
+pub fn publish_board(
+    run: &Arc<FirmRun>,
+    files: Vec<(String, Vec<u8>)>,
+    title: &str,
+    thread: Option<String>,
+) -> Result<Value> {
     if files.is_empty() || files.len() > BOARD_UPLOAD_FILES {
         bail!("attach 1 to {BOARD_UPLOAD_FILES} files");
     }
     let total: usize = files.iter().map(|(_, d)| d.len()).sum();
     if total > BOARD_UPLOAD_MAX {
-        bail!("attachments are limited to {} MiB together", BOARD_UPLOAD_MAX >> 20);
+        bail!(
+            "attachments are limited to {} MiB together",
+            BOARD_UPLOAD_MAX >> 20
+        );
     }
     let mut names = std::collections::BTreeSet::new();
     let mut entries = Vec::new();
@@ -423,40 +532,70 @@ pub fn publish_board(run: &Arc<FirmRun>, files: Vec<(String, Vec<u8>)>, title: &
         let hash = hex(ring::digest::digest(&ring::digest::SHA256, data).as_ref());
         let blob = run.dir.join("drive").join(&hash);
         if !blob.exists() {
-            let tmp = run.dir.join("drive").join(format!("tmp-{}", crate::daemon::random_id(8)));
+            let tmp = run
+                .dir
+                .join("drive")
+                .join(format!("tmp-{}", crate::daemon::random_id(8)));
             std::fs::write(&tmp, data)?;
             std::fs::rename(&tmp, &blob)?;
         }
-        entries.push(File { path: name, sha256: hash, size: data.len() as u64 });
+        entries.push(File {
+            path: name,
+            sha256: hash,
+            size: data.len() as u64,
+        });
     }
     entries.sort_by(|a, b| a.path.cmp(&b.path));
-    let title = if title.trim().is_empty() { entries.iter().map(|f| f.path.as_str()).collect::<Vec<_>>().join(", ") } else { title.trim().to_string() };
+    let title = if title.trim().is_empty() {
+        entries
+            .iter()
+            .map(|f| f.path.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    } else {
+        title.trim().to_string()
+    };
     let title: String = title.chars().take(200).collect();
     let mut d = run.drive.lock().unwrap();
     let total = total as u64;
     if d.used + total > d.drive_limit {
-        bail!("the shared drive is full ({} of {})", d.used, run.config.limits.drive_size);
+        bail!(
+            "the shared drive is full ({} of {})",
+            d.used,
+            run.config.limits.drive_size
+        );
     }
     d.used += total;
     d.counter += 1;
     let id = format!("a-{}", d.counter);
     let summary = "Attached by the board.".to_string();
     let changes = "First version.".to_string();
-    d.artifacts.insert(id.clone(), Artifact {
-        id: id.clone(),
-        title: title.clone(),
-        kind: "document".into(),
-        author: BOARD.into(),
-        audience: json!("firm"),
-        thread: thread.clone(),
-        versions: vec![Version { version: 1, created: now(), summary: summary.clone(), changes: changes.clone(), files: entries.clone() }],
-    });
+    d.artifacts.insert(
+        id.clone(),
+        Artifact {
+            id: id.clone(),
+            title: title.clone(),
+            kind: "document".into(),
+            author: BOARD.into(),
+            audience: json!("firm"),
+            thread: thread.clone(),
+            versions: vec![Version {
+                version: 1,
+                created: now(),
+                summary: summary.clone(),
+                changes: changes.clone(),
+                files: entries.clone(),
+            }],
+        },
+    );
     drop(d);
     run.journal.append("published", json!({
         "artifact": id, "version": 1, "title": title, "kind": "document", "author": BOARD,
         "audience": "firm", "thread": thread, "summary": summary, "changes": changes, "files": entries,
     }));
-    Ok(json!({ "artifact": id, "version": 1, "ref": format!("drive:{id}@v1"), "files": entries.len(), "size": total }))
+    Ok(
+        json!({ "artifact": id, "version": 1, "ref": format!("drive:{id}@v1"), "files": entries.len(), "size": total }),
+    )
 }
 
 fn hex(b: &[u8]) -> String {
@@ -464,7 +603,13 @@ fn hex(b: &[u8]) -> String {
 }
 
 /// Copies an artifact into the worker's VM.
-pub async fn fetch(run: &Arc<FirmRun>, worker: &str, s: &Session, r: &str, dest: &str) -> Result<Value> {
+pub async fn fetch(
+    run: &Arc<FirmRun>,
+    worker: &str,
+    s: &Session,
+    r: &str,
+    dest: &str,
+) -> Result<Value> {
     let home = format!("/home/{}", s.resolved.agent.user);
     let dest = guest_path(dest, &home)?;
     let (id, version, files) = {
@@ -472,7 +617,10 @@ pub async fn fetch(run: &Arc<FirmRun>, worker: &str, s: &Session, r: &str, dest:
         let (a, v) = d.resolve(r, worker)?;
         (a.id.clone(), v.version, v.files.clone())
     };
-    let tmp = run.dir.join("drive").join(format!("tmp-{}", crate::daemon::random_id(8)));
+    let tmp = run
+        .dir
+        .join("drive")
+        .join(format!("tmp-{}", crate::daemon::random_id(8)));
     let result = async {
         for f in &files {
             let to = tmp.join(&f.path);
@@ -500,18 +648,31 @@ pub async fn fetch(run: &Arc<FirmRun>, worker: &str, s: &Session, r: &str, dest:
     .await;
     let _ = std::fs::remove_dir_all(&tmp);
     result?;
-    run.journal.append("fetched", json!({ "artifact": id, "version": version, "worker": worker, "dest": dest }));
-    Ok(json!({ "artifact": id, "version": version, "dest": dest, "files": files.iter().map(|f| f.path.clone()).collect::<Vec<_>>() }))
+    run.journal.append(
+        "fetched",
+        json!({ "artifact": id, "version": version, "worker": worker, "dest": dest }),
+    );
+    Ok(
+        json!({ "artifact": id, "version": version, "dest": dest, "files": files.iter().map(|f| f.path.clone()).collect::<Vec<_>>() }),
+    )
 }
 
 /// Finds a published file in a run's journal, for serving it: its hash.
-pub fn find_file(run_dir: &Path, artifact: &str, version: u32, path: &str) -> Result<(String, u64)> {
-    let text = std::fs::read_to_string(run_dir.join("journal.jsonl"))?;
+pub fn find_file(
+    run_dir: &Path,
+    artifact: &str,
+    version: u32,
+    path: &str,
+) -> Result<(String, u64)> {
+    let text =
+        std::fs::read_to_string(crate::daemon::record::view(&run_dir.join("journal.jsonl")))?;
     for line in text.lines().rev() {
         if !line.contains("\"published\"") {
             continue;
         }
-        let Ok(v) = serde_json::from_str::<Value>(line) else { continue };
+        let Ok(v) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
         if v["type"] != "published" || v["artifact"] != artifact || v["version"] != version {
             continue;
         }
@@ -531,15 +692,23 @@ pub fn find_file(run_dir: &Path, artifact: &str, version: u32, path: &str) -> Re
 /// A path from an archive, made safe: relative, without `.`, `..` or empty
 /// components.
 fn clean(name: &str) -> Option<String> {
-    let parts: Vec<&str> = name.split('/').filter(|p| !p.is_empty() && *p != ".").collect();
-    if parts.is_empty() || parts.iter().any(|p| *p == ".." || p.contains('\0')) || parts.len() > 32 {
+    let parts: Vec<&str> = name
+        .split('/')
+        .filter(|p| !p.is_empty() && *p != ".")
+        .collect();
+    if parts.is_empty() || parts.iter().any(|p| *p == ".." || p.contains('\0')) || parts.len() > 32
+    {
         return None;
     }
     Some(parts.join("/"))
 }
 
 fn octal(field: &[u8]) -> u64 {
-    let s: String = field.iter().take_while(|b| **b != 0).map(|b| *b as char).collect();
+    let s: String = field
+        .iter()
+        .take_while(|b| **b != 0)
+        .map(|b| *b as char)
+        .collect();
     u64::from_str_radix(s.trim(), 8).unwrap_or(0)
 }
 
@@ -560,7 +729,11 @@ pub fn untar(archive: &Path, out: &Path, limit: u64) -> Result<usize> {
         let size = octal(&header[124..136]);
         let padded = size.div_ceil(512) * 512;
         let kind = header[156];
-        let field = |r: std::ops::Range<usize>| String::from_utf8_lossy(&header[r]).trim_end_matches('\0').to_string();
+        let field = |r: std::ops::Range<usize>| {
+            String::from_utf8_lossy(&header[r])
+                .trim_end_matches('\0')
+                .to_string()
+        };
         let mut name = field(0..100);
         let prefix = field(345..500);
         if &header[257..262] == b"ustar" && !prefix.is_empty() {
@@ -575,7 +748,11 @@ pub fn untar(archive: &Path, out: &Path, limit: u64) -> Result<usize> {
                 f.read_exact(&mut data)?;
                 data.truncate(size as usize);
                 if kind == b'L' {
-                    long_name = Some(String::from_utf8_lossy(&data).trim_end_matches('\0').to_string());
+                    long_name = Some(
+                        String::from_utf8_lossy(&data)
+                            .trim_end_matches('\0')
+                            .to_string(),
+                    );
                 } else {
                     for rec in String::from_utf8_lossy(&data).lines() {
                         if let Some((_, kv)) = rec.split_once(' ') {
@@ -602,7 +779,10 @@ pub fn untar(archive: &Path, out: &Path, limit: u64) -> Result<usize> {
             if let Some(rel) = clean(&name) {
                 let to = out.join(&rel);
                 std::fs::create_dir_all(to.parent().unwrap())?;
-                let mut w = std::fs::OpenOptions::new().write(true).create_new(true).open(&to)?;
+                let mut w = std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&to)?;
                 let mut left = size;
                 let mut buf = vec![0u8; 64 * 1024];
                 while left > 0 {
@@ -626,7 +806,8 @@ pub fn untar(archive: &Path, out: &Path, limit: u64) -> Result<usize> {
 pub fn content_type(path: &str) -> &'static str {
     let ext = path.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
     match ext.as_str() {
-        "md" | "markdown" | "txt" | "log" | "csv" | "tsv" | "json" | "yaml" | "yml" | "toml" | "rs" | "py" | "js" | "ts" | "go" | "html" | "css" | "sh" | "sql" => {
+        "md" | "markdown" | "txt" | "log" | "csv" | "tsv" | "json" | "yaml" | "yml" | "toml"
+        | "rs" | "py" | "js" | "ts" | "go" | "html" | "css" | "sh" | "sql" => {
             "text/plain; charset=utf-8"
         }
         "png" => "image/png",
@@ -645,7 +826,8 @@ mod tests {
 
     #[test]
     fn untar_keeps_regular_files_only() {
-        let dir = std::env::temp_dir().join(format!("zapper-untar-{}", crate::daemon::random_id(6)));
+        let dir =
+            std::env::temp_dir().join(format!("zapper-untar-{}", crate::daemon::random_id(6)));
         let src = dir.join("src");
         std::fs::create_dir_all(src.join("sub")).unwrap();
         std::fs::write(src.join("a.md"), "hello").unwrap();
@@ -654,13 +836,25 @@ mod tests {
         let long = "n".repeat(120);
         std::fs::write(src.join(&long), "long").unwrap();
         let archive = dir.join("a.tar");
-        let ok = std::process::Command::new("tar").arg("-cf").arg(&archive).arg("-C").arg(&src).arg(".").status().unwrap();
+        let ok = std::process::Command::new("tar")
+            .arg("-cf")
+            .arg(&archive)
+            .arg("-C")
+            .arg(&src)
+            .arg(".")
+            .status()
+            .unwrap();
         assert!(ok.success());
         let out = dir.join("out");
         std::fs::create_dir_all(&out).unwrap();
         assert_eq!(untar(&archive, &out, 1 << 20).unwrap(), 3);
         assert_eq!(std::fs::read_to_string(out.join("a.md")).unwrap(), "hello");
-        assert_eq!(std::fs::read_to_string(out.join("sub/b.txt")).unwrap().len(), 700);
+        assert_eq!(
+            std::fs::read_to_string(out.join("sub/b.txt"))
+                .unwrap()
+                .len(),
+            700
+        );
         assert_eq!(std::fs::read_to_string(out.join(&long)).unwrap(), "long");
         assert!(std::fs::symlink_metadata(out.join("link")).is_err());
         assert!(untar(&archive, &dir.join("out2"), 100).is_err(), "limit");
@@ -672,8 +866,14 @@ mod tests {
 
     #[test]
     fn guest_paths() {
-        assert_eq!(guest_path("/work/a.md", "/home/agent").unwrap(), "/work/a.md");
-        assert_eq!(guest_path("/home/agent/x/", "/home/agent").unwrap(), "/home/agent/x");
+        assert_eq!(
+            guest_path("/work/a.md", "/home/agent").unwrap(),
+            "/work/a.md"
+        );
+        assert_eq!(
+            guest_path("/home/agent/x/", "/home/agent").unwrap(),
+            "/home/agent/x"
+        );
         assert!(guest_path("/etc/shadow", "/home/agent").is_err());
         assert!(guest_path("/work/../etc", "/home/agent").is_err());
         assert!(guest_path("work/a", "/home/agent").is_err());

@@ -111,10 +111,19 @@ pub enum GuestMsg {
     /// Setup finished; terminals can be opened.
     Ready,
     /// Setup failed; the session is unusable.
-    Failed { error: String },
+    Failed {
+        error: String,
+    },
     /// Asks whether the workload may exec. The process waits for the reply.
-    ExecCheck { id: u64, pid: i32, uid: u32, req: ExecRequest },
-    Event { event: GuestEvent },
+    ExecCheck {
+        id: u64,
+        pid: i32,
+        uid: u32,
+        req: ExecRequest,
+    },
+    Event {
+        event: GuestEvent,
+    },
 }
 
 /// Instrumentation from inside the guest.
@@ -122,7 +131,11 @@ pub enum GuestMsg {
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum GuestEvent {
     /// A setup step's outcome.
-    Setup { step: String, ok: bool, output: String },
+    Setup {
+        step: String,
+        ok: bool,
+        output: String,
+    },
     /// Process exit, from kernel process accounting.
     Exit {
         pid: u32,
@@ -143,7 +156,12 @@ pub enum GuestEvent {
     /// Shell port session ended.
     ShellExit { id: u64, exit_code: i32 },
     /// Periodic whole-guest usage.
-    Usage { load1: f64, mem_used_kib: u64, procs: u32, disk_used_kib: u64 },
+    Usage {
+        load1: f64,
+        mem_used_kib: u64,
+        procs: u32,
+        disk_used_kib: u64,
+    },
 }
 
 /// First line on a shell connection.
@@ -199,9 +217,10 @@ impl Frame {
         Ok(match kind {
             0 => Frame::Data(body),
             1 => Frame::Stderr(body),
-            2 if body.len() == 4 => {
-                Frame::Resize(u16::from_be_bytes([body[0], body[1]]), u16::from_be_bytes([body[2], body[3]]))
-            }
+            2 if body.len() == 4 => Frame::Resize(
+                u16::from_be_bytes([body[0], body[1]]),
+                u16::from_be_bytes([body[2], body[3]]),
+            ),
             3 => Frame::Eof,
             4 if body.len() == 4 => Frame::Exit(i32::from_be_bytes(body.try_into().unwrap())),
             _ => return Err(bad()),
@@ -217,7 +236,10 @@ impl Frame {
         }
         let len = u32::from_be_bytes(header[1..].try_into().unwrap()) as usize;
         if len > MAX_FRAME {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "frame too large"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "frame too large",
+            ));
         }
         let mut body = vec![0; len];
         r.read_exact(&mut body)?;
@@ -231,7 +253,12 @@ mod tests {
 
     #[test]
     fn frames_roundtrip() {
-        let frames = [Frame::Data(b"hi".to_vec()), Frame::Resize(24, 80), Frame::Eof, Frame::Exit(-3)];
+        let frames = [
+            Frame::Data(b"hi".to_vec()),
+            Frame::Resize(24, 80),
+            Frame::Eof,
+            Frame::Exit(-3),
+        ];
         let mut buf = Vec::new();
         for f in &frames {
             f.write_to(&mut buf).unwrap();

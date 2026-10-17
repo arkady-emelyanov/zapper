@@ -26,6 +26,7 @@ zapper itself never needs root. Only host prerequisites may:
 | `sudo apt install podman e2fsprogs` | building images, if missing |
 | `sudo apt install iproute2 nftables` | guest NICs, if missing |
 | `sudo sysctl kernel.apparmor_restrict_unprivileged_userns=0` | VMM confinement, if user namespaces are restricted |
+| `sudo scripts/install-keeper.sh` | An append-only record kept by a separate user (`zapper-keeper`, a confined systemd service), if the user wants it; then add the `daemon.keeper` lines it prints |
 
 Never run `sudo` without the user's explicit consent, and run only what you listed.
 
@@ -47,7 +48,7 @@ Run image builds in the background with a log (`make image > /tmp/zapper-image.l
 
 The workers need the Claude token: the user creates it themselves (`claude setup-token`, stored 0600 in the file the config names, `~/.config/zapper/claude-token`); never read or print it.
 
-Start `zapper serve` (or tell the user to) and give them the UI URL it prints. `zapper run -C $(mktemp -d) -- cat /etc/os-release` checks that a plain session boots (`-C` gives it an empty directory instead of a copy of the checkout). Then, with the user's go-ahead (a firm spends their Claude usage), `zapper firm up acme` starts the example firm idle; the user gives the CEO its first task in the UI, or with `zapper mail send acme --to barbara --kind assignment …` (barbara is the CEO).
+Start `zapper serve` (or tell the user to) and give them the UI URL it prints. `zapper run -C $(mktemp -d) -- cat /etc/os-release` checks that a plain session boots (`-C` gives it an empty directory instead of a copy of the checkout). Then, with the user's go-ahead (a firm spends their Claude usage), the user starts the company in the UI's Kickoff tab (founders, charter terms, their own articles), or `zapper firm up acme` starts the example firm with its founders idle (`--ceo-holds-security` for the CEO alone); the user gives the CEO its first task there, or with `zapper mail send acme --to barbara --kind assignment …` (barbara is the CEO). The CEO then asks for a budget, which only the user approves (`zapper firm budget acme approve b-1`, or Kickoff); never approve budgets, background checks or access requests on the user's behalf.
 
 ### Rules
 
@@ -75,6 +76,7 @@ crates/zapper/           CLI, daemon, proxy, Firecracker launcher, REST API, web
   src/daemon/vm.rs         disks, initramfs, the Firecracker process
   src/daemon/ui.html       the web UI: state, terminal viewer, answering approvals (textContent only)
   src/daemon/assets/       xterm.js 6.0.0 (MIT) for the terminal viewer; see its README
+crates/zapper-keeper/    the record's keeper: a separate user's append-only store with hash chains and signed checkpoints, its read-only UI
 crates/zapper-agent/     guest PID 1: setup, terminals, seccomp exec supervision, accounting; `office` (MCP server, CLI) and the fake Claude
 config/                  zapper.yaml: the config, used when zapper runs in the checkout (relative paths resolve against it);
   skills/                  office workers' skills: built in, and read live through the acme firm's `skills_dir: skills`
@@ -91,6 +93,7 @@ Build and test:
 ```
 make build        # release: static musl agent + host binary
 make test         # unit tests, no VMs, seconds
+make lint         # rustfmt (defaults, rustfmt.toml) and clippy with warnings as errors; `make fmt` formats
 make test-e2e     # real VMs, network; must end "all e2e checks passed" and "all office e2e checks passed"
 ```
 
@@ -105,10 +108,14 @@ Invariants (each has a test in `tests/e2e.sh` or a unit test; a change that brea
 - The host accepts only the first control connection; the agent accepts terminal connections only from CID 2.
 - The seccomp filter kills foreign-arch and x32 syscalls, so exec checks cannot be bypassed through another syscall table.
 - Anything from the guest is bounded (line, frame, connection and approval limits) and rendered as text in the UI.
-- The UI's writes are answering approvals and the board's firm actions (mail, start/stop/pause, security decisions, deleting a past run); each requires the token cookie, a local `Host`, `X-Zapper-UI: 1` and a local `Origin`.
+- The UI's writes are answering approvals and the board's firm actions (mail, start/stop/pause, security decisions, background checks, budget decisions, deleting a past run) and its click events; each requires the token cookie, a local `Host`, `X-Zapper-UI: 1` and a local `Origin`.
 - In a firm, the sender of every office request is the VM it came from; roles and the chart are checked on the host; an `ask` is refused at once and decided by officers or the board, never past `final` rules; the firm's service names are routed by the daemon and never resolved on the host.
+- In a firm, security is always held (by officers, else the CEO, else the board), nobody decides their own access request or their own hire's background check, a hire takes no turn before being cleared, and a hired officer decides nothing before being cleared. The charter's articles are the same for every run; only their terms and the board's own articles change. A contractor mails only their hirer and those the hirer added, has no authority, and a contract moves money only from the hirer's balance.
 - A config change is validated as a whole and applied atomically, or not at all.
+- With a keeper, the record is appended through it and nothing else: the keeper takes appends from the configured uid only, has no operation to read back, rewrite or remove, flushes each line before acknowledging, and the daemon takes no firm turns while the record can't be written.
 
 Applying changes: rebuild with `make build` and restart the daemon; sessions do not survive a restart (stop them first, see Rules). Rule and profile changes need no restart: they apply to running sessions at once.
+
+Code style: rustfmt's defaults and a clean clippy. `make hooks` turns on the pre-commit hook in `.githooks/`, which runs both; keep `make lint` passing.
 
 Markdown: never hard-wrap prose; one line per paragraph or list item.

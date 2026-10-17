@@ -9,6 +9,9 @@
 #   make kernel KERNEL=k8s   a guest kernel with Kubernetes support (~10 min)
 #   make check             report missing prerequisites with the fix; changes nothing
 #   make test              unit tests (no VMs)
+#   make lint              rustfmt and clippy (warnings are errors), as the pre-commit hook runs them
+#   make fmt               format the code with rustfmt
+#   make hooks             use the repository's git hooks (.githooks: pre-commit runs make lint)
 #   make test-e2e          boots real VMs: policy, secrets, exec, attacks (needs KVM, network)
 #   make clean
 #
@@ -62,14 +65,14 @@ IMAGE_RUN_k3s  := --run "apt-get update && DEBIAN_FRONTEND=noninteractive apt-ge
 	--run "mkdir -p /var/lib/rancher/k3s/agent/images && curl -fsSL -o /var/lib/rancher/k3s/agent/images/k3s-airgap-images-amd64.tar.zst $(K3S_URL)/k3s-airgap-images-amd64.tar.zst && echo '$(K3S_IMAGES_SHA256)  /var/lib/rancher/k3s/agent/images/k3s-airgap-images-amd64.tar.zst' | sha256sum -c" \
 	--run "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends skopeo && skopeo copy --override-os linux --override-arch amd64 docker://$(firstword $(subst :, ,$(HEADLAMP_IMAGE)))@$(HEADLAMP_DIGEST) docker-archive:/var/lib/rancher/k3s/agent/images/headlamp.tar:$(HEADLAMP_IMAGE) && apt-get purge -y skopeo && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*"
 
-.PHONY: deps build install image kernel check test test-e2e test-e2e-office clean
+.PHONY: deps build install image kernel check test lint fmt hooks test-e2e test-e2e-office clean
 
 deps:
 	scripts/fetch-deps.sh
 
 build:
 	cargo build --release -p zapper-agent --target $(MUSL)
-	cargo build --release -p zapper
+	cargo build --release -p zapper -p zapper-keeper
 	cp $(AGENT) $(TARGET)/zapper-agent
 
 install: build
@@ -88,6 +91,16 @@ check: build
 
 test:
 	cargo test --workspace
+
+lint:
+	cargo fmt --all -- --check
+	cargo clippy --workspace --all-targets --release -- -D warnings
+
+fmt:
+	cargo fmt --all
+
+hooks:
+	git config core.hooksPath .githooks
 
 test-e2e: build
 	tests/e2e.sh $(ZAPPER)

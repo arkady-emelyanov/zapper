@@ -1,0 +1,3 @@
+# rustfmt's defaults (100 columns; long call chains one call per line), so
+# `cargo fmt` and editors agree. `make lint` checks it; `make fmt` applies it.
+edition = "2021"

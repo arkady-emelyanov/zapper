@@ -32,11 +32,15 @@ A firm is an org chart of AI workers, each Claude Code in its own session ([docs
 ```
 zapper firm ls ; zapper firm status acme          # before anything: is a run going, what are workers doing
 zapper firm up acme                               # a fresh, idle run (the cluster first, if the firm has one)
+zapper firm up acme --ceo-holds-security --articles law.md   # the CEO holds security until they hire an officer; the board's own articles
 zapper mail send acme --to barbara --kind assignment --subject "…" --body "…"
 zapper firm journal acme -f                        # mail, states, turns, access requests, publishes
 zapper firm transcript acme ada                    # what a worker's Claude did
 zapper mail ls acme ; zapper mail thread acme t-1  # the board's inbox
 zapper firm security acme                          # access requests, standing approvals
+zapper firm budget acme                            # the run's budget, balances, the CEO's budget requests
+zapper firm budget acme approve b-1                # the board's answer to a budget request (or: decline b-1 --note "…")
+zapper firm screen acme c-1 --clear                 # a new hire's background check, when no officer answered (or --object --note "…")
 zapper firm decide acme r-3 --allow --scope worker --reason "…"
 zapper firm revoke acme RULE                       # remove a standing approval
 zapper drive ls acme ; zapper drive get acme a-2 ./out
@@ -44,6 +48,8 @@ zapper firm pause acme ; zapper firm resume acme   # stop starting turns / start
 zapper firm down acme                              # ends the run; it stays on disk for replay
 zapper firm runs acme ; zapper firm replay acme RUN
 ```
+
+A firm with a run budget (`budget.seed`) starts with its founders (the CEO and the officers): the CEO scopes the board's task, asks for a budget, and hires the team once the board approves it. Approving or declining budget requests is the board's (the user's) decision: ask them, don't decide it for them.
 
 The UI URL is in `~/.local/state/zapper/ui-url`; the user can watch the firm and decide access requests there too. The product is on the firm's `product_port` (`http://127.0.0.1:8080` in the example), the cluster's dashboard on `dashboard_port` (`8081`).
 

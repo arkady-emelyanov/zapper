@@ -17,7 +17,9 @@ pub fn socket_path() -> PathBuf {
     if let Ok(p) = std::env::var("ZAPPER_SOCKET") {
         return p.into();
     }
-    let base = std::env::var("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(|_| PathBuf::from(format!("/tmp/zapper-{}", unsafe { libc::getuid() })));
+    let base = std::env::var("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from(format!("/tmp/zapper-{}", unsafe { libc::getuid() })));
     base.join("zapper").join("api.sock")
 }
 
@@ -27,29 +29,44 @@ pub struct Client {
 
 impl Client {
     pub fn new() -> Self {
-        Self { socket: socket_path() }
+        Self {
+            socket: socket_path(),
+        }
     }
 
     async fn conn(&self) -> Result<SendRequest<Full<Bytes>>> {
-        let stream = UnixStream::connect(&self.socket)
-            .await
-            .with_context(|| format!("connecting to the daemon at {} (is `zapper serve` running?)", self.socket.display()))?;
+        let stream = UnixStream::connect(&self.socket).await.with_context(|| {
+            format!(
+                "connecting to the daemon at {} (is `zapper serve` running?)",
+                self.socket.display()
+            )
+        })?;
         let (sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(stream)).await?;
         tokio::spawn(conn.with_upgrades());
         Ok(sender)
     }
 
     fn request(method: Method, path: &str, body: Option<String>) -> Result<Request<Full<Bytes>>> {
-        let mut b = Request::builder().method(method).uri(format!("http://zapper{path}")).header("host", "zapper");
+        let mut b = Request::builder()
+            .method(method)
+            .uri(format!("http://zapper{path}"))
+            .header("host", "zapper");
         if body.is_some() {
             b = b.header("content-type", "application/yaml");
         }
         Ok(b.body(Full::new(Bytes::from(body.unwrap_or_default())))?)
     }
 
-    pub async fn call(&self, method: Method, path: &str, body: Option<String>) -> Result<(StatusCode, Bytes)> {
+    pub async fn call(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<String>,
+    ) -> Result<(StatusCode, Bytes)> {
         let mut sender = self.conn().await?;
-        let resp = sender.send_request(Self::request(method, path, body)?).await?;
+        let resp = sender
+            .send_request(Self::request(method, path, body)?)
+            .await?;
         let status = resp.status();
         let bytes = resp.into_body().collect().await?.to_bytes();
         Ok((status, bytes))
@@ -81,7 +98,9 @@ impl Client {
     /// A streaming GET, e.g. server-sent events.
     pub async fn stream(&self, path: &str) -> Result<Incoming> {
         let mut sender = self.conn().await?;
-        let resp = sender.send_request(Self::request(Method::GET, path, None)?).await?;
+        let resp = sender
+            .send_request(Self::request(Method::GET, path, None)?)
+            .await?;
         let status = resp.status();
         if !status.is_success() {
             let bytes = resp.into_body().collect().await?.to_bytes();
@@ -92,13 +111,22 @@ impl Client {
     }
 
     /// Opens a terminal in a session.
-    pub async fn attach(&self, id: &str, tty: Option<(u16, u16)>, argv: &[String], system: bool) -> Result<TokioIo<hyper::upgrade::Upgraded>> {
+    pub async fn attach(
+        &self,
+        id: &str,
+        tty: Option<(u16, u16)>,
+        argv: &[String],
+        system: bool,
+    ) -> Result<TokioIo<hyper::upgrade::Upgraded>> {
         let mut q = Vec::new();
         if let Some((r, c)) = tty {
             q.push(format!("tty={r}x{c}"));
         }
         if !argv.is_empty() {
-            q.push(format!("argv={}", url_encode(&serde_json::to_string(argv)?)));
+            q.push(format!(
+                "argv={}",
+                url_encode(&serde_json::to_string(argv)?)
+            ));
         }
         if system {
             q.push("system=true".into());
@@ -125,7 +153,9 @@ impl Client {
 pub fn url_encode(s: &str) -> String {
     s.bytes()
         .map(|b| match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => (b as char).to_string(),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (b as char).to_string()
+            }
             _ => format!("%{b:02X}"),
         })
         .collect()

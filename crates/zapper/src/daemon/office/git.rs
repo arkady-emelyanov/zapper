@@ -25,7 +25,8 @@ pub fn check_ref(r: &str) -> Result<()> {
         && !r.starts_with('-')
         && !r.contains("..")
         && !r.ends_with('/')
-        && r.bytes().all(|b| b.is_ascii_alphanumeric() || b"._/-".contains(&b));
+        && r.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"._/-".contains(&b));
     if !ok {
         bail!("{r:?} is not a branch or commit");
     }
@@ -37,7 +38,12 @@ pub fn check_path(p: &str) -> Result<()> {
     if p.is_empty() {
         return Ok(());
     }
-    if p.len() > 1000 || p.starts_with('/') || p.split('/').any(|c| c.is_empty() || c == "." || c == "..") || p.contains('\0') || p.contains('\n') {
+    if p.len() > 1000
+        || p.starts_with('/')
+        || p.split('/').any(|c| c.is_empty() || c == "." || c == "..")
+        || p.contains('\0')
+        || p.contains('\n')
+    {
         bail!("{p:?} is not a path in the repository");
     }
     Ok(())
@@ -83,7 +89,18 @@ pub async fn log(run_dir: &Path, r: &str, limit: usize) -> Result<Value> {
     check_ref(r)?;
     let rp = repo(run_dir)?;
     let n = format!("--max-count={}", limit.clamp(1, 1000));
-    let out = git(&rp, &["log", &n, "--date=unix", "--pretty=format:%H%x1f%an%x1f%ad%x1f%s%x1f%b%x1e", r, "--"]).await?;
+    let out = git(
+        &rp,
+        &[
+            "log",
+            &n,
+            "--date=unix",
+            "--pretty=format:%H%x1f%an%x1f%ad%x1f%s%x1f%b%x1e",
+            r,
+            "--",
+        ],
+    )
+    .await?;
     let commits: Vec<Value> = String::from_utf8_lossy(&out)
         .split('\x1e')
         .filter_map(|rec| {
@@ -100,9 +117,12 @@ pub async fn log(run_dir: &Path, r: &str, limit: usize) -> Result<Value> {
 /// A trailer such as `Co-Authored-By: …` or `Signed-off-by: …`: not a
 /// description.
 fn is_trailer(line: &str) -> bool {
-    let Some((key, _)) = line.split_once(": ") else { return false };
+    let Some((key, _)) = line.split_once(": ") else {
+        return false;
+    };
     let key = key.to_ascii_lowercase();
-    (key.ends_with("-by") && key.bytes().all(|b| b.is_ascii_alphabetic() || b == b'-')) || key == "change-id"
+    (key.ends_with("-by") && key.bytes().all(|b| b.is_ascii_alphabetic() || b == b'-'))
+        || key == "change-id"
 }
 
 /// The entries of a directory at a ref.
@@ -110,7 +130,11 @@ pub async fn tree(run_dir: &Path, r: &str, path: &str) -> Result<Value> {
     check_ref(r)?;
     check_path(path)?;
     let rp = repo(run_dir)?;
-    let spec = if path.is_empty() { r.to_string() } else { format!("{r}:{path}") };
+    let spec = if path.is_empty() {
+        r.to_string()
+    } else {
+        format!("{r}:{path}")
+    };
     let out = git(&rp, &["ls-tree", "-l", "-z", &spec]).await?;
     let mut entries: Vec<Value> = out
         .split(|b| *b == 0)
@@ -122,7 +146,12 @@ pub async fn tree(run_dir: &Path, r: &str, path: &str) -> Result<Value> {
             Some(json!({ "name": name, "type": f.get(1)?, "size": f.get(3).and_then(|s| s.parse::<u64>().ok()) }))
         })
         .collect();
-    entries.sort_by_key(|e| (e["type"] != "tree", e["name"].as_str().unwrap_or("").to_lowercase()));
+    entries.sort_by_key(|e| {
+        (
+            e["type"] != "tree",
+            e["name"].as_str().unwrap_or("").to_lowercase(),
+        )
+    });
     Ok(json!(entries))
 }
 
@@ -135,9 +164,14 @@ pub async fn blob(run_dir: &Path, r: &str, path: &str) -> Result<Value> {
     }
     let rp = repo(run_dir)?;
     let spec = format!("{r}:{path}");
-    let size: usize = String::from_utf8_lossy(&git(&rp, &["cat-file", "-s", &spec]).await?).trim().parse().map_err(|_| anyhow!("no file {path}"))?;
+    let size: usize = String::from_utf8_lossy(&git(&rp, &["cat-file", "-s", &spec]).await?)
+        .trim()
+        .parse()
+        .map_err(|_| anyhow!("no file {path}"))?;
     if size > MAX_BYTES {
-        return Ok(json!({ "path": path, "size": size, "text": null, "note": "too large to show" }));
+        return Ok(
+            json!({ "path": path, "size": size, "text": null, "note": "too large to show" }),
+        );
     }
     let data = git(&rp, &["cat-file", "blob", &spec]).await?;
     Ok(match String::from_utf8(data) {
@@ -152,7 +186,18 @@ pub async fn commit(run_dir: &Path, id: &str) -> Result<Value> {
         bail!("{id:?} is not a commit id");
     }
     let rp = repo(run_dir)?;
-    let head = git(&rp, &["show", "-s", "--date=unix", "--format=%H%x1f%an%x1f%ad%x1f%P%x1f%B", id, "--"]).await?;
+    let head = git(
+        &rp,
+        &[
+            "show",
+            "-s",
+            "--date=unix",
+            "--format=%H%x1f%an%x1f%ad%x1f%P%x1f%B",
+            id,
+            "--",
+        ],
+    )
+    .await?;
     let head = String::from_utf8_lossy(&head).into_owned();
     let f: Vec<&str> = head.splitn(5, '\x1f').collect();
     if f.len() < 5 {
@@ -166,7 +211,11 @@ pub async fn commit(run_dir: &Path, id: &str) -> Result<Value> {
             (p.len() == 3).then(|| json!({ "added": p[0], "removed": p[1], "path": p[2] }))
         })
         .collect();
-    let mut diff = git(&rp, &["show", "--format=", "--patch", "--no-ext-diff", id, "--"]).await?;
+    let mut diff = git(
+        &rp,
+        &["show", "--format=", "--patch", "--no-ext-diff", id, "--"],
+    )
+    .await?;
     let truncated = diff.len() > MAX_BYTES;
     diff.truncate(MAX_BYTES);
     Ok(json!({

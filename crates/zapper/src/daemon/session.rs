@@ -1,6 +1,5 @@
 //! One sandbox: a microVM, its guest channel, policy layer and audit trail.
 
-use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
@@ -12,8 +11,14 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::process::Child;
 use tokio::sync::{mpsc, watch, Semaphore};
-use zapper_policy::proto::{Forward, Frame, GuestDisk, GuestFile, GuestMsg, HostMsg, ShellRequest, CONTROL_PORT, MAX_FRAME, MAX_LINE, OFFICE_PORT, PROXY_PORT, SHELL_PORT};
-use zapper_policy::{evaluate_exec, Action, AnyRule, Config, ExecRequest, ExecRule, Kind, MountMode, Policy, ResolvedProfile, Scope};
+use zapper_policy::proto::{
+    Forward, Frame, GuestDisk, GuestFile, GuestMsg, HostMsg, ShellRequest, CONTROL_PORT, MAX_FRAME,
+    MAX_LINE, OFFICE_PORT, PROXY_PORT, SHELL_PORT,
+};
+use zapper_policy::{
+    evaluate_exec, Action, AnyRule, Config, ExecRequest, ExecRule, Kind, MountMode, Policy,
+    ResolvedProfile, Scope,
+};
 
 use super::office::FirmLink;
 use super::{now, proxy, spec, tls, vm, Daemon, Event, EventBody};
@@ -62,7 +67,7 @@ pub struct Session {
     pub terminals: Mutex<std::collections::BTreeMap<u64, Arc<Terminal>>>,
     guest: Mutex<Option<mpsc::Sender<HostMsg>>>,
     vm: tokio::sync::Mutex<Option<Child>>,
-    audit: Mutex<Option<std::fs::File>>,
+    audit: Mutex<Option<super::record::Writer>>,
     next_shell: AtomicU64,
     /// Bounds concurrent proxy connections from the guest.
     pub conns: Arc<Semaphore>,
@@ -135,22 +140,29 @@ impl Session {
 
     pub fn record(&self, event: &Event) {
         if let Some(f) = self.audit.lock().unwrap().as_mut() {
-            let mut line = serde_json::to_vec(event).unwrap_or_default();
-            line.push(b'\n');
-            let _ = f.write_all(&line);
+            let line = serde_json::to_vec(event).unwrap_or_default();
+            let _ = f.line(&line);
         }
     }
 
+    /// Where the audit log can be read (the keeper's copy, if it keeps it).
     pub fn audit_path(&self) -> PathBuf {
-        self.dir.join("audit.jsonl")
+        super::record::view(&self.dir.join("audit.jsonl"))
     }
 
     /// Policy layers, most specific first. Uses the running config, so rule
     /// changes apply to running sessions at once; a profile removed from the
     /// running config falls back to its layers at session start.
     pub fn layers(&self, config: &Config) -> Vec<(Scope, Policy)> {
-        let mut v = vec![(Scope::Session(self.id.clone()), self.policy.read().unwrap().clone())];
-        if let Some((role, policy)) = self.firm.as_ref().and_then(|f| f.role.as_ref().map(|r| (format!("{}/{}", f.firm, r.0), r.1.clone()))) {
+        let mut v = vec![(
+            Scope::Session(self.id.clone()),
+            self.policy.read().unwrap().clone(),
+        )];
+        if let Some((role, policy)) = self.firm.as_ref().and_then(|f| {
+            f.role
+                .as_ref()
+                .map(|r| (format!("{}/{}", f.firm, r.0), r.1.clone()))
+        }) {
             v.push((Scope::Role(role), policy.read().unwrap().clone()));
         }
         match config.resolve(&self.profile) {
@@ -165,9 +177,16 @@ impl Session {
     /// session rule ids never clash with config ones.
     pub fn add_rule(&self, mut rule: AnyRule, position: Option<usize>) -> AnyRule {
         let mut policy = self.policy.write().unwrap();
-        let taken: Vec<String> = policy.rules().iter().filter_map(|r| r.id().map(str::to_string)).collect();
+        let taken: Vec<String> = policy
+            .rules()
+            .iter()
+            .filter_map(|r| r.id().map(str::to_string))
+            .collect();
         let kind = rule.kind();
-        let id = (1..).map(|n| format!("s-{kind}-{n}")).find(|i| !taken.contains(i)).unwrap();
+        let id = (1..)
+            .map(|n| format!("s-{kind}-{n}"))
+            .find(|i| !taken.contains(i))
+            .unwrap();
         rule.set_id(id);
         policy.insert(rule.clone(), position);
         rule
@@ -190,7 +209,9 @@ impl Session {
         let id = self.next_shell.fetch_add(1, Ordering::Relaxed);
         req.id = id;
         let mut stream = UnixStream::connect(vm::vsock_path(&self.dir)).await?;
-        stream.write_all(format!("CONNECT {SHELL_PORT}\n").as_bytes()).await?;
+        stream
+            .write_all(format!("CONNECT {SHELL_PORT}\n").as_bytes())
+            .await?;
         let mut line = Vec::new();
         let mut byte = [0u8; 1];
         while line.len() < 64 {
@@ -227,7 +248,16 @@ pub struct NewSession {
 
 impl NewSession {
     pub fn plain(profile: String, workdir: PathBuf, policy: Policy) -> Self {
-        NewSession { profile, workdir, policy, firm: None, files: vec![], mounts: vec![], agent_overlay: None, forwards: vec![] }
+        NewSession {
+            profile,
+            workdir,
+            policy,
+            firm: None,
+            files: vec![],
+            mounts: vec![],
+            agent_overlay: None,
+            forwards: vec![],
+        }
     }
 }
 
@@ -243,21 +273,27 @@ pub async fn create(daemon: Arc<Daemon>, new: NewSession) -> Result<Arc<Session>
         resolved.agent = serde_json::from_value(agent).context("agent overlay")?;
     }
     resolved.mounts.extend(new.mounts.iter().cloned());
-    let running = daemon.sessions.read().unwrap().values().filter(|s| matches!(*s.status.borrow(), Status::Starting | Status::Running)).count();
+    let running = daemon
+        .sessions
+        .read()
+        .unwrap()
+        .values()
+        .filter(|s| matches!(*s.status.borrow(), Status::Starting | Status::Running))
+        .count();
     if running >= max {
         bail!("{running} sessions running; daemon.max_sessions is {max}");
     }
     let id = super::random_id(6);
     let dir = daemon.paths.state.join("sessions").join(&id);
     std::fs::create_dir_all(&dir)?;
-    let audit = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("audit.jsonl"))?;
+    let audit = super::record::Writer::open(&dir.join("audit.jsonl"))?;
     let created = now();
     let ttl = resolved.engine.ttl_secs;
     let session = Arc::new(Session {
         id: id.clone(),
         profile: new.profile.clone(),
         created,
-        expires: (ttl > 0).then(|| created + ttl as f64),
+        expires: (ttl > 0).then_some(created + ttl as f64),
         workdir: new.workdir.clone(),
         policy: RwLock::new(Policy::default()),
         status: watch::channel(Status::Starting).0,
@@ -284,24 +320,51 @@ pub async fn create(daemon: Arc<Daemon>, new: NewSession) -> Result<Arc<Session>
     for rule in new.policy.rules() {
         session.add_rule(rule, None);
     }
-    daemon.sessions.write().unwrap().insert(id.clone(), session.clone());
-    daemon.emit(Some(&session), EventBody::Session { state: "starting".into(), detail: Some(format!("profile {}", new.profile)) });
+    daemon
+        .sessions
+        .write()
+        .unwrap()
+        .insert(id.clone(), session.clone());
+    daemon.emit(
+        Some(&session),
+        EventBody::Session {
+            state: "starting".into(),
+            detail: Some(format!("profile {}", new.profile)),
+        },
+    );
 
     let started = Instant::now();
     if let Err(e) = boot(&daemon, &session).await {
         let msg = format!("{e:#}");
         session.status.send_replace(Status::Failed(msg.clone()));
-        daemon.emit(Some(&session), EventBody::Session { state: "failed".into(), detail: Some(msg.clone()) });
+        daemon.emit(
+            Some(&session),
+            EventBody::Session {
+                state: "failed".into(),
+                detail: Some(msg.clone()),
+            },
+        );
         teardown(&daemon, &session, None).await;
         return Err(anyhow!(msg));
     }
     let mut status = session.status.subscribe();
-    let ready = tokio::time::timeout(Duration::from_secs(120), status.wait_for(|s| !matches!(s, Status::Starting))).await.is_ok();
+    let ready = tokio::time::timeout(
+        Duration::from_secs(120),
+        status.wait_for(|s| !matches!(s, Status::Starting)),
+    )
+    .await
+    .is_ok();
     let state = session.status.borrow().clone();
     match (ready, state) {
         (true, Status::Running) => {
             let ms = started.elapsed().as_millis();
-            daemon.emit(Some(&session), EventBody::Session { state: "running".into(), detail: Some(format!("ready in {ms} ms")) });
+            daemon.emit(
+                Some(&session),
+                EventBody::Session {
+                    state: "running".into(),
+                    detail: Some(format!("ready in {ms} ms")),
+                },
+            );
         }
         (_, state) => {
             let msg = match state {
@@ -309,7 +372,10 @@ pub async fn create(daemon: Arc<Daemon>, new: NewSession) -> Result<Arc<Session>
                 _ => "guest did not become ready in 120s".into(),
             };
             stop(&daemon, &session, &msg).await;
-            return Err(anyhow!("session {id}: {msg}; see {}", dir.join("console.log").display()));
+            return Err(anyhow!(
+                "session {id}: {msg}; see {}",
+                dir.join("console.log").display()
+            ));
         }
     }
     if ttl > 0 {
@@ -328,23 +394,41 @@ async fn boot(daemon: &Arc<Daemon>, session: &Arc<Session>) -> Result<()> {
     std::fs::create_dir_all(&vmdir)?;
     let engine = &session.resolved.engine;
     let root = vmdir.join("root.ext4");
-    vm::root_disk(&daemon.paths.images.join(format!("{}.ext4", engine.image)), &root, vm::parse_size(&engine.disk)?)
-        .await
-        .context("root disk")?;
+    vm::root_disk(
+        &daemon.paths.images.join(format!("{}.ext4", engine.image)),
+        &root,
+        vm::parse_size(&engine.disk)?,
+    )
+    .await
+    .context("root disk")?;
     let mut disks = Vec::new();
     let mut guest_disks = Vec::new();
     for (i, m) in session.resolved.mounts.iter().enumerate() {
         let path = vmdir.join(format!("disk{i}.ext4"));
-        let host = vm::mount_disk(m, &session.workdir, &path).await.with_context(|| format!("mount {}", m.host))?;
+        let host = vm::mount_disk(m, &session.workdir, &path)
+            .await
+            .with_context(|| format!("mount {}", m.host))?;
         let ro = m.mode == MountMode::Ro;
         disks.push((path, ro));
         let device = format!("/dev/vd{}", (b'b' + i as u8) as char);
-        guest_disks.push(GuestDisk { device, path: m.guest.clone(), read_only: ro });
+        guest_disks.push(GuestDisk {
+            device,
+            path: m.guest.clone(),
+            read_only: ro,
+        });
         tracing::info!(session = %session.id, "mount {} -> {}", host.display(), m.guest);
     }
     let spec = {
         let c = daemon.config.read().unwrap();
-        spec::build(&c, &session.resolved, &session.id, &session.ca.pem, guest_disks, session.extra_files.clone(), session.forwards.clone())?
+        spec::build(
+            &c,
+            &session.resolved,
+            &session.id,
+            &session.ca.pem,
+            guest_disks,
+            session.extra_files.clone(),
+            session.forwards.clone(),
+        )?
     };
 
     // Guest-initiated vsock connections arrive on `<uds>_<port>`.
@@ -354,8 +438,14 @@ async fn boot(daemon: &Arc<Daemon>, session: &Arc<Session>) -> Result<()> {
     let control = UnixListener::bind(&control_path)?;
     let proxy = UnixListener::bind(&proxy_path)?;
     if let Some(link) = session.firm.as_ref().filter(|f| f.worker) {
-        let office = UnixListener::bind(PathBuf::from(format!("{}_{OFFICE_PORT}", vsock.display())))?;
-        tokio::spawn(super::office::ops::serve(daemon.clone(), session.clone(), link.clone(), office));
+        let office =
+            UnixListener::bind(PathBuf::from(format!("{}_{OFFICE_PORT}", vsock.display())))?;
+        tokio::spawn(super::office::ops::serve(
+            daemon.clone(),
+            session.clone(),
+            link.clone(),
+            office,
+        ));
     }
     let nic = engine.network == zapper_policy::NetworkMode::Nic;
     if nic {
@@ -392,7 +482,9 @@ async fn boot(daemon: &Arc<Daemon>, session: &Arc<Session>) -> Result<()> {
         let (d, s) = (daemon.clone(), session.clone());
         tokio::spawn(async move {
             loop {
-                let Ok((stream, _)) = proxy.accept().await else { break };
+                let Ok((stream, _)) = proxy.accept().await else {
+                    break;
+                };
                 let Ok(permit) = s.conns.clone().try_acquire_owned() else {
                     drop(stream);
                     continue;
@@ -429,8 +521,16 @@ async fn boot(daemon: &Arc<Daemon>, session: &Arc<Session>) -> Result<()> {
     Ok(())
 }
 
-async fn guest_control(daemon: &Arc<Daemon>, session: &Arc<Session>, listener: UnixListener, path: PathBuf, spec: zapper_policy::proto::GuestSpec) -> Result<()> {
-    let (stream, _) = tokio::time::timeout(Duration::from_secs(60), listener.accept()).await.context("guest did not connect")??;
+async fn guest_control(
+    daemon: &Arc<Daemon>,
+    session: &Arc<Session>,
+    listener: UnixListener,
+    path: PathBuf,
+    spec: zapper_policy::proto::GuestSpec,
+) -> Result<()> {
+    let (stream, _) = tokio::time::timeout(Duration::from_secs(60), listener.accept())
+        .await
+        .context("guest did not connect")??;
     // Only the first connection is the agent: anything later could be the
     // workload. Remove the socket so further guest connections are refused.
     drop(listener);
@@ -438,7 +538,10 @@ async fn guest_control(daemon: &Arc<Daemon>, session: &Arc<Session>, listener: U
 
     let (r, mut w) = stream.into_split();
     let (tx, mut rx) = mpsc::channel::<HostMsg>(256);
-    tx.send(HostMsg::Init { spec: Box::new(spec) }).await?;
+    tx.send(HostMsg::Init {
+        spec: Box::new(spec),
+    })
+    .await?;
     *session.guest.lock().unwrap() = Some(tx.clone());
     tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
@@ -453,7 +556,10 @@ async fn guest_control(daemon: &Arc<Daemon>, session: &Arc<Session>, listener: U
     let mut reader = BufReader::new(r);
     loop {
         let mut line = Vec::new();
-        let n = (&mut reader).take(MAX_LINE as u64 + 1).read_until(b'\n', &mut line).await?;
+        let n = (&mut reader)
+            .take(MAX_LINE as u64 + 1)
+            .read_until(b'\n', &mut line)
+            .await?;
         if n == 0 {
             break;
         }
@@ -472,7 +578,9 @@ async fn guest_control(daemon: &Arc<Daemon>, session: &Arc<Session>, listener: U
                 session.status.send_replace(Status::Running);
             }
             GuestMsg::Failed { error } => {
-                session.status.send_replace(Status::Failed(format!("guest setup: {error}")));
+                session
+                    .status
+                    .send_replace(Status::Failed(format!("guest setup: {error}")));
             }
             GuestMsg::ExecCheck { id, pid, uid, req } => {
                 let Ok(permit) = session.exec_checks.clone().try_acquire_owned() else {
@@ -505,7 +613,13 @@ async fn guest_control(daemon: &Arc<Daemon>, session: &Arc<Session>, listener: U
     Ok(())
 }
 
-async fn decide_exec(daemon: &Arc<Daemon>, session: &Arc<Session>, pid: i32, uid: u32, req: ExecRequest) -> bool {
+async fn decide_exec(
+    daemon: &Arc<Daemon>,
+    session: &Arc<Session>,
+    pid: i32,
+    uid: u32,
+    req: ExecRequest,
+) -> bool {
     let started = Instant::now();
     let decision = {
         let c = daemon.config.read().unwrap();
@@ -524,10 +638,21 @@ async fn decide_exec(daemon: &Arc<Daemon>, session: &Arc<Session>, pid: i32, uid
                 final_: false,
                 comment: Some("approved".into()),
             });
-            daemon.ask(session, Kind::Exec, format!("exec {}", req.argv.join(" ")), suggestion).await
+            daemon
+                .ask(
+                    session,
+                    Kind::Exec,
+                    format!("exec {}", req.argv.join(" ")),
+                    suggestion,
+                )
+                .await
         }
     };
-    let counter = if allow { &session.counters.exec_allowed } else { &session.counters.exec_denied };
+    let counter = if allow {
+        &session.counters.exec_allowed
+    } else {
+        &session.counters.exec_denied
+    };
     counter.fetch_add(1, Ordering::Relaxed);
     daemon.emit(
         Some(session),
@@ -564,13 +689,22 @@ pub async fn stop(daemon: &Arc<Daemon>, session: &Arc<Session>, reason: &str) {
 
 async fn teardown(daemon: &Arc<Daemon>, session: &Arc<Session>, reason: Option<&str>) {
     if let Some(mut child) = session.vm.lock().await.take() {
-        if tokio::time::timeout(Duration::from_secs(5), child.wait()).await.is_err() {
+        if tokio::time::timeout(Duration::from_secs(5), child.wait())
+            .await
+            .is_err()
+        {
             let _ = child.kill().await;
         }
     }
     *session.guest.lock().unwrap() = None;
     if let Some(reason) = reason {
-        daemon.emit(Some(session), EventBody::Session { state: "stopped".into(), detail: Some(reason.into()) });
+        daemon.emit(
+            Some(session),
+            EventBody::Session {
+                state: "stopped".into(),
+                detail: Some(reason.into()),
+            },
+        );
     }
     // The VMM's directory: disks and sockets go; its config and metrics are
     // kept next to the audit log.
@@ -584,11 +718,26 @@ async fn teardown(daemon: &Arc<Daemon>, session: &Arc<Session>, reason: Option<&
 
 /// Pumps frames between a client and a guest terminal, recording the
 /// terminal as an asciicast v2 file in the session directory.
-pub async fn pump_shell<C>(daemon: Arc<Daemon>, session: Arc<Session>, client: C, guest: UnixStream, id: u64, argv: Vec<String>, tty: Option<(u16, u16)>)
-where
+pub async fn pump_shell<C>(
+    daemon: Arc<Daemon>,
+    session: Arc<Session>,
+    client: C,
+    guest: UnixStream,
+    id: u64,
+    argv: Vec<String>,
+    tty: Option<(u16, u16)>,
+) where
     C: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
-    daemon.emit(Some(&session), EventBody::Shell { id, state: "open".into(), argv: Some(argv.clone()), exit_code: None });
+    daemon.emit(
+        Some(&session),
+        EventBody::Shell {
+            id,
+            state: "open".into(),
+            argv: Some(argv.clone()),
+            exit_code: None,
+        },
+    );
     let cast = Arc::new(Mutex::new(Recorder::new(&session.dir, id, tty, &argv)));
     let term = Arc::new(Terminal::new(id, argv.clone(), tty.unwrap_or((24, 80))));
     session.terminals.lock().unwrap().insert(id, term.clone());
@@ -601,7 +750,9 @@ where
             match &frame {
                 Frame::Data(d) => rec.lock().unwrap().write("i", d),
                 Frame::Resize(r, c) => {
-                    rec.lock().unwrap().write("r", format!("{c}x{r}").as_bytes());
+                    rec.lock()
+                        .unwrap()
+                        .write("r", format!("{c}x{r}").as_bytes());
                     watch.push(TermChunk::Resize(*r, *c));
                 }
                 _ => {}
@@ -633,7 +784,15 @@ where
     let _ = cw.shutdown().await;
     upstream.abort();
     term.push(TermChunk::End(exit_code));
-    daemon.emit(Some(&session), EventBody::Shell { id, state: "closed".into(), argv: None, exit_code });
+    daemon.emit(
+        Some(&session),
+        EventBody::Shell {
+            id,
+            state: "closed".into(),
+            argv: None,
+            exit_code,
+        },
+    );
 }
 
 /// What a watcher of a terminal receives.
@@ -678,8 +837,19 @@ pub struct TerminalInfo {
 
 impl Terminal {
     fn new(id: u64, argv: Vec<String>, size: (u16, u16)) -> Self {
-        let state = TermState { size, base: size, open: true, history: Default::default(), bytes: 0 };
-        Terminal { id, argv, state: Mutex::new(state), tx: tokio::sync::broadcast::channel(1024).0 }
+        let state = TermState {
+            size,
+            base: size,
+            open: true,
+            history: Default::default(),
+            bytes: 0,
+        };
+        Terminal {
+            id,
+            argv,
+            state: Mutex::new(state),
+            tx: tokio::sync::broadcast::channel(1024).0,
+        }
     }
 
     fn push(&self, chunk: TermChunk) {
@@ -716,11 +886,19 @@ impl Terminal {
 
     pub fn info(&self) -> TerminalInfo {
         let st = self.state.lock().unwrap();
-        TerminalInfo { id: self.id, argv: self.argv.clone(), rows: st.size.0, cols: st.size.1, open: st.open }
+        TerminalInfo {
+            id: self.id,
+            argv: self.argv.clone(),
+            rows: st.size.0,
+            cols: st.size.1,
+            open: st.open,
+        }
     }
 }
 
-pub async fn read_frame(r: &mut (impl tokio::io::AsyncRead + Unpin)) -> std::io::Result<Option<Frame>> {
+pub async fn read_frame(
+    r: &mut (impl tokio::io::AsyncRead + Unpin),
+) -> std::io::Result<Option<Frame>> {
     let mut header = [0u8; 5];
     match r.read_exact(&mut header).await {
         Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
@@ -728,7 +906,10 @@ pub async fn read_frame(r: &mut (impl tokio::io::AsyncRead + Unpin)) -> std::io:
     };
     let len = u32::from_be_bytes(header[1..].try_into().unwrap()) as usize;
     if len > MAX_FRAME {
-        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "frame too large"));
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "frame too large",
+        ));
     }
     let mut body = vec![0; len];
     r.read_exact(&mut body).await?;
@@ -737,18 +918,21 @@ pub async fn read_frame(r: &mut (impl tokio::io::AsyncRead + Unpin)) -> std::io:
 
 /// asciicast v2 writer.
 struct Recorder {
-    file: Option<std::fs::File>,
+    file: Option<super::record::Writer>,
     start: Instant,
 }
 
 impl Recorder {
     fn new(dir: &Path, id: u64, tty: Option<(u16, u16)>, argv: &[String]) -> Self {
-        let file = std::fs::File::create(dir.join(format!("shell-{id}.cast"))).ok();
+        let file = super::record::Writer::open(&dir.join(format!("shell-{id}.cast"))).ok();
         let (rows, cols) = tty.unwrap_or((24, 80));
-        let mut r = Recorder { file, start: Instant::now() };
+        let mut r = Recorder {
+            file,
+            start: Instant::now(),
+        };
         let header = serde_json::json!({ "version": 2, "width": cols, "height": rows, "timestamp": now() as u64, "command": argv.join(" ") });
         if let Some(f) = r.file.as_mut() {
-            let _ = writeln!(f, "{header}");
+            let _ = f.line(header.to_string().as_bytes());
         }
         r
     }
@@ -757,7 +941,7 @@ impl Recorder {
         if let Some(f) = self.file.as_mut() {
             let t = self.start.elapsed().as_secs_f64();
             let line = serde_json::json!([t, kind, String::from_utf8_lossy(data)]);
-            let _ = writeln!(f, "{line}");
+            let _ = f.line(line.to_string().as_bytes());
         }
     }
 }

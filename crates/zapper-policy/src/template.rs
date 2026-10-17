@@ -43,7 +43,10 @@ mod tests {
     fn renders_placeholders() {
         let t = "Bearer {{secret:gh}} and {{secret:x}}";
         assert_eq!(secret_refs(t), ["gh", "x"]);
-        assert_eq!(render(t, placeholder), "Bearer zapper-secret-gh and zapper-secret-x");
+        assert_eq!(
+            render(t, placeholder),
+            "Bearer zapper-secret-gh and zapper-secret-x"
+        );
         assert_eq!(render("plain {{secret:", placeholder), "plain {{secret:");
     }
 }

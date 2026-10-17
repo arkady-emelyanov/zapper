@@ -14,8 +14,12 @@ use super::{dns, proxy, spec, Daemon, EventBody};
 
 pub async fn serve(d: Arc<Daemon>, s: Arc<Session>, listener: UnixListener) {
     loop {
-        let Ok((stream, _)) = listener.accept().await else { break };
-        let Ok(permit) = s.conns.clone().try_acquire_owned() else { continue };
+        let Ok((stream, _)) = listener.accept().await else {
+            break;
+        };
+        let Ok(permit) = s.conns.clone().try_acquire_owned() else {
+            continue;
+        };
         let (d, s) = (d.clone(), s.clone());
         tokio::spawn(async move {
             let _ = handle(d, s, stream).await;
@@ -38,7 +42,9 @@ async fn handle(d: Arc<Daemon>, s: Arc<Session>, mut stream: UnixStream) -> std:
     let parts: Vec<&str> = line.split(' ').collect();
     match parts.as_slice() {
         ["TCP", ip, port] => {
-            let (Ok(ip), Ok(port)) = (ip.parse::<Ipv4Addr>(), port.parse::<u16>()) else { return Ok(()) };
+            let (Ok(ip), Ok(port)) = (ip.parse::<Ipv4Addr>(), port.parse::<u16>()) else {
+                return Ok(());
+            };
             proxy::transparent(d, s, stream, ip, port).await;
         }
         ["DNS", len] => {
@@ -48,7 +54,9 @@ async fn handle(d: Arc<Daemon>, s: Arc<Session>, mut stream: UnixStream) -> std:
             }
             let mut query = vec![0u8; len];
             stream.read_exact(&mut query).await?;
-            let Some(resp) = query_dns(&d, &s, &query).await else { return Ok(()) };
+            let Some(resp) = query_dns(&d, &s, &query).await else {
+                return Ok(());
+            };
             stream.write_all(&(resp.len() as u16).to_be_bytes()).await?;
             stream.write_all(&resp).await?;
         }
@@ -70,19 +78,20 @@ fn rcode_name(rcode: u8) -> &'static str {
 
 /// Answers one DNS query from the guest; `None` if it's too short to answer.
 async fn query_dns(d: &Arc<Daemon>, s: &Arc<Session>, query: &[u8]) -> Option<Vec<u8>> {
-    let event = |name: &str, qtype: u16, rcode: u8, answer: Option<Ipv4Addr>, reason: Option<&str>| {
-        d.emit(
-            Some(s),
-            EventBody::Dns {
-                name: name.to_string(),
-                qtype,
-                allowed: rcode == dns::NOERROR || rcode == dns::NXDOMAIN,
-                rcode: rcode_name(rcode).into(),
-                answer: answer.map(|a| a.to_string()),
-                reason: reason.map(str::to_string),
-            },
-        )
-    };
+    let event =
+        |name: &str, qtype: u16, rcode: u8, answer: Option<Ipv4Addr>, reason: Option<&str>| {
+            d.emit(
+                Some(s),
+                EventBody::Dns {
+                    name: name.to_string(),
+                    qtype,
+                    allowed: rcode == dns::NOERROR || rcode == dns::NXDOMAIN,
+                    rcode: rcode_name(rcode).into(),
+                    answer: answer.map(|a| a.to_string()),
+                    reason: reason.map(str::to_string),
+                },
+            )
+        };
     let q = match dns::parse(query)? {
         Ok(q) => q,
         Err(rej) => {
@@ -101,11 +110,21 @@ async fn query_dns(d: &Arc<Daemon>, s: &Arc<Session>, query: &[u8]) -> Option<Ve
         resolvable(&spec::layers_of(&layers), &q.name)
     };
     if !reachable {
-        event(&q.name, q.qtype, dns::REFUSED, None, Some("no rule allows this name"));
+        event(
+            &q.name,
+            q.qtype,
+            dns::REFUSED,
+            None,
+            Some("no rule allows this name"),
+        );
         return Some(dns::respond(query, Some(&q), dns::REFUSED, None));
     }
     // The firm's own services are answered here, never looked up on the host.
-    let firm = s.firm.as_ref().and_then(|f| f.run()).and_then(|r| super::office::facility::serves_name(&r, &q.name));
+    let firm = s
+        .firm
+        .as_ref()
+        .and_then(|f| f.run())
+        .and_then(|r| super::office::facility::serves_name(&r, &q.name));
     if let Some(exists) = firm {
         s.dns.lock().unwrap().remember(&q.name, exists);
     }
@@ -128,7 +147,11 @@ async fn query_dns(d: &Arc<Daemon>, s: &Arc<Session>, query: &[u8]) -> Option<Ve
         event(&q.name, q.qtype, dns::NXDOMAIN, None, Some("no such name"));
         return Some(dns::respond(query, Some(&q), dns::NXDOMAIN, None));
     }
-    let answer = if q.qtype == dns::TYPE_A { s.dns.lock().unwrap().address(&q.name) } else { None };
+    let answer = if q.qtype == dns::TYPE_A {
+        s.dns.lock().unwrap().address(&q.name)
+    } else {
+        None
+    };
     if q.qtype == dns::TYPE_A {
         event(&q.name, q.qtype, dns::NOERROR, answer, None);
     }
@@ -141,12 +164,20 @@ async fn look_up(s: &Session, name: &str) -> Result<bool, String> {
     let Ok(_permit) = s.dns_lookups.clone().try_acquire_owned() else {
         return Err("too many lookups at once".into());
     };
-    match tokio::time::timeout(std::time::Duration::from_secs(5), tokio::net::lookup_host((name, 0))).await {
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        tokio::net::lookup_host((name, 0)),
+    )
+    .await
+    {
         Ok(Ok(mut addrs)) => Ok(addrs.next().is_some()),
         Ok(Err(e)) => {
             let msg = e.to_string();
             // getaddrinfo's "no such name" answers, as opposed to failures.
-            if msg.contains("not known") || msg.contains("No address associated") || msg.contains("Name has no usable address") {
+            if msg.contains("not known")
+                || msg.contains("No address associated")
+                || msg.contains("Name has no usable address")
+            {
                 Ok(false)
             } else {
                 Err(format!("lookup failed: {msg}"))

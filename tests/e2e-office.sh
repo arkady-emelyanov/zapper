@@ -20,6 +20,16 @@ fail() { echo "FAIL  $1"; echo "      $2"; fails=$((fails + 1)); }
 expect() { case "$2" in *"$3"*) pass "$1" ;; *) fail "$1" "expected '$3' in: $(echo "$2" | tail -c 400)" ;; esac; }
 refute() { case "$2" in *"$3"*) fail "$1" "did not expect '$3'" ;; *) pass "$1" ;; esac; }
 journal() { "$Z" firm journal acme; }
+cjournal() { "$Z" firm journal corp; }
+# Waits up to $2 seconds for corp's journal to contain $1.
+cwait_for() {
+    i=0
+    while [ $i -lt "$2" ]; do
+        cjournal 2>/dev/null | grep -q -- "$1" && return 0
+        sleep 1; i=$((i + 1))
+    done
+    return 1
+}
 # Waits up to $2 seconds for the journal to contain $1.
 wait_for() {
     i=0
@@ -32,6 +42,7 @@ wait_for() {
 
 cleanup() {
     [ -n "${DAEMON:-}" ] && kill "$DAEMON" 2>/dev/null && wait "$DAEMON" 2>/dev/null
+    [ -n "${KEEPER:-}" ] && kill "$KEEPER" 2>/dev/null && wait "$KEEPER" 2>/dev/null
     [ -n "${ZAPPER_E2E_KEEP:-}" ] && echo "kept $T" || rm -rf "$T"
 }
 trap cleanup EXIT
@@ -70,8 +81,132 @@ rules:
     do:
       - access_decide: { request: $request, allow: true, scope: worker, reason: "example.com is needed for the task", methods: [] }
 EOF
+# corp: a firm that grows. The board declines the CEO's first budget and
+# approves the second; the CEO hires grace (who reports back and is let go)
+# and ken, on a budget too small for more than one turn.
+cat > "$T/fake/corp-ceo.yaml" <<'EOF'
+rules:
+  - when: { from: board, contains: "Declined" }
+    do:
+      - budget_request: { total: "30k", plan: "Hire two developers.", reason: "the board asked for less" }
+  - when: { from: board, contains: "Approved" }
+    do:
+      - shell: "office hire '{\"role\": \"dev\", \"budget\": \"1G\", \"subject\": \"x\", \"brief\": \"x\", \"reason\": \"x\"}' > /work/rich.txt 2>&1; true"
+      - hire: { role: lead, name: lin, budget: "1k", title: "CTO", subject: "Own engineering", brief: "Own the repository, cluster and product.", reason: "engineering needs an owner" }
+      - hire: { role: dev, name: grace, budget: "10k", title: "Founding engineer", subject: "Build the widget", brief: "Build the widget and report.", reason: "we need an engineer" }
+      - hire: { role: dev, name: ken, budget: "100", subject: "A tiny job", brief: "Look at the widget.", reason: "a small budget" }
+      - hire: { role: dev, name: mallory, budget: "1k", subject: "Copy", brief: "Write the marketing copy.", reason: "words" }
+      - contract_offer: { role: dev, name: carl, title: "Auditor", brief: "Audit the widget's code." }
+  - when: { contains: "Quote for contract", once: true }
+    do:
+      - contract_counter: { contract: $contract, budget: "3k", note: "too much for an audit this size" }
+  - when: { contains: "Quote for contract" }
+    do:
+      - contract_accept: { contract: $contract }
+  - when: { from: board, kind: assignment }
+    do:
+      - shell: "office hire '{\"role\": \"dev\", \"budget\": \"1k\", \"subject\": \"x\", \"brief\": \"x\", \"reason\": \"x\"}' > /work/early.txt 2>&1; true"
+      - budget_request: { total: "50k", plan: "Hire two developers and a reserve.", reason: "to build the widget" }
+  - when: { from: grace, kind: report }
+    do:
+      - mail_send: { to: [ken], subject: "One more thing", body: "Please also check the docs.", kind: fyi }
+      - release: { worker: grace, reason: "the widget is done" }
+EOF
+# The officer clears grace and ken, and objects to mallory: a developer's
+# access for a job that needs none.
+cat > "$T/fake/corp-sec.yaml" <<'EOF'
+rules:
+  - when: { contains: "Hire: mallory" }
+    do:
+      - shell: "office background_checks > /work/checks.txt 2>&1; true"
+      - background_check: { screening: $screening, clear: false, note: "a developer's git and cluster access for copywriting" }
+  - when: { contains: "Background check" }
+    do:
+      - background_check: { screening: $screening, clear: true, note: "role fits the brief" }
+EOF
+# solo: the CEO holds security alone, decides a colleague's access request,
+# hires an officer (whom the board checks) and hands security over, then
+# lets the officer go and holds it again.
+cat > "$T/fake/solo-ceo.yaml" <<'EOF'
+rules:
+  - when: { subject: "Slow" }
+    do:
+      - sleep: 8
+  - when: { subject: "Interrupt" }
+    do:
+      - shell: "echo handed over > /work/interrupt.txt"
+  - when: { contains: "Access request r-" }
+    do:
+      - access_decide: { request: $request, allow: true, scope: worker, reason: "the CEO holds security", methods: [] }
+  - when: { from: bo, kind: report }
+    do:
+      - shell: "office access_requests > /work/after-handover.txt 2>&1; true"
+      - release: { worker: otto, reason: "a dedicated officer isn't needed any more" }
+  - when: { from: board, contains: "Approved" }
+    do:
+      - hire: { role: dev, name: ada, budget: "5k", subject: "Fetch", brief: "Fetch example.com.", reason: "an engineer" }
+  - when: { from: board, kind: assignment }
+    do:
+      - budget_request: { total: "20k", plan: "An engineer, then an officer.", reason: "to build it" }
+  - when: { from: ada, kind: report }
+    do:
+      - hire: { role: officer, name: otto, budget: "2k", subject: "Security", brief: "Take over security.", reason: "the team grows" }
+      - hire: { role: dev, name: bo, budget: "2k", subject: "Docs", brief: "Write the docs.", reason: "docs" }
+EOF
+cat > "$T/fake/solo-sec.yaml" <<'EOF'
+rules:
+  - when: { contains: "Background check" }
+    do:
+      - background_check: { screening: $screening, clear: true, note: "fits" }
+EOF
+cat > "$T/fake/solo-dev.yaml" <<'EOF'
+rules:
+  - when: { subject: "Fetch" }
+    do:
+      - shell: "curl -s -m 5 -o /dev/null https://example.com; true"
+  - when: { contains: "was allowed" }
+    do:
+      - shell: "curl -s -m 10 -o /dev/null -w '%{http_code}' https://example.com > /work/after.txt 2>&1; true"
+      - mail_send: { to: [ceo], subject: "Fetched", body: "Got it.", kind: report }
+  - when: { subject: "Docs" }
+    do:
+      - mail_reply: { message: $message, body: "Docs written.", kind: report, close: true }
+EOF
+cat > "$T/board-articles.md" <<'EOF'
+No paid services without the board's approval.
+EOF
+cat > "$T/fake/corp-dev.yaml" <<'EOF'
+rules:
+  - when: { contains: "Counter-offer for contract" }
+    do:
+      - contract_quote: { contract: $contract, scope: "An audit report, the core module only.", budget: "3k", due: "2h" }
+  - when: { kind: assignment, contains: "Contract k-" }
+    do:
+      - shell: "office mail_send --to ken --subject hi --body hello --kind fyi 2>&1; office hire '{\"role\": \"dev\", \"budget\": \"1\", \"brief\": \"x\", \"reason\": \"x\"}' 2>&1; true"
+      - contract_complete: { contract: $contract, report: "Audit done. Tried: $last" }
+  - when: { contains: "Contract offer k-" }
+    do:
+      - contract_quote: { contract: $contract, scope: "An audit report of the widget's code.", budget: "5k", due: "2h" }
+  - when: { subject: "A tiny job" }
+    do:
+      - request_access: { host: git.corp.internal, port: 443, reason: "to read the widget's code" }
+  - when: { subject: "Build the widget" }
+    do:
+      - mail_reply: { message: $message, body: "Built.", kind: report, close: true }
+EOF
+cat > "$T/fake/corp-lead.yaml" <<'EOF'
+rules:
+  - when: { contains: "Access request r-" }
+    do:
+      - access_decide: { request: $request, allow: true, scope: worker, reason: "ken reads the code", methods: [] }
+EOF
 cat > "$T/zapper.yaml" <<EOF
-daemon: { state: $T/state, ui: "127.0.0.1:0" }
+daemon:
+  state: $T/state
+  ui: "127.0.0.1:0"
+  # The record through a keeper: here the same user, so this checks the
+  # path and the chains, not the separation (that needs a second user).
+  keeper: { socket: $T/keeper.sock, dir: $T/record }
 policy:
   defaults: { net: deny, exec: allow }
 profiles:
@@ -107,6 +242,28 @@ firms:
       - { name: ada, role: engineer, reports_to: ceo }
       - { name: sec-1, role: security, reports_to: ceo }
     security: { officers: [sec-1], digest_every: { minutes: 60, requests: 0 } }
+  corp:
+    budget: { max_concurrent: 2, seed: 1000, quote_fee: 500 }
+    roles:
+      boss: { profile: worker, skills: { work: ceo }, fake: $T/fake/corp-ceo.yaml, hires: [dev, lead], avatar: { figure: ceo } }
+      lead: { profile: worker, skills: { work: manager }, fake: $T/fake/corp-lead.yaml, owns_services: true }
+      dev: { profile: worker, title: Developer, skills: { work: software-engineer }, fake: $T/fake/corp-dev.yaml, avatar: { figure: engineer } }
+      sec: { profile: worker, skills: { work: security-review }, fake: $T/fake/corp-sec.yaml, avatar: { figure: shield } }
+    workers:
+      - { name: ceo, role: boss }
+      - { name: sec-1, role: sec, reports_to: ceo }
+    security: { officers: [sec-1], digest_every: { minutes: 60, requests: 0 } }
+  solo:
+    budget: { max_concurrent: 3, seed: 1000 }
+    roles:
+      boss: { profile: worker, skills: { work: ceo }, fake: $T/fake/solo-ceo.yaml, hires: [dev, officer], avatar: { figure: ceo } }
+      dev: { profile: worker, skills: { work: software-engineer }, fake: $T/fake/solo-dev.yaml }
+      officer: { profile: worker, skills: { work: security-review }, fake: $T/fake/solo-sec.yaml, officer: true }
+      sec: { profile: worker, skills: { work: security-review }, fake: $T/fake/none.yaml }
+    workers:
+      - { name: ceo, role: boss }
+      - { name: sec-1, role: sec, reports_to: ceo }
+    security: { officers: [sec-1], digest_every: { minutes: 60, requests: 0 } }
   lab:
     git: {}
     product_port: 127.0.0.1:$PORT
@@ -124,6 +281,10 @@ EOF
 echo "rules: []" > "$T/fake/none.yaml"
 chmod 600 "$T/zapper.yaml"
 
+K=$(dirname "$Z")/zapper-keeper
+"$K" serve --socket "$T/keeper.sock" --dir "$T/record" --key "$T/keeper.key" --writer-uid "$(id -u)" --group "$(id -g)" --ui 127.0.0.1:0 > "$T/keeper.log" 2>&1 &
+KEEPER=$!
+for _ in 1 2 3 4 5 6 7 8 9 10; do [ -S "$T/keeper.sock" ] && break; sleep 0.3; done
 "$Z" serve > "$T/daemon.log" 2>&1 &
 DAEMON=$!
 for _ in 1 2 3 4 5 6 7 8 9 10; do [ -S "$ZAPPER_SOCKET" ] && break; sleep 0.3; done
@@ -190,7 +351,7 @@ mail='{"to":["ceo"],"subject":"From the UI","body":"hello","kind":"fyi"}'
 [ "$(post "$mail" -b "zapper_token=$token" -H 'x-zapper-ui: 1' -H "Origin: $base")" = 200 ] && pass "the board writes to a worker from the UI" || fail "the board writes to a worker from the UI" "not 200"
 expect "the UI's mail is the board's" "$(journal | grep 'From the UI')" "board → ceo [fyi]"
 del_run() { curl -s -o /dev/null -w '%{http_code}' -X DELETE "$@"; }
-[ "$(del_run -b "zapper_token=$token" -H 'x-zapper-ui: 1' -H "Origin: $base" "$base/api/firms/acme/runs/current")" != 200 ] && [ -f "$(ls -d "$T"/state/firms/acme/runs/*/ | tail -1)journal.jsonl" ] && pass "the running run can't be deleted" || fail "the running run can't be deleted" "deleted"
+[ "$(del_run -b "zapper_token=$token" -H 'x-zapper-ui: 1' -H "Origin: $base" "$base/api/firms/acme/runs/current")" != 200 ] && [ -f "$(ls -d "$T"/state/firms/acme/runs/*/ | tail -1)run.json" ] && pass "the running run can't be deleted" || fail "the running run can't be deleted" "deleted"
 page=$(curl -s -b "zapper_token=$token" "$base/")
 expect "the UI serves the office page" "$page" "<title>"
 expect "the sessions page moved" "$(curl -s -b "zapper_token=$token" "$base/sessions")" "zapper"
@@ -212,6 +373,24 @@ expect "transcripts are kept" "$("$Z" firm transcript acme ada --run "$run")" "m
 expect "the UI reads a finished run for replay" "$(curl -s -b "zapper_token=$token" "$base/api/firms/acme/runs/$run/journal" | tail -1)" '"state":"ended"'
 expect "a published file is served sandboxed" "$(curl -s -D - -o /dev/null -b "zapper_token=$token" "$base/api/firms/acme/runs/$run/drive/a-1/1/hello.md" | tr 'A-Z' 'a-z')" "content-security-policy: sandbox"
 [ "$(curl -s -o /dev/null -w '%{http_code}' -b "zapper_token=$token" "$base/api/firms/acme/runs/..%2F..%2Fetc/journal")" != 200 ] && pass "run ids are checked" || fail "run ids are checked" "200"
+
+echo "== the record, through the keeper"
+expect "the keeper keeps the record" "$("$Z" record status)" '"healthy": true'
+[ -s "$T/record/firms/acme/runs/$run/journal.jsonl" ] && [ ! -e "$T/state/firms/acme/runs/$run/journal.jsonl" ] && pass "the run's journal is in the keeper's directory, not the state" || fail "the run's journal is in the keeper's directory" "$(ls "$T/record/firms/acme/runs/$run" "$T/state/firms/acme/runs/$run" 2>&1)"
+[ -s "$T/record/firms/acme/runs/$run/transcripts/ada.jsonl.chain" ] && pass "transcripts are chained" || fail "transcripts are chained" "no chain"
+ls "$T/record/sessions/"*/audit.jsonl > /dev/null 2>&1 && pass "sessions' audit logs are kept too" || fail "sessions' audit logs are kept too" "none in $T/record/sessions"
+expect "a run's record verifies" "$("$Z" record verify acme "$run")" "the run's record is intact"
+pub=$(cat "$T/record/keeper.pub")
+cp "$T/record/firms/acme/runs/$run/journal.jsonl" "$T/j.jsonl"; cp "$T/record/firms/acme/runs/$run/journal.jsonl.chain" "$T/j.jsonl.chain"
+sed -i '3s/"ts":/"ts":1/' "$T/j.jsonl"
+expect "a changed line is caught" "$("$K" verify "$T/j.jsonl" "firms/acme/runs/$run/journal.jsonl" "$pub" 2>&1)" "was changed"
+reply=$(python3 -c 'import socket,sys; s=socket.socket(socket.AF_UNIX); s.connect(sys.argv[1]); s.sendall(b"{\"op\":\"append\",\"stream\":\"../../etc/x.jsonl\",\"data\":\"x\"}\n{\"op\":\"delete\",\"stream\":\"a.jsonl\"}\n"); print(s.recv(4096).decode())' "$T/keeper.sock")
+expect "the keeper refuses paths outside the record" "$reply" "is not a stream name"
+expect "and knows no op but append" "$reply" "the keeper only appends"
+ui=$(cat "$T/record/keeper-ui"); ubase=${ui%%/\?*}; utoken=${ui##*token=}
+expect "the keeper's UI lists the record" "$(curl -s -H "X-Keeper-Token: $utoken" "$ubase/api/list?dir=firms/acme/runs/$run")" '"journal.jsonl"'
+[ "$(curl -s -o /dev/null -w '%{http_code}' "$ubase/api/list?dir=")" = 401 ] && pass "the keeper's UI needs its token" || fail "the keeper's UI needs its token" "not 401"
+[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "X-Keeper-Token: $utoken" "$ubase/api/list")" = 405 ] && pass "the keeper's UI is read-only" || fail "the keeper's UI is read-only" "not 405"
 "$Z" firm up acme > /dev/null 2>&1
 expect "a new run starts fresh" "$("$Z" mail ls acme)" "ID"
 refute "with an empty inbox" "$("$Z" mail ls acme)" "Done"
@@ -221,6 +400,151 @@ gone=$("$Z" firm runs acme | sed -n 2p | cut -d' ' -f1)
 [ "$(del_run -b "zapper_token=$token" -H 'x-zapper-ui: 1' -H "Origin: $base" "$base/api/firms/acme/runs/$gone")" = 200 ] && pass "the board deletes a finished run from the UI" || fail "the board deletes a finished run from the UI" "not 200"
 refute "the deleted run is gone" "$("$Z" firm runs acme)" "$gone"
 expect "the other run stays" "$("$Z" firm runs acme)" "$run"
+
+echo "== a firm that grows: budget and hiring"
+out=$("$Z" firm up corp 2>&1)
+expect "corp boots with its founders" "$out" "is running"
+funds=$("$Z" --json firm budget corp)
+expect "the seed funds the CEO" "$funds" '"ceo"'
+expect "and the officers' share" "$(echo "$funds" | python3 -c 'import sys,json; print(json.load(sys.stdin)["workers"]["sec-1"]["balance"])')" "100"
+"$Z" mail send corp --to ceo --subject "Build a widget" --body "We want a widget." > /dev/null
+cwait_for "funds request b-1" 60 && pass "the CEO asks the board for a budget" || fail "the CEO asks the board for a budget" "$(cjournal | tail -5)"
+ceo=$("$Z" --json firm status corp | python3 -c 'import sys,json; print([w["session"] for w in json.load(sys.stdin)["run"]["workers"] if w["name"]=="ceo"][0])')
+expect "hiring before an approved budget is refused" "$("$Z" exec "$ceo" -- cat /work/early.txt 2>&1)" "hasn't approved a budget yet"
+expect "the request is mail to the board" "$(cjournal)" 'ceo → board [question] "Budget request b-1'
+"$Z" firm budget corp decline b-1 --note "too much; aim for 30k" > /dev/null
+cwait_for "funds request b-2" 60 && pass "a declined budget comes back revised" || fail "a declined budget comes back revised" "$(cjournal | tail -5)"
+expect "the decline is the board's reply in the thread" "$(cjournal)" "board → ceo [reply]"
+"$Z" firm budget corp approve b-2 > /dev/null
+cwait_for "hired ken" 60 && pass "the CEO hires after approval" || fail "the CEO hires after approval" "$(cjournal | tail -5)"
+expect "the approval funds the officers' share" "$("$Z" --json firm budget corp | python3 -c 'import sys,json; f=json.load(sys.stdin); print(f["approved"], f["workers"]["sec-1"]["received"])')" "30000 3100"
+cwait_for "contract k-1 offered by ceo to carl as Auditor (dev)" 30 && pass "the CEO offers a contract" || fail "the CEO offers a contract" "$(cjournal | grep -i contract | tail -5)"
+cwait_for "contract k-1 quoted by carl: 5000 tokens" 120 && pass "the candidate is checked, boots and quotes" || fail "the candidate is checked, boots and quotes" "$(cjournal | grep -i "contract\|carl" | tail -8)"
+cwait_for "contract k-1 countered by ceo (round 1): 3000 tokens" 60 && pass "the hirer counters" || fail "the hirer counters" "$(cjournal | grep -i contract | tail -5)"
+cwait_for "contract k-1 accepted by ceo: 3000 tokens" 90 && pass "the candidate quotes again and the hirer accepts" || fail "the candidate quotes again and the hirer accepts" "$(cjournal | grep -i contract | tail -5)"
+cwait_for "contract k-1 completed: delivered" 90 && pass "the contractor delivers and the contract ends" || fail "the contractor delivers and the contract ends" "$(cjournal | grep -i "contract\|carl" | tail -8)"
+cjson=$("$Z" --json firm journal corp)
+expect "a contractor mails only the hirer and those added" "$cjson" "as a contractor you mail ceo"
+expect "and has no authority" "$cjson" "hire isn't one of your tools"
+cwait_for "left carl" 30 && pass "the contractor's machine stops" || fail "the contractor's machine stops" "$(cjournal | grep carl | tail -3)"
+expect "the unspent budget returns to the hirer" "$(cjournal | grep "left carl")" "to ceo"
+expect "the negotiation is mail" "$(cjournal)" 'carl → ceo [reply]'
+expect "the board sees the contract" "$("$Z" firm contracts corp)" "completed"
+expect "a hire beyond the balance is refused" "$("$Z" exec "$ceo" -- cat /work/rich.txt 2>&1)" "is more than that"
+expect "the hire is named and titled" "$(cjournal)" "hired grace as Founding engineer by ceo, budget 10000"
+cwait_for "screening c-[0-9]* grace cleared by sec-1" 90 && pass "the officer does a background check on the hire" || fail "the officer does a background check on the hire" "$(cjournal | grep -i screening | tail -5)"
+cwait_for 'grace → ceo \[report\]' 120 && pass "the hire boots, gets the brief and reports" || fail "the hire boots, gets the brief and reports" "$(cjournal | tail -8)"
+order=$(cjournal | grep -n "screening c-[0-9]* grace cleared\|turn grace start" | head -1)
+expect "the hire takes no turn before being cleared" "$order" "cleared"
+cwait_for "left mallory" 90 && pass "an objection cancels the hire" || fail "an objection cancels the hire" "$(cjournal | grep -i "screening\|mallory" | tail -5)"
+expect "with the officer's reason" "$(cjournal)" "mallory objected by sec-1: a developer's git and cluster access for copywriting"
+refute "the objected hire never took a turn" "$(cjournal)" "turn mallory start"
+expect "and the hirer is told, with the budget back" "$(cjournal | grep "left mallory")" "returned 1000"
+expect "the hirer gets the reason by mail" "$(cjournal)" 'office → ceo [fyi] "mallory didn'"'"'t pass the background check'
+expect "the board sees background checks" "$("$Z" firm security corp)" "objected"
+csec=$("$Z" --json firm status corp | python3 -c 'import sys,json; print([w["session"] for w in json.load(sys.stdin)["run"]["workers"] if w["name"]=="sec-1"][0])')
+expect "an officer lists the pending checks, with the brief" "$("$Z" exec "$csec" -- cat /work/checks.txt 2>&1)" "Write the marketing copy."
+cwait_for "access requested r-1 ken git.corp.internal:443" 120 && pass "a request for the firm's own services" || fail "a request for the firm's own services" "$(cjournal | grep "access\|ken" | tail -5)"
+cwait_for "access decided r-1" 90 && pass "is decided" || fail "is decided" "$(cjournal | grep access | tail -5)"
+expect "by the CTO, who owns the services, not the officers or the board" "$("$Z" --json firm journal corp | python3 -c '
+import sys, json
+for l in sys.stdin:
+    e = json.loads(l)
+    if e.get("type") == "access" and e.get("event") == "decided":
+        print(e["request"]["officer"], e["request"]["decision"]["by"])')" "lin lin"
+cwait_for "left grace" 60 && pass "the CEO lets the hire go" || fail "the CEO lets the hire go" "$(cjournal | tail -5)"
+returned=$(cjournal | grep "left grace" | sed 's/.*returned //')
+[ "${returned:-0}" -gt 0 ] && pass "unspent budget returns to the manager ($returned)" || fail "unspent budget returns to the manager" "returned $returned"
+sleep 3
+refute "the released worker is out of the chart" "$("$Z" firm status corp)" "grace"
+# ken's budget covers one turn: mail after it (from the board, in case his
+# first turn took the brief and the CEO's note together) can't wake him.
+cwait_for "turn ken end" 120
+"$Z" mail send corp --to ken --kind fyi --subject "One more" --body "And the tests." > /dev/null
+cwait_for "funds ken ran out" 120 && pass "a worker out of budget stops taking turns" || fail "a worker out of budget stops taking turns" "$(cjournal | tail -5)"
+expect "and their manager is told" "$(cjournal)" 'office → ceo [fyi] "ken ran out of budget'
+expect "the directory shows the hire" "$("$Z" exec "$ceo" -- sh -c 'office directory' 2>&1)" '"ken"'
+"$Z" firm down corp > /dev/null
+
+echo "== the CEO holds security, hires an officer and hands it over"
+sjournal() { "$Z" firm journal solo; }
+swait_for() {
+    i=0
+    while [ $i -lt "$2" ]; do
+        sjournal 2>/dev/null | grep -q -- "$1" && return 0
+        sleep 1; i=$((i + 1))
+    done
+    return 1
+}
+officers() { "$Z" --json firm status solo | python3 -c 'import sys,json; print(",".join(json.load(sys.stdin)["officers"]))'; }
+expect "an officer can't be named when the CEO holds security" "$("$Z" firm up solo --ceo-holds-security --officer bob 2>&1)" "cannot be used with"
+out=$("$Z" firm up solo --ceo-holds-security --articles "$T/board-articles.md" --max-concurrent 2 2>&1)
+expect "solo boots with the CEO alone" "$out" "is running"
+st=$("$Z" --json firm status solo)
+refute "the founding officer stays out" "$(echo "$st" | python3 -c 'import sys,json; print([w["name"] for w in json.load(sys.stdin)["run"]["workers"]])')" "sec-1"
+expect "the CEO holds security" "$(officers)" "ceo"
+expect "the terms are the board's" "$(echo "$st" | python3 -c 'import sys,json; print(json.load(sys.stdin)["run"]["budget"]["max_concurrent"])')" "2"
+sceo=$(echo "$st" | python3 -c 'import sys,json; print([w["session"] for w in json.load(sys.stdin)["run"]["workers"] if w["name"]=="ceo"][0])')
+pre=$("$Z" exec "$sceo" -- cat /home/agent/.claude/CLAUDE.md 2>&1)
+expect "the CEO's preamble says they hold security" "$pre" "You hold security"
+expect "the preamble has the charter" "$pre" "## The company's charter"
+expect "with the board's own articles" "$pre" "No paid services without the board's approval."
+expect "and the run's terms" "$pre" "at most 2 workers in a turn at once"
+"$Z" mail send solo --to ceo --subject "Build it" --body "Build it." > /dev/null
+swait_for "funds request b-1" 60 && pass "the CEO asks for a budget" || fail "the CEO asks for a budget" "$(sjournal | tail -5)"
+"$Z" firm budget solo approve b-1 > /dev/null
+expect "while the CEO holds security, the CEO keeps the security share" "$("$Z" --json firm budget solo | python3 -c 'import sys,json; f=json.load(sys.stdin); print(f["workers"]["ceo"]["received"])')" "21000"
+swait_for "screening c-1 of ada by the board" 60 && pass "the CEO's own hire is checked by the board" || fail "the CEO's own hire is checked by the board" "$(sjournal | grep -i "screening\|hired" | tail -5)"
+"$Z" firm screen solo c-1 --clear --note "fine" > /dev/null
+swait_for "access requested r-1 ada example.com:443" 120 && pass "a colleague's access request" || fail "a colleague's access request" "$(sjournal | tail -8)"
+swait_for "access decided r-1" 90 && pass "is decided" || fail "is decided" "$(sjournal | grep access | tail -5)"
+expect "by the CEO, who holds security" "$("$Z" --json firm journal solo | python3 -c '
+import sys, json
+for l in sys.stdin:
+    e = json.loads(l)
+    if e.get("type") == "access" and e.get("event") == "decided":
+        print(e["request"]["decision"]["by"])')" "ceo"
+swait_for "hired otto" 120 && pass "the CEO hires a security officer" || fail "the CEO hires a security officer" "$(sjournal | tail -8)"
+swait_for "screening c-2 of otto by the board" 30 && pass "the board checks the first officer" || fail "the board checks the first officer" "$(sjournal | grep -i screening | tail -5)"
+expect "an uncleared officer is not an officer yet" "$(officers)" "ceo"
+expect "an officer's brief is a standing role: nobody waits on it" "$("$Z" --json firm journal solo | python3 -c '
+import sys, json
+for l in sys.stdin:
+    e = json.loads(l)
+    if e.get("type") == "mail" and e.get("to") == ["otto"] and e.get("subject") == "Security":
+        print(e.get("expects"))')" "nothing"
+"$Z" firm screen solo c-2 --clear --note "ok" > /dev/null
+swait_for "security officers: otto (otto cleared as a security officer, by board)" 30 && pass "cleared, the officer takes security over" || fail "cleared, the officer takes security over" "$(sjournal | grep security | tail -5)"
+expect "the CEO is told" "$(sjournal)" 'office → ceo [fyi] "Security is handed over'
+expect "a check the board had while the CEO held security" "$(sjournal)" "screening c-3 of bo by the board"
+swait_for "security c-3 to otto" 30 && pass "goes to the new officer" || fail "goes to the new officer" "$(sjournal | grep -i "security\|screening" | tail -5)"
+swait_for "screening c-3 bo cleared by otto" 90 && pass "who does it" || fail "who does it" "$(sjournal | grep -i screening | tail -5)"
+swait_for "left otto" 120 && pass "the CEO lets the hired officer go" || fail "the CEO lets the hired officer go" "$(sjournal | tail -8)"
+expect "after the handover the CEO no longer decides" "$("$Z" exec "$sceo" -- cat /work/after-handover.txt 2>&1)" "for security officers"
+swait_for "security officers: ceo (otto left" 30 && pass "without officers, security returns to the CEO" || fail "without officers, security returns to the CEO" "$(sjournal | grep security | tail -5)"
+expect "the board is told an officer left" "$(sjournal)" 'office → board [fyi] "otto, a security officer, left'
+expect "the CEO is told it's theirs again" "$(sjournal)" 'office → ceo [fyi] "Security is yours again'
+expect "the CEO holds security again" "$(officers)" "ceo"
+# Mail that arrives while the CEO works is handed over by the Stop hook,
+# in the same turn.
+ceo_quiet() { "$Z" --json firm status solo | python3 -c 'import sys,json; w=[w for w in json.load(sys.stdin)["run"]["workers"] if w["name"]=="ceo"][0]; print("quiet" if w["state"] in ("idle", "waiting") and w["queued"] == 0 else "busy")'; }
+i=0; while [ $i -lt 60 ] && [ "$(ceo_quiet)" != "quiet" ]; do sleep 1; i=$((i + 1)); done
+starts=$(sjournal | grep -c "turn ceo start")
+"$Z" mail send solo --to ceo --kind fyi --subject "Slow" --body "Take your time." > /dev/null
+i=0; while [ $i -lt 30 ] && [ "$(sjournal | grep -c "turn ceo start")" -le "$starts" ]; do sleep 1; i=$((i + 1)); done
+sleep 2
+"$Z" mail send solo --to ceo --kind fyi --subject "Interrupt" --body "One more thing." > /dev/null
+handed() { "$Z" --json firm journal solo | python3 -c '
+import sys, json
+ev = [json.loads(l) for l in sys.stdin]
+mid = [e["id"] for e in ev if e.get("type") == "mail" and e.get("subject") == "Interrupt"][0]
+ext = any(mid in e.get("messages", []) for e in ev if e.get("type") == "turn" and e.get("event") == "extended")
+woke = any(mid in e.get("messages", []) for e in ev if e.get("type") == "turn" and e.get("event") == "start")
+print("woken" if woke else "handed over" if ext else "waiting")'; }
+i=0; while [ $i -lt 60 ] && [ "$(handed)" = "waiting" ]; do sleep 1; i=$((i + 1)); done
+expect "mail that arrives mid-turn is handed over before Claude stops" "$(handed)" "handed over"
+expect "and handled in the same turn" "$("$Z" exec "$sceo" -- cat /work/interrupt.txt 2>&1)" "handed over"
+"$Z" firm down solo > /dev/null
 
 if [ -f "$DATA/images/k3s.ext4" ] && [ -f "$DATA/kernels/vmlinux-6.1-k8s" ]; then
     echo "== the cluster, git and the product port"

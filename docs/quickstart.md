@@ -94,21 +94,32 @@ The session and its VM are removed when you exit. `zapper events --history` show
 ## 8. Start the firm
 
 ```
-zapper firm up acme                     # boots the cluster, then seven idle workers
+zapper firm up acme                     # boots the cluster, then the founders (the CEO and a security officer), idle
 zapper firm status acme                 # workers' states, mail, turns and tokens today
 ```
+
+Or start it in the UI's Kickoff tab: the company's name, the founders, and the [charter](office.md#the-charter), the company's law, with the terms you set (the seed, security's share, whether the CEO holds security until they hire an officer, the pace) and your own articles. `zapper firm up acme --ceo-holds-security --articles law.md` does the same from the command line.
 
 `firm up` checks the firm's memory against the host's before booting anything. In the UI, the org chart fills in as workers boot, and the product port, `http://127.0.0.1:8080`, shows the firm's landing page.
 
 ## 9. Give the CEO a task
 
-Click the CEO in the UI and write the firm's first task, or:
+Write the CEO the firm's first task in the Kickoff tab, or:
 
 ```
 zapper mail send acme --to barbara --kind assignment --subject "First product" --body "…"
 ```
 
 Nothing in the config says what the firm builds; the kickoff does. [Office prompts](office-prompts.md#example-kickoff) has an example.
+
+The CEO scopes the task on the seed and asks you for a budget. Approve or decline it in Kickoff, or:
+
+```
+zapper firm budget acme                 # the request: total, plan, reason
+zapper firm budget acme approve b-1     # or: decline b-1 --note "…"
+```
+
+Then the CEO hires the team; each hire waits for a background check (by an officer, or by you in the Security tab or with `zapper firm screen acme c-1 --clear`).
 
 ## 10. Watch it work
 
@@ -121,7 +132,7 @@ zapper drive ls acme                    # what workers published
 
 In the UI: envelopes move along the org chart as workers mail each other, the Messages tab holds every thread, Security shows the officers' decisions and anything escalated to you, and the Shared drive tab opens what was published. The product the engineers deploy replaces the landing page at `http://127.0.0.1:8080`, and the cluster's Kubernetes dashboard is at `http://127.0.0.1:8081` (the UI has its sign-in token).
 
-`budget` in the config limits the turns per day; `zapper firm status acme` shows what's used.
+The budget you approved caps the run, and `budget` in the config limits the turns per day; `zapper firm budget acme` and `zapper firm status acme` show what's used.
 
 ## 11. End the run
 

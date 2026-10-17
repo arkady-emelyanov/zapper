@@ -21,7 +21,10 @@ fn engine() -> String {
 fn run(cmd: &mut Command) -> Result<String> {
     let out = cmd.output().with_context(|| format!("running {cmd:?}"))?;
     if !out.status.success() {
-        bail!("{cmd:?} failed:\n{}", String::from_utf8_lossy(&out.stderr).trim());
+        bail!(
+            "{cmd:?} failed:\n{}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
     }
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
@@ -36,8 +39,15 @@ pub struct Build<'a> {
 }
 
 pub fn build(b: Build<'_>) -> Result<PathBuf> {
-    if !b.name.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c)) {
-        bail!("image name {:?}: use letters, digits, '-', '_' and '.'", b.name);
+    if !b
+        .name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
+    {
+        bail!(
+            "image name {:?}: use letters, digits, '-', '_' and '.'",
+            b.name
+        );
     }
     std::fs::create_dir_all(b.dir)?;
     let oci = engine();
@@ -54,7 +64,11 @@ pub fn build(b: Build<'_>) -> Result<PathBuf> {
         std::fs::write(work.join("Containerfile"), file)?;
         let tag = format!("localhost/zapper-image-{}", b.name);
         eprintln!("building {tag} from {}", b.from);
-        let status = Command::new(&oci).args(["build", "-t", &tag, "-f"]).arg(work.join("Containerfile")).arg(&work).status()?;
+        let status = Command::new(&oci)
+            .args(["build", "-t", &tag, "-f"])
+            .arg(work.join("Containerfile"))
+            .arg(&work)
+            .status()?;
         if !status.success() {
             bail!("{oci} build failed");
         }
@@ -77,18 +91,28 @@ pub fn build(b: Build<'_>) -> Result<PathBuf> {
     eprintln!("writing {} ({} MiB)", out.display(), size >> 20);
     let script = r#"set -e; mkdir "$1"; tar -C "$1" -xf "$2"; mkfs.ext4 -q -F -L zapper -d "$1" "$3" "$4"; rm -rf "$1""#;
     let mut unshare = Command::new(&oci);
-    unshare.args(["unshare", "sh", "-c", script, "sh"]).arg(&root).arg(&tar).arg(&tmp).arg(format!("{}k", size / 1024));
+    unshare
+        .args(["unshare", "sh", "-c", script, "sh"])
+        .arg(&root)
+        .arg(&tar)
+        .arg(&tmp)
+        .arg(format!("{}k", size / 1024));
     run(&mut unshare)?;
     std::fs::rename(&tmp, &out)?;
     let meta = json!({ "name": b.name, "from": b.from, "run": b.run, "size": size, "built": crate::daemon::now() as u64 });
-    std::fs::write(b.dir.join(format!("{}.json", b.name)), serde_json::to_vec_pretty(&meta)?)?;
+    std::fs::write(
+        b.dir.join(format!("{}.json", b.name)),
+        serde_json::to_vec_pretty(&meta)?,
+    )?;
     let _ = std::fs::remove_dir_all(&work);
     Ok(out)
 }
 
 pub fn list(dir: &Path) -> Result<Vec<serde_json::Value>> {
     let mut out = Vec::new();
-    let Ok(entries) = std::fs::read_dir(dir) else { return Ok(out) };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Ok(out);
+    };
     for e in entries.flatten() {
         let path = e.path();
         if path.extension().is_some_and(|x| x == "ext4") {
@@ -96,7 +120,10 @@ pub fn list(dir: &Path) -> Result<Vec<serde_json::Value>> {
             if name.starts_with('.') {
                 continue;
             }
-            let meta: serde_json::Value = std::fs::read(path.with_extension("json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(json!({}));
+            let meta: serde_json::Value = std::fs::read(path.with_extension("json"))
+                .ok()
+                .and_then(|b| serde_json::from_slice(&b).ok())
+                .unwrap_or(json!({}));
             out.push(json!({ "name": name, "from": meta["from"], "size": e.metadata()?.len(), "built": meta["built"] }));
         }
     }

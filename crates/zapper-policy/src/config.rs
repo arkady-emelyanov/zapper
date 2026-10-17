@@ -50,6 +50,26 @@ pub struct DaemonConfig {
     /// never reachable; other private and unique-local addresses only if
     /// listed here.
     pub private_networks: Vec<String>,
+    /// The record (firms' journals and transcripts, sessions' audit logs
+    /// and terminal recordings) kept by `zapper-keeper`, a separate user:
+    /// the daemon can append to it and never change it. Unset: the record
+    /// is written under `state`, by the daemon's own user.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub keeper: Option<KeeperConfig>,
+    /// Where the UI's events (every click) go: `stdout` prints a JSON line
+    /// per event. Empty: they aren't sent at all.
+    pub ui_events: Vec<String>,
+}
+
+/// Where the keeper listens and where its files are.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KeeperConfig {
+    /// Its socket, e.g. `/run/zapper-keeper/keeper.sock`.
+    pub socket: String,
+    /// The directory it keeps, readable by the daemon's user, e.g.
+    /// `/var/lib/zapper-keeper/record/1000`.
+    pub dir: String,
 }
 
 impl Default for DaemonConfig {
@@ -64,6 +84,8 @@ impl Default for DaemonConfig {
             ask_timeout_secs: 60,
             max_sessions: 16,
             private_networks: Vec::new(),
+            keeper: None,
+            ui_events: vec!["stdout".into()],
         }
     }
 }
@@ -88,7 +110,9 @@ pub struct Secret {
 
 impl Secret {
     pub fn allows_host(&self, host: &str) -> bool {
-        self.hosts.iter().any(|h| crate::eval::host_matches(h, host))
+        self.hosts
+            .iter()
+            .any(|h| crate::eval::host_matches(h, host))
     }
 }
 
@@ -136,11 +160,13 @@ impl SecretSource {
             }
             SecretSource::File { file, json } => {
                 let path = expand_home(file);
-                let text = std::fs::read_to_string(&path).with_context(|| format!("reading {path}"))?;
+                let text =
+                    std::fs::read_to_string(&path).with_context(|| format!("reading {path}"))?;
                 match json {
                     None => Ok(text.trim().to_string()),
                     Some(pointer) => {
-                        let v: Value = serde_json::from_str(&text).with_context(|| format!("parsing {path}"))?;
+                        let v: Value = serde_json::from_str(&text)
+                            .with_context(|| format!("parsing {path}"))?;
                         v.pointer(pointer)
                             .and_then(Value::as_str)
                             .map(str::to_string)
@@ -184,10 +210,12 @@ pub fn set_config_dir(dir: &std::path::Path) {
 pub fn expand_home(path: &str) -> String {
     match (path.strip_prefix("~/"), std::env::var("HOME")) {
         (Some(rest), Ok(home)) => format!("{home}/{rest}"),
-        _ if !path.is_empty() && !path.starts_with('/') && !path.starts_with('~') => match CONFIG_DIR.get() {
-            Some(dir) => dir.join(path).to_string_lossy().into_owned(),
-            None => path.to_string(),
-        },
+        _ if !path.is_empty() && !path.starts_with('/') && !path.starts_with('~') => {
+            match CONFIG_DIR.get() {
+                Some(dir) => dir.join(path).to_string_lossy().into_owned(),
+                None => path.to_string(),
+            }
+        }
         _ => path.to_string(),
     }
 }
@@ -196,7 +224,9 @@ impl Config {
     /// Whether the config holds secret values itself (`value:`), so the file
     /// must not be readable by others.
     pub fn has_inline_secrets(&self) -> bool {
-        self.secrets.values().any(|s| matches!(s.source, SecretSource::Value { .. }))
+        self.secrets
+            .values()
+            .any(|s| matches!(s.source, SecretSource::Value { .. }))
     }
 }
 
@@ -236,7 +266,10 @@ pub struct Policy {
 
 impl Policy {
     pub fn is_empty(&self) -> bool {
-        self.net.is_empty() && self.exec.is_empty() && self.fs.is_empty() && self.defaults.is_empty()
+        self.net.is_empty()
+            && self.exec.is_empty()
+            && self.fs.is_empty()
+            && self.defaults.is_empty()
     }
 }
 
@@ -292,7 +325,10 @@ pub struct NetRule {
 impl NetRule {
     /// Whether matching or applying this rule needs the decrypted HTTP request.
     pub fn needs_inspection(&self) -> bool {
-        !self.methods.is_empty() || self.path.is_some() || !self.secrets.is_empty() || !self.set_headers.is_empty()
+        !self.methods.is_empty()
+            || self.path.is_some()
+            || !self.secrets.is_empty()
+            || !self.set_headers.is_empty()
     }
 }
 
@@ -537,7 +573,9 @@ impl std::str::FromStr for Scope {
             Some(("profile", p)) if !p.is_empty() => Ok(Scope::Profile(p.into())),
             Some(("session", id)) if !id.is_empty() => Ok(Scope::Session(id.into())),
             Some(("role", r)) if !r.is_empty() => Ok(Scope::Role(r.into())),
-            _ => bail!("invalid scope {s:?}: expected global, profile:NAME, role:FIRM/ROLE or session:ID"),
+            _ => bail!(
+                "invalid scope {s:?}: expected global, profile:NAME, role:FIRM/ROLE or session:ID"
+            ),
         }
     }
 }
@@ -620,7 +658,10 @@ impl Policy {
     /// Gives every rule without an id one that is not in `taken`.
     pub fn assign_ids(&mut self, taken: &mut BTreeSet<String>) {
         fn fresh(kind: Kind, taken: &mut BTreeSet<String>) -> String {
-            let id = (1..).map(|n| format!("{kind}-{n}")).find(|id| !taken.contains(id)).unwrap();
+            let id = (1..)
+                .map(|n| format!("{kind}-{n}"))
+                .find(|id| !taken.contains(id))
+                .unwrap();
             taken.insert(id.clone());
             id
         }
@@ -686,7 +727,11 @@ impl Config {
     /// Ids of every rule in the config.
     pub fn rule_ids(&self) -> BTreeSet<String> {
         let profiles = self.profiles.values().flat_map(|p| p.policy.ids());
-        self.policy.ids().chain(profiles).map(str::to_string).collect()
+        self.policy
+            .ids()
+            .chain(profiles)
+            .map(str::to_string)
+            .collect()
     }
 
     /// Gives every rule an id.
@@ -719,14 +764,21 @@ impl Config {
         if self.policy.ids().any(|i| i == id) {
             return Some(Scope::Global);
         }
-        self.profiles.iter().find(|(_, p)| p.policy.ids().any(|i| i == id)).map(|(n, _)| Scope::Profile(n.clone()))
+        self.profiles
+            .iter()
+            .find(|(_, p)| p.policy.ids().any(|i| i == id))
+            .map(|(n, _)| Scope::Profile(n.clone()))
     }
 
     pub fn validate(&self) -> Result<()> {
         let mut errors = Vec::new();
         let mut seen = BTreeSet::new();
         let mut layers = vec![(Scope::Global, &self.policy)];
-        layers.extend(self.profiles.iter().map(|(n, p)| (Scope::Profile(n.clone()), &p.policy)));
+        layers.extend(
+            self.profiles
+                .iter()
+                .map(|(n, p)| (Scope::Profile(n.clone()), &p.policy)),
+        );
         for (scope, policy) in layers {
             for id in policy.ids() {
                 if !seen.insert(id) {
@@ -740,14 +792,19 @@ impl Config {
                 let refs = r.set_headers.values().flat_map(|v| crate::secret_refs(v));
                 for s in r.secrets.iter().cloned().chain(refs) {
                     if !self.secrets.contains_key(&s) {
-                        errors.push(format!("{scope}: rule {} uses unknown secret {s}", r.id.as_deref().unwrap_or("?")));
+                        errors.push(format!(
+                            "{scope}: rule {} uses unknown secret {s}",
+                            r.id.as_deref().unwrap_or("?")
+                        ));
                     }
                 }
             }
         }
         for (name, s) in &self.secrets {
             if s.mode == SecretMode::Proxy && s.hosts.is_empty() {
-                errors.push(format!("secret {name}: a proxy secret needs hosts it may be sent to"));
+                errors.push(format!(
+                    "secret {name}: a proxy secret needs hosts it may be sent to"
+                ));
             }
         }
         for name in self.profiles.keys() {
@@ -773,7 +830,10 @@ impl Config {
             if chain.iter().any(|(c, _)| *c == n) {
                 bail!("extends cycle through {n}");
             }
-            let p = self.profiles.get(&n).ok_or_else(|| anyhow!("unknown profile {n}"))?;
+            let p = self
+                .profiles
+                .get(&n)
+                .ok_or_else(|| anyhow!("unknown profile {n}"))?;
             next = p.extends.clone();
             chain.push((n, p));
         }
@@ -794,8 +854,18 @@ impl Config {
         }
         let engine: Engine = serde_json::from_value(engine).context("engine")?;
         let agent: AgentSpec = serde_json::from_value(agent).context("agent")?;
-        let layers = chain.into_iter().map(|(n, p)| (Scope::Profile(n), p.policy.clone())).collect();
-        Ok(ResolvedProfile { name: name.into(), engine, agent, mounts, setup, layers })
+        let layers = chain
+            .into_iter()
+            .map(|(n, p)| (Scope::Profile(n), p.policy.clone()))
+            .collect();
+        Ok(ResolvedProfile {
+            name: name.into(),
+            engine,
+            agent,
+            mounts,
+            setup,
+            layers,
+        })
     }
 }
 

@@ -52,12 +52,26 @@ impl Proc {
 fn argv(run: &FirmRun, w: &WorkerRt, home: &str, resume: Option<&str>) -> Vec<String> {
     let role = &run.config.roles[&w.role];
     if role.fake.is_some() {
-        return vec![super::ops::AGENT_PATH.into(), "fake-claude".into(), format!("{home}/.office/fake.yaml")];
+        return vec![
+            super::ops::AGENT_PATH.into(),
+            "fake-claude".into(),
+            format!("{home}/.office/fake.yaml"),
+        ];
     }
-    let mut v: Vec<String> = ["claude", "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--permission-mode", "bypassPermissions"]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
+    let mut v: Vec<String> = [
+        "claude",
+        "-p",
+        "--input-format",
+        "stream-json",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--permission-mode",
+        "bypassPermissions",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
     if let Some(id) = resume {
         v.push("--resume".into());
         v.push(id.into());
@@ -72,21 +86,47 @@ fn activity(event: &Value) -> Option<String> {
     let name = tool["name"].as_str().unwrap_or("tool");
     let name = name.strip_prefix("mcp__office__").unwrap_or(name);
     let input = &tool["input"];
-    let arg = ["file_path", "path", "command", "pattern", "url", "subject", "query", "description"]
-        .iter()
-        .find_map(|k| input[*k].as_str())
-        .map(|s| {
-            let s = s.lines().next().unwrap_or("");
-            let s = s.rsplit('/').next().filter(|_| !s.contains(' ')).unwrap_or(s);
-            s.chars().take(60).collect::<String>()
-        })
-        .unwrap_or_default();
+    let arg = [
+        "file_path",
+        "path",
+        "command",
+        "pattern",
+        "url",
+        "subject",
+        "query",
+        "description",
+    ]
+    .iter()
+    .find_map(|k| input[*k].as_str())
+    .map(|s| {
+        let s = s.lines().next().unwrap_or("");
+        let s = s
+            .rsplit('/')
+            .next()
+            .filter(|_| !s.contains(' '))
+            .unwrap_or(s);
+        s.chars().take(60).collect::<String>()
+    })
+    .unwrap_or_default();
     Some(format!("{name} {arg}").trim().to_string())
 }
 
-async fn start(run: &Arc<FirmRun>, w: &Arc<WorkerRt>, s: &Arc<Session>, transcript: Arc<Journal>, resume: Option<&str>, session_id: Arc<std::sync::Mutex<Option<String>>>) -> Result<Proc> {
+async fn start(
+    run: &Arc<FirmRun>,
+    w: &Arc<WorkerRt>,
+    s: &Arc<Session>,
+    transcript: Arc<Journal>,
+    resume: Option<&str>,
+    session_id: Arc<std::sync::Mutex<Option<String>>>,
+) -> Result<Proc> {
     let home = format!("/home/{}", s.resolved.agent.user);
-    let req = ShellRequest { id: 0, argv: argv(run, w, &home, resume), tty: None, env: Default::default(), system: false };
+    let req = ShellRequest {
+        id: 0,
+        argv: argv(run, w, &home, resume),
+        tty: None,
+        env: Default::default(),
+        system: false,
+    };
     let (stream, _) = s.open_shell(req).await?;
     let (mut r, stdin) = stream.into_split();
     let (tx, events) = mpsc::channel(16);
@@ -103,7 +143,10 @@ async fn start(run: &Arc<FirmRun>, w: &Arc<WorkerRt>, s: &Arc<Session>, transcri
                 return None;
             }
             if buf_err {
-                transcript.append("stderr", json!({ "text": text.chars().take(4096).collect::<String>() }));
+                transcript.append(
+                    "stderr",
+                    json!({ "text": text.chars().take(4096).collect::<String>() }),
+                );
                 return None;
             }
             match serde_json::from_str::<Value>(text) {
@@ -112,7 +155,10 @@ async fn start(run: &Arc<FirmRun>, w: &Arc<WorkerRt>, s: &Arc<Session>, transcri
                     Some(v)
                 }
                 _ => {
-                    transcript.append("raw", json!({ "text": text.chars().take(4096).collect::<String>() }));
+                    transcript.append(
+                        "raw",
+                        json!({ "text": text.chars().take(4096).collect::<String>() }),
+                    );
                     None
                 }
             }
@@ -135,7 +181,9 @@ async fn start(run: &Arc<FirmRun>, w: &Arc<WorkerRt>, s: &Arc<Session>, transcri
             b.extend_from_slice(&data);
             while let Some(i) = b.iter().position(|c| *c == b'\n') {
                 let line: Vec<u8> = b.drain(..=i).collect();
-                let Some(v) = line_out(&line, is_err) else { continue };
+                let Some(v) = line_out(&line, is_err) else {
+                    continue;
+                };
                 if let Some(id) = v["session_id"].as_str() {
                     let mut sid = session_id.lock().unwrap();
                     if sid.as_deref() != Some(id) {
@@ -173,7 +221,14 @@ async fn start(run: &Arc<FirmRun>, w: &Arc<WorkerRt>, s: &Arc<Session>, transcri
 /// Tokens of a turn: input, output and cache writes.
 fn tokens(result: &Value) -> u64 {
     let u = &result["usage"];
-    ["input_tokens", "output_tokens", "cache_creation_input_tokens"].iter().map(|k| u[*k].as_u64().unwrap_or(0)).sum()
+    [
+        "input_tokens",
+        "output_tokens",
+        "cache_creation_input_tokens",
+    ]
+    .iter()
+    .map(|k| u[*k].as_u64().unwrap_or(0))
+    .sum()
 }
 
 /// A turn that failed before Claude could work: the API refused it (bad
@@ -183,7 +238,8 @@ fn api_failure(result: &Value) -> Option<String> {
         return None;
     }
     let text = result["result"].as_str().unwrap_or("");
-    (text.contains("API Error") || text.contains("Failed to authenticate")).then(|| text.chars().take(200).collect())
+    (text.contains("API Error") || text.contains("Failed to authenticate"))
+        .then(|| text.chars().take(200).collect())
 }
 
 fn rate_limited(result: &Value) -> bool {
@@ -191,7 +247,11 @@ fn rate_limited(result: &Value) -> bool {
         return false;
     }
     let text = result["result"].as_str().unwrap_or("").to_ascii_lowercase();
-    text.contains("rate limit") || text.contains("rate_limit") || text.contains("usage limit") || text.contains("429") || text.contains("overloaded")
+    text.contains("rate limit")
+        || text.contains("rate_limit")
+        || text.contains("usage limit")
+        || text.contains("429")
+        || text.contains("overloaded")
 }
 
 fn idle_state(run: &FirmRun, w: &WorkerRt) -> WorkerState {
@@ -212,7 +272,11 @@ async fn nap(run: &FirmRun, w: &WorkerRt, secs: u64) {
 }
 
 pub async fn run(_d: Arc<Daemon>, run: Arc<FirmRun>, w: Arc<WorkerRt>) {
-    let transcript = match Journal::create(&run.dir.join("transcripts").join(format!("{}.jsonl", w.name))) {
+    let transcript = match Journal::create(
+        &run.dir
+            .join("transcripts")
+            .join(format!("{}.jsonl", w.name)),
+    ) {
         Ok(j) => Arc::new(j),
         Err(e) => {
             run.set_state(&w, WorkerState::Error, Some(format!("transcript: {e:#}")));
@@ -239,6 +303,22 @@ pub async fn run(_d: Arc<Daemon>, run: Arc<FirmRun>, w: Arc<WorkerRt>) {
             nap(&run, &w, 5).await;
             continue;
         }
+        // No turns while the record can't be written: work isn't done unrecorded.
+        if !crate::daemon::record::healthy() {
+            run.set_state(
+                &w,
+                WorkerState::Error,
+                Some("the record can't be written (is zapper-keeper running?)".into()),
+            );
+            nap(&run, &w, 10).await;
+            continue;
+        }
+        // A new hire starts once the security officers cleared them.
+        if security::screening_pending(&run, &w.name) {
+            run.set_state(&w, WorkerState::Waiting, Some("background check".into()));
+            nap(&run, &w, 10).await;
+            continue;
+        }
         if !run.budget_allows(&w.name) {
             run.set_state(&w, WorkerState::OverBudget, None);
             nap(&run, &w, 30).await;
@@ -259,10 +339,23 @@ pub async fn run(_d: Arc<Daemon>, run: Arc<FirmRun>, w: Arc<WorkerRt>) {
         }
         if proc.is_none() {
             let resume = session_id.lock().unwrap().clone();
-            match start(&run, &w, &session, transcript.clone(), resume.as_deref(), session_id.clone()).await {
+            match start(
+                &run,
+                &w,
+                &session,
+                transcript.clone(),
+                resume.as_deref(),
+                session_id.clone(),
+            )
+            .await
+            {
                 Ok(p) => proc = Some(p),
                 Err(e) => {
-                    run.set_state(&w, WorkerState::Error, Some(format!("starting Claude: {e:#}")));
+                    run.set_state(
+                        &w,
+                        WorkerState::Error,
+                        Some(format!("starting Claude: {e:#}")),
+                    );
                     drop(permit);
                     nap(&run, &w, 30).await;
                     continue;
@@ -271,13 +364,17 @@ pub async fn run(_d: Arc<Daemon>, run: Arc<FirmRun>, w: Arc<WorkerRt>) {
         }
         // What this turn delivers.
         let ids: Vec<String> = std::mem::take(&mut *w.queue.lock().unwrap());
-        let notes: Vec<String> = std::mem::take(&mut *w.notes.lock().unwrap());
+        let mut notes: Vec<String> = std::mem::take(&mut *w.notes.lock().unwrap());
+        if let Some(b) = super::workforce::balance_note(&run, &w.name) {
+            notes.push(b);
+        }
         let access_ids: Vec<String> = w.access_queue.lock().unwrap().clone();
         let digest_was_due = w.digest_due.load(std::sync::atomic::Ordering::Relaxed);
         let officer_part = security::take_wake(&run, &w);
         let reviewing = officer_part.is_some();
         // Security first: never hold the post office's lock while taking it.
         let pending = security::pending_for(&run, &w.name);
+        let chart = run.chart();
         let prompt = {
             let mut po = run.post.lock().unwrap();
             po.mark_read(&w.name, &ids);
@@ -287,14 +384,42 @@ pub async fn run(_d: Arc<Daemon>, run: Arc<FirmRun>, w: Arc<WorkerRt>) {
                 p.push('\n');
             }
             if !ids.is_empty() || !notes.is_empty() || officer_part.is_none() {
-                p.push_str(&prompts::wake(&run.config, &po, &run.journal, &w.name, &ids, &notes, &pending, now()));
+                p.push_str(&prompts::wake(
+                    &chart,
+                    &po,
+                    &run.journal,
+                    &w.name,
+                    &ids,
+                    &notes,
+                    &pending,
+                    now(),
+                ));
             }
             p
         };
-        let first_thread = ids.first().and_then(|id| run.post.lock().unwrap().messages.get(id).map(|m| m.thread.clone()));
+        let first_thread = ids.first().and_then(|id| {
+            run.post
+                .lock()
+                .unwrap()
+                .messages
+                .get(id)
+                .map(|m| m.thread.clone())
+        });
         *w.context.lock().unwrap() = first_thread;
-        run.set_state(&w, if reviewing { WorkerState::Reviewing } else { WorkerState::Working }, None);
-        run.journal.append("turn", json!({ "worker": w.name, "event": "start", "messages": ids, "reviewing": reviewing }));
+        w.extended.store(0, std::sync::atomic::Ordering::Relaxed);
+        run.set_state(
+            &w,
+            if reviewing {
+                WorkerState::Reviewing
+            } else {
+                WorkerState::Working
+            },
+            None,
+        );
+        run.journal.append(
+            "turn",
+            json!({ "worker": w.name, "event": "start", "messages": ids, "reviewing": reviewing }),
+        );
         transcript.append("wake", json!({ "text": prompt }));
         let started = Instant::now();
         let p = proc.as_mut().unwrap();
@@ -316,13 +441,19 @@ pub async fn run(_d: Arc<Daemon>, run: Arc<FirmRun>, w: Arc<WorkerRt>) {
                     requeue(&w, ids);
                     requeue_access(&w, access_ids, digest_was_due);
                     backoff_until = now() + 60.0;
-                    run.journal.append("turn", json!({ "worker": w.name, "event": "rate_limited", "ms": ms }));
+                    run.journal.append(
+                        "turn",
+                        json!({ "worker": w.name, "event": "rate_limited", "ms": ms }),
+                    );
                 } else if let Some(why) = api_failure(&r) {
                     // Claude never saw the mail: keep it, say why, retry later.
                     requeue(&w, ids);
                     requeue_access(&w, access_ids, digest_was_due);
                     backoff_until = now() + 60.0;
-                    run.journal.append("turn", json!({ "worker": w.name, "event": "failed", "ms": ms, "error": why }));
+                    run.journal.append(
+                        "turn",
+                        json!({ "worker": w.name, "event": "failed", "ms": ms, "error": why }),
+                    );
                     run.set_state(&w, WorkerState::Error, Some(why));
                     drop(permit);
                     nap(&run, &w, 60).await;
@@ -349,7 +480,14 @@ pub async fn run(_d: Arc<Daemon>, run: Arc<FirmRun>, w: Arc<WorkerRt>) {
                     restarts.pop_front();
                 }
                 if restarts.len() > MAX_RESTARTS {
-                    run.set_state(&w, WorkerState::Error, Some(format!("Claude exited {} times in ten minutes (last code {code:?})", restarts.len())));
+                    run.set_state(
+                        &w,
+                        WorkerState::Error,
+                        Some(format!(
+                            "Claude exited {} times in ten minutes (last code {code:?})",
+                            restarts.len()
+                        )),
+                    );
                     drop(permit);
                     nap(&run, &w, 120).await;
                     restarts.clear();
@@ -371,8 +509,50 @@ fn requeue_access(w: &WorkerRt, ids: Vec<String>, digest: bool) {
     let rest = std::mem::take(&mut *q);
     *q = ids.into_iter().chain(rest).collect();
     if digest {
-        w.digest_due.store(true, std::sync::atomic::Ordering::Relaxed);
+        w.digest_due
+            .store(true, std::sync::atomic::Ordering::Relaxed);
     }
+}
+
+/// Extensions of one turn by the Stop hook.
+const MAX_EXTENSIONS: u32 = 3;
+
+/// Claude is about to end a turn: mail that arrived meanwhile is handed
+/// over now, as a wake would show it, and the turn goes on. Delivered this
+/// way, it doesn't wake the worker again.
+pub fn stop_check(run: &FirmRun, w: &WorkerRt) -> Value {
+    use std::sync::atomic::Ordering;
+    if !matches!(w.state(), WorkerState::Working | WorkerState::Reviewing)
+        || w.extended.load(Ordering::Relaxed) >= MAX_EXTENSIONS
+    {
+        return json!({ "block": false });
+    }
+    let ids: Vec<String> = std::mem::take(&mut *w.queue.lock().unwrap());
+    if ids.is_empty() {
+        return json!({ "block": false });
+    }
+    w.extended.fetch_add(1, Ordering::Relaxed);
+    let pending = security::pending_for(run, &w.name);
+    let chart = run.chart();
+    let text = {
+        let mut po = run.post.lock().unwrap();
+        po.mark_read(&w.name, &ids);
+        prompts::wake(
+            &chart,
+            &po,
+            &run.journal,
+            &w.name,
+            &ids,
+            &[],
+            &pending,
+            now(),
+        )
+    };
+    run.journal.append(
+        "turn",
+        json!({ "worker": w.name, "event": "extended", "messages": ids }),
+    );
+    json!({ "block": true, "reason": format!("Before you stop: mail arrived during this turn. Handle it now if it matters to what you are finishing; it won't be shown again.\n\n{text}") })
 }
 
 /// Puts undelivered mail back at the front of the queue.
@@ -400,12 +580,19 @@ mod tests {
     fn api_failures() {
         assert!(api_failure(&json!({ "is_error": true, "result": "Failed to authenticate. API Error: 401 Invalid bearer token" })).is_some());
         assert!(api_failure(&json!({ "is_error": true, "result": "reached max turns" })).is_none());
-        assert!(api_failure(&json!({ "is_error": false, "result": "API Error mentioned in prose" })).is_none());
+        assert!(api_failure(
+            &json!({ "is_error": false, "result": "API Error mentioned in prose" })
+        )
+        .is_none());
     }
 
     #[test]
     fn rate_limits() {
-        assert!(rate_limited(&json!({ "is_error": true, "result": "API Error: 429 rate_limit_error" })));
-        assert!(!rate_limited(&json!({ "is_error": false, "result": "rate limit" })));
+        assert!(rate_limited(
+            &json!({ "is_error": true, "result": "API Error: 429 rate_limit_error" })
+        ));
+        assert!(!rate_limited(
+            &json!({ "is_error": false, "result": "rate limit" })
+        ));
     }
 }

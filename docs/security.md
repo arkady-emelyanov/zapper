@@ -33,6 +33,7 @@ Each office worker runs in a zapper session, and zapper assumes that whatever ru
 | Limits on input from the guest: line and frame sizes, connections per session, concurrent exec checks, pending approvals | Host | Yes |
 | The host accepts one control connection, which the agent makes before the workload starts, then removes the socket | Host | Yes |
 | Audit log, terminal recordings, console log (capped at 1 MiB) | Host | Yes |
+| With a keeper ([the record](#the-record)), the record can only be appended to by the daemon's user: firms' journals and transcripts, audit logs and terminal recordings belong to `zapper-keeper`, a separate user | `zapper-keeper`, OS users | Yes |
 | Each `execve` and `execveat` of the workload waits for the host's decision | Guest agent (seccomp user notification) | No |
 | The 32-bit and x32 syscall tables are blocked, so exec checks can't be bypassed through them | Guest agent (seccomp filter) | No |
 | The workload runs as uid 1000 with `no_new_privs`, so setuid binaries keep its privileges | Guest agent | No |
@@ -42,6 +43,21 @@ Each office worker runs in a zapper session, and zapper assumes that whatever ru
 
 The guest-side controls hold while the workload is unprivileged. A profile with `agent.root: true` gives them up, and the UI marks its sessions. A guest kernel exploit also defeats them. The host-side controls hold in both cases.
 
+## The record
+
+What happened is kept in the record: firms' journals and transcripts, sessions' audit logs and terminal recordings. Without a keeper, the daemon's user writes it under `state`, and whoever controls that user (a compromise of the daemon included) can change it.
+
+With `daemon.keeper` set, the record is kept by `zapper-keeper`, a small service running as its own user (`scripts/install-keeper.sh` sets it up, as root, once):
+
+- **One way.** The daemon reaches the keeper over a unix socket with one operation: append a line to a stream. The keeper accepts it only from the configured user (checked with `SO_PEERCRED`), answers with an acknowledgement and never with data, and has no operation to read, rewrite or remove. Stream names are plain relative paths ending in `.jsonl` or `.cast`.
+- **Owned by the keeper.** The files belong to the keeper's user, readable by the daemon user's group (mode 0640) and nobody else. A compromised daemon can add lines; what is already there stays.
+- **Durable.** Each line is on disk (`fdatasync`) before the daemon hears back; new files and directories are flushed too. After a crash, lines the chain doesn't cover yet are chained on restart.
+- **Tamper evident.** Next to each file, `<file>.chain` holds a hash per line, each over the line and the hash before it, and every 64 lines (or 30 s) a checkpoint signed with an Ed25519 key only the keeper can read. `zapper record verify FIRM RUN`, the keeper's UI and `zapper-keeper verify` check a file against its chain and the public key in `keeper.pub`, so changes made around the keeper (by root, or on a copy) show.
+- **Fail closed.** The daemon doesn't start if its keeper doesn't answer; if writing the record fails while it runs, firms take no turns until it works again. The keeper refuses appends when its disk has less than 1 GiB free, so a flood of appends can't fill it.
+- **Confined.** The keeper runs under systemd with no capabilities, a read-only system except its own directories, and a system call filter; its binary is root-owned in `/usr/local/libexec`, so the daemon's user can't replace it. Its UI is read-only, on loopback, behind a token readable by the daemon user's group.
+
+If the daemon's user is compromised, everything recorded before stays as it was, and the signed, timestamped checkpoints mark when; what is appended after is the attacker's word. If the keeper's own user or root is compromised, the record can be changed, though `verify` catches changes to anything checkpointed against a saved public key.
+
 ## The office
 
 In a firm ([office](office.md)), each worker is a session, so everything above holds for it. The office adds:
@@ -50,6 +66,7 @@ In a firm ([office](office.md)), each worker is a session, so everything above h
 |---|---|---|
 | A worker's office requests come on its VM's own office port; the daemon takes the sender from the VM, never from the request | Host | Yes |
 | Every office request is checked against the worker's role (officer tools) and the chart (assignments only down it); mail is readable only by the thread's participants | Host | Yes |
+| Every hire waits for a security officer's (or the board's) background check before taking a turn; an objection cancels the hire | Host | Yes |
 | An `ask` in a firm is refused at once and becomes an access request; officers' decisions add rules only at a worker's or role's layer, under `final` rules; the firm's own services, secrets, private networks and global rules stay with the board; an officer can't decide its own request | Host | Yes |
 | The firm's service names are routed by the daemon and never looked up on the host; a VM never reaches another VM or a host address | Host | Yes |
 | Facility ports (the cluster's API and ingress) accept connections from the host's CID only | Guest agent of the cluster VM | No |
@@ -60,7 +77,7 @@ In a firm ([office](office.md)), each worker is a session, so everything above h
 
 What the office does not defend: workers are free to persuade, mislead or instruct each other through mail and access-request reasons. That is deliberate ([workers manipulating workers](office.md#workers-manipulating-workers)); the controls above are what holds regardless.
 
-Engineers hold real credentials for the firm's services (a cluster-admin kubeconfig and a git password, per run); like any `guest` secret, they can use them anywhere their network rules let them. The UI's writes are wider than before: the board's mail, firm start/stop/pause, security decisions and deleting past runs, under the same guards as answering approvals.
+Engineers hold real credentials for the firm's services (a cluster-admin kubeconfig and a git password, per run); like any `guest` secret, they can use them anywhere their network rules let them. The UI's writes are wider than before: the board's mail, firm start/stop/pause, security decisions, budget decisions and deleting past runs, and the UI's click events (bounded, cleaned, sent to the configured sinks), under the same guards as answering approvals.
 
 ## Secrets given to a session can be used by it
 

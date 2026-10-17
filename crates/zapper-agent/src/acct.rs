@@ -26,10 +26,15 @@ fn decode(r: &[u8; RECORD]) -> Option<GuestEvent> {
         return None;
     }
     let status = u32_at(4) as i32;
-    let (exit_code, signal) = if status & 0x7f == 0 { ((status >> 8) & 0xff, None) } else { (128 + (status & 0x7f), Some(status & 0x7f)) };
+    let (exit_code, signal) = if status & 0x7f == 0 {
+        ((status >> 8) & 0xff, None)
+    } else {
+        (128 + (status & 0x7f), Some(status & 0x7f))
+    };
     let etime = f32::from_ne_bytes(r[28..32].try_into().unwrap());
     let comm = &r[48..64];
-    let comm = String::from_utf8_lossy(&comm[..comm.iter().position(|&b| b == 0).unwrap_or(16)]).into_owned();
+    let comm = String::from_utf8_lossy(&comm[..comm.iter().position(|&b| b == 0).unwrap_or(16)])
+        .into_owned();
     Some(GuestEvent::Exit {
         pid: u32_at(16),
         ppid: u32_at(20),

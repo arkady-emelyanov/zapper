@@ -21,7 +21,14 @@ fn loadavg(s: &str) -> Option<(f64, u32)> {
 /// Memory in use, in KiB: `MemTotal - MemAvailable` from `/proc/meminfo`.
 fn mem_used_kib(s: &str) -> Option<u64> {
     let field = |name: &str| {
-        s.lines().find_map(|l| l.strip_prefix(name)?.trim().trim_end_matches("kB").trim().parse::<u64>().ok())
+        s.lines().find_map(|l| {
+            l.strip_prefix(name)?
+                .trim()
+                .trim_end_matches("kB")
+                .trim()
+                .parse::<u64>()
+                .ok()
+        })
     };
     Some(field("MemTotal:")?.saturating_sub(field("MemAvailable:")?))
 }
@@ -38,7 +45,12 @@ fn disk_used_kib() -> Option<u64> {
 fn sample() -> Option<GuestEvent> {
     let (load1, procs) = loadavg(&std::fs::read_to_string("/proc/loadavg").ok()?)?;
     let mem_used_kib = mem_used_kib(&std::fs::read_to_string("/proc/meminfo").ok()?)?;
-    Some(GuestEvent::Usage { load1, mem_used_kib, procs, disk_used_kib: disk_used_kib().unwrap_or(0) })
+    Some(GuestEvent::Usage {
+        load1,
+        mem_used_kib,
+        procs,
+        disk_used_kib: disk_used_kib().unwrap_or(0),
+    })
 }
 
 pub fn start(control: Control) {

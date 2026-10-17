@@ -88,8 +88,7 @@ pub fn check_globs(policy: &Policy) -> Result<()> {
 impl NetRule {
     /// Matches host and port only.
     pub fn matches_endpoint(&self, host: &str, port: u16) -> bool {
-        (self.ports.is_empty() || self.ports.contains(&port))
-            && host_matches(&self.host, host)
+        (self.ports.is_empty() || self.ports.contains(&port)) && host_matches(&self.host, host)
     }
 
     pub fn matches(&self, req: &NetRequest) -> bool {
@@ -134,16 +133,13 @@ impl ExecRule {
 }
 
 /// Generic layered first-match evaluation.
-fn evaluate<'a, R: 'a>(
+fn evaluate<'a, R: 'a + RuleInfo>(
     layers: &'a Layers<'a>,
     rules: impl Fn(&'a Policy) -> &'a [R],
     is_final: impl Fn(&R) -> bool,
     matches: impl Fn(&R) -> bool,
     default: impl Fn(&Policy) -> Option<Action>,
-) -> (Decision, Option<&'a R>)
-where
-    R: RuleInfo,
-{
+) -> (Decision, Option<&'a R>) {
     // Final rules first, from the least specific layer down.
     for (scope, policy) in layers.iter().rev() {
         if let Some(r) = rules(policy).iter().find(|r| is_final(r) && matches(r)) {
@@ -157,10 +153,24 @@ where
     }
     for (scope, policy) in layers {
         if let Some(action) = default(policy) {
-            return (Decision { action, rule: None, scope: Some(scope.clone()) }, None);
+            return (
+                Decision {
+                    action,
+                    rule: None,
+                    scope: Some(scope.clone()),
+                },
+                None,
+            );
         }
     }
-    (Decision { action: Action::Deny, rule: None, scope: None }, None)
+    (
+        Decision {
+            action: Action::Deny,
+            rule: None,
+            scope: None,
+        },
+        None,
+    )
 }
 
 trait RuleInfo {
@@ -169,23 +179,41 @@ trait RuleInfo {
 
 impl RuleInfo for NetRule {
     fn decision(&self, scope: &Scope) -> Decision {
-        Decision { action: self.action, rule: self.id.clone(), scope: Some(scope.clone()) }
+        Decision {
+            action: self.action,
+            rule: self.id.clone(),
+            scope: Some(scope.clone()),
+        }
     }
 }
 
 impl RuleInfo for ExecRule {
     fn decision(&self, scope: &Scope) -> Decision {
-        Decision { action: self.action, rule: self.id.clone(), scope: Some(scope.clone()) }
+        Decision {
+            action: self.action,
+            rule: self.id.clone(),
+            scope: Some(scope.clone()),
+        }
     }
 }
 
 /// Evaluates a connection or request. Effects are only set when allowed.
 pub fn evaluate_net(layers: &Layers<'_>, req: &NetRequest) -> (Decision, NetEffects) {
-    let (decision, rule) = evaluate(layers, |p| &p.net, |r| r.final_, |r| r.matches(req), |p| p.defaults.net);
+    let (decision, rule) = evaluate(
+        layers,
+        |p| &p.net,
+        |r| r.final_,
+        |r| r.matches(req),
+        |p| p.defaults.net,
+    );
     let effects = match rule {
         Some(r) if decision.action == Action::Allow => NetEffects {
             secrets: r.secrets.clone(),
-            set_headers: r.set_headers.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+            set_headers: r
+                .set_headers
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
         },
         _ => NetEffects::default(),
     };
@@ -195,7 +223,11 @@ pub fn evaluate_net(layers: &Layers<'_>, req: &NetRequest) -> (Decision, NetEffe
 /// Whether connections to this endpoint must be decrypted: true when any rule
 /// that could match a request to it depends on, or changes, the request.
 pub fn needs_inspection(layers: &Layers<'_>, host: &str, port: u16) -> bool {
-    layers.iter().any(|(_, p)| p.net.iter().any(|r| r.needs_inspection() && r.matches_endpoint(host, port)))
+    layers.iter().any(|(_, p)| {
+        p.net
+            .iter()
+            .any(|r| r.needs_inspection() && r.matches_endpoint(host, port))
+    })
 }
 
 /// What a session can do with a name, over every port and request.
@@ -215,9 +247,15 @@ pub enum Reach {
 /// or `path` decides every request still undecided; a narrower one decides
 /// only some, so the search goes on past it.
 pub fn reach(layers: &Layers<'_>, name: &str) -> Reach {
-    let unconditional = |r: &NetRule| r.ports.is_empty() && r.methods.is_empty() && r.path.is_none();
-    let finals = layers.iter().rev().flat_map(|(_, p)| p.net.iter().filter(|r| r.final_));
-    let others = layers.iter().flat_map(|(_, p)| p.net.iter().filter(|r| !r.final_));
+    let unconditional =
+        |r: &NetRule| r.ports.is_empty() && r.methods.is_empty() && r.path.is_none();
+    let finals = layers
+        .iter()
+        .rev()
+        .flat_map(|(_, p)| p.net.iter().filter(|r| r.final_));
+    let others = layers
+        .iter()
+        .flat_map(|(_, p)| p.net.iter().filter(|r| !r.final_));
     let (mut allow, mut ask) = (false, false);
     let mut settled = None;
     for r in finals.chain(others).filter(|r| host_matches(&r.host, name)) {
@@ -254,7 +292,14 @@ pub fn resolvable(layers: &Layers<'_>, name: &str) -> bool {
 }
 
 pub fn evaluate_exec(layers: &Layers<'_>, req: &ExecRequest) -> Decision {
-    evaluate(layers, |p| &p.exec, |r| r.final_, |r| r.matches(req), |p| p.defaults.exec).0
+    evaluate(
+        layers,
+        |p| &p.exec,
+        |r| r.final_,
+        |r| r.matches(req),
+        |p| p.defaults.exec,
+    )
+    .0
 }
 
 #[cfg(test)]
@@ -290,9 +335,17 @@ profiles:
         - { action: deny, path: "/usr/bin/curl", args: "*evil*" }
 "#;
 
-    fn net(c: &Config, profile: &str, host: &str, port: u16, method: Option<&str>, path: Option<&str>) -> Decision {
+    fn net(
+        c: &Config,
+        profile: &str,
+        host: &str,
+        port: u16,
+        method: Option<&str>,
+        path: Option<&str>,
+    ) -> Decision {
         let p = c.resolve(profile).unwrap();
-        let mut layers: Vec<(Scope, &Policy)> = p.layers.iter().map(|(s, p)| (s.clone(), p)).collect();
+        let mut layers: Vec<(Scope, &Policy)> =
+            p.layers.iter().map(|(s, p)| (s.clone(), p)).collect();
         layers.push((Scope::Global, &c.policy));
         let req = NetRequest {
             host: host.into(),
@@ -310,32 +363,69 @@ profiles:
         let d = net(&c, "dev", "169.254.169.254", 80, None, None);
         assert_eq!((d.action, d.rule.as_deref()), (Action::Deny, Some("net-1")));
         // Profile rule wins over global.
-        assert_eq!(net(&c, "dev", "api.github.com", 443, Some("GET"), Some("/user")).action, Action::Allow);
+        assert_eq!(
+            net(&c, "dev", "api.github.com", 443, Some("GET"), Some("/user")).action,
+            Action::Allow
+        );
         // Child profile rule wins over parent.
-        let d = net(&c, "dev", "api.github.com", 443, Some("GET"), Some("/repos/a/delete/x"));
+        let d = net(
+            &c,
+            "dev",
+            "api.github.com",
+            443,
+            Some("GET"),
+            Some("/repos/a/delete/x"),
+        );
         assert_eq!(d.action, Action::Deny);
         assert_eq!(d.scope, Some(Scope::Profile("dev".into())));
         // Parent's ask for other github hosts.
-        assert_eq!(net(&c, "dev", "Gist.GitHub.com", 443, None, None).action, Action::Ask);
+        assert_eq!(
+            net(&c, "dev", "Gist.GitHub.com", 443, None, None).action,
+            Action::Ask
+        );
         // Global rule.
-        assert_eq!(net(&c, "dev", "archive.ubuntu.com", 80, None, None).action, Action::Allow);
-        assert_eq!(net(&c, "dev", "archive.ubuntu.com", 443, None, None).action, Action::Ask);
+        assert_eq!(
+            net(&c, "dev", "archive.ubuntu.com", 80, None, None).action,
+            Action::Allow
+        );
+        assert_eq!(
+            net(&c, "dev", "archive.ubuntu.com", 443, None, None).action,
+            Action::Ask
+        );
         // Defaults: dev says ask, base inherits the global deny.
-        assert_eq!(net(&c, "dev", "example.com", 443, None, None).scope, Some(Scope::Profile("dev".into())));
-        assert_eq!(net(&c, "base", "example.com", 443, None, None).action, Action::Deny);
+        assert_eq!(
+            net(&c, "dev", "example.com", 443, None, None).scope,
+            Some(Scope::Profile("dev".into()))
+        );
+        assert_eq!(
+            net(&c, "base", "example.com", 443, None, None).action,
+            Action::Deny
+        );
     }
 
     #[test]
     fn inspection_and_effects() {
         let c = Config::from_yaml(CONFIG).unwrap();
         let base = &c.profiles["base"].policy;
-        let layers = [(Scope::Profile("base".into()), base), (Scope::Global, &c.policy)];
+        let layers = [
+            (Scope::Profile("base".into()), base),
+            (Scope::Global, &c.policy),
+        ];
         assert!(needs_inspection(&layers, "api.github.com", 443));
         assert!(!needs_inspection(&layers, "gist.github.com", 443));
-        let req = NetRequest { host: "api.github.com".into(), port: 443, method: Some("get".into()), path: Some("/".into()) };
+        let req = NetRequest {
+            host: "api.github.com".into(),
+            port: 443,
+            method: Some("get".into()),
+            path: Some("/".into()),
+        };
         assert_eq!(evaluate_net(&layers, &req).1.secrets, ["gh"]);
         // Without the request line the method rule does not match.
-        let req = NetRequest { host: "api.github.com".into(), port: 443, ..Default::default() };
+        let req = NetRequest {
+            host: "api.github.com".into(),
+            port: 443,
+            ..Default::default()
+        };
         assert_eq!(evaluate_net(&layers, &req).0.action, Action::Ask);
     }
 
@@ -343,13 +433,19 @@ profiles:
     fn dns_resolvable() {
         let c = Config::from_yaml(CONFIG).unwrap();
         let base = &c.profiles["base"].policy;
-        let layers = [(Scope::Profile("base".into()), base), (Scope::Global, &c.policy)];
+        let layers = [
+            (Scope::Profile("base".into()), base),
+            (Scope::Global, &c.policy),
+        ];
         assert!(resolvable(&layers, "api.github.com"));
         assert!(resolvable(&layers, "archive.ubuntu.com"));
         assert!(!resolvable(&layers, "example.com"));
         assert!(!resolvable(&layers, "169.254.169.254"));
         let dev = &c.profiles["dev"].policy;
-        let layers = [(Scope::Profile("dev".into()), dev), (Scope::Global, &c.policy)];
+        let layers = [
+            (Scope::Profile("dev".into()), dev),
+            (Scope::Global, &c.policy),
+        ];
         assert!(resolvable(&layers, "example.com"), "dev defaults to ask");
     }
 
@@ -376,8 +472,14 @@ profiles:
         // Ask only, and the defaults.
         let ask = "policy:\n  net:\n    - { action: ask, host: a.example }\n";
         assert_eq!(reach_of(ask, "a.example"), Reach::Ask);
-        assert_eq!(reach_of("policy: { defaults: { net: ask } }\n", "b.example"), Reach::Ask);
-        assert_eq!(reach_of("policy: { defaults: { net: allow } }\n", "b.example"), Reach::Allow);
+        assert_eq!(
+            reach_of("policy: { defaults: { net: ask } }\n", "b.example"),
+            Reach::Ask
+        );
+        assert_eq!(
+            reach_of("policy: { defaults: { net: allow } }\n", "b.example"),
+            Reach::Allow
+        );
         assert_eq!(reach_of("policy: {}\n", "b.example"), Reach::Never);
     }
 
@@ -385,14 +487,27 @@ profiles:
     fn layered_exec() {
         let c = Config::from_yaml(CONFIG).unwrap();
         let p = c.resolve("dev").unwrap();
-        let layers = [(Scope::Profile("dev".into()), &p.layers[0].1), (Scope::Global, &c.policy)];
+        let layers = [
+            (Scope::Profile("dev".into()), &p.layers[0].1),
+            (Scope::Global, &c.policy),
+        ];
         let exec = |path: &str, argv: &[&str]| {
-            let req = ExecRequest { path: path.into(), argv: argv.iter().map(|s| s.to_string()).collect(), cwd: None };
+            let req = ExecRequest {
+                path: path.into(),
+                argv: argv.iter().map(|s| s.to_string()).collect(),
+                cwd: None,
+            };
             evaluate_exec(&layers, &req).action
         };
         assert_eq!(exec("/usr/bin/sudo", &["sudo", "ls"]), Action::Deny);
-        assert_eq!(exec("/usr/bin/curl", &["curl", "https://evil.example"]), Action::Deny);
-        assert_eq!(exec("/usr/bin/curl", &["curl", "https://ok.example"]), Action::Allow);
+        assert_eq!(
+            exec("/usr/bin/curl", &["curl", "https://evil.example"]),
+            Action::Deny
+        );
+        assert_eq!(
+            exec("/usr/bin/curl", &["curl", "https://ok.example"]),
+            Action::Allow
+        );
         assert_eq!(exec("/bin/ls", &["ls"]), Action::Allow);
     }
 
@@ -402,9 +517,15 @@ profiles:
         let again = Config::from_yaml(&c.to_yaml()).unwrap();
         assert_eq!(c, again);
         let bad = "profiles:\n  a: { extends: b }\n  b: { extends: a }\n";
-        assert!(Config::from_yaml(bad).unwrap_err().to_string().contains("cycle"));
+        assert!(Config::from_yaml(bad)
+            .unwrap_err()
+            .to_string()
+            .contains("cycle"));
         let bad = "policy:\n  net: [{ action: allow, secrets: [nope] }]\n";
-        assert!(Config::from_yaml(bad).unwrap_err().to_string().contains("unknown secret"));
+        assert!(Config::from_yaml(bad)
+            .unwrap_err()
+            .to_string()
+            .contains("unknown secret"));
     }
 
     #[test]

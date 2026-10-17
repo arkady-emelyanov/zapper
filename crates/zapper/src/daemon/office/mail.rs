@@ -5,6 +5,7 @@
 //! desks and follow-ups need.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
+use std::sync::{Arc, RwLock};
 
 use anyhow::{anyhow, bail, Result};
 use serde::{Deserialize, Serialize};
@@ -190,7 +191,11 @@ pub struct Desk {
 }
 
 pub struct PostOffice {
-    firm: Firm,
+    /// The run's live chart, shared with the run. Read through `chart()`, a
+    /// copy, so its lock is never held across anything else.
+    firm: Arc<RwLock<Firm>>,
+    /// Workers who left, and who gets their mail: their manager.
+    departed: BTreeMap<String, String>,
     max_thread: usize,
     mail_per_hour: usize,
     fanout_per_hour: usize,
@@ -217,14 +222,40 @@ fn clip(s: &str, n: usize) -> String {
     s.chars().take(n).collect::<String>() + "…"
 }
 
+/// A subject from a body: its first line, without Markdown marks, cut short.
+pub fn subject_from(body: &str) -> String {
+    let line = body
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("");
+    let line = line
+        .trim_start_matches(['#', '>', '-', '*', ' '])
+        .replace("**", "")
+        .replace('`', "");
+    let s = clip(line.trim(), 80);
+    if s.is_empty() {
+        "(no subject)".into()
+    } else {
+        s
+    }
+}
+
 fn preview(body: &str) -> String {
-    clip(body.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or(""), 120)
+    clip(
+        body.lines()
+            .map(str::trim)
+            .find(|l| !l.is_empty())
+            .unwrap_or(""),
+        120,
+    )
 }
 
 impl PostOffice {
-    pub fn new(firm: &Firm) -> PostOffice {
+    pub fn new(firm: &Firm, chart: Arc<RwLock<Firm>>) -> PostOffice {
         PostOffice {
-            firm: firm.clone(),
+            firm: chart,
+            departed: BTreeMap::new(),
             max_thread: firm.limits.thread_messages as usize,
             mail_per_hour: firm.limits.mail_per_hour as usize,
             fanout_per_hour: firm.limits.fanout_per_hour as usize,
@@ -247,8 +278,50 @@ impl PostOffice {
         format!("{prefix}-{}", self.counter)
     }
 
+    fn chart(&self) -> Firm {
+        self.firm.read().unwrap().clone()
+    }
+
+    /// Where mail to `a` goes: `a`, or for someone who left, the manager
+    /// who took over their work (following further departures).
+    fn forward(&self, a: &str) -> String {
+        let mut cur = a.to_string();
+        for _ in 0..64 {
+            match self.departed.get(&cur) {
+                Some(m) => cur = m.clone(),
+                None => break,
+            }
+        }
+        cur
+    }
+
+    /// `worker` left; `to`, their manager, takes over what they owed and
+    /// what they waited for, and gets their mail from now on.
+    pub fn leave(&mut self, worker: &str, to: &str) -> Vec<Obligation> {
+        self.departed.insert(worker.to_string(), to.to_string());
+        let mut moved = Vec::new();
+        let keys: Vec<(String, String)> = self.obligations.keys().cloned().collect();
+        for k in keys {
+            let Some(mut o) = self.obligations.remove(&k) else {
+                continue;
+            };
+            if o.debtor == worker {
+                o.debtor = to.to_string();
+                moved.push(o.clone());
+                self.obligations
+                    .insert((o.message.clone(), o.debtor.clone()), o);
+            } else {
+                if o.creditor == worker {
+                    o.creditor = to.to_string();
+                }
+                self.obligations.insert(k, o);
+            }
+        }
+        moved
+    }
+
     fn is_address(&self, a: &str) -> bool {
-        a == BOARD || self.firm.worker(a).is_some()
+        a == BOARD || self.chart().worker(&self.forward(a)).is_some()
     }
 
     /// Expands `team:NAME` (NAME's direct reports) and `all` (everyone but
@@ -256,18 +329,33 @@ impl PostOffice {
     fn expand(&self, from: &str, list: &[String]) -> Result<(Vec<String>, bool)> {
         let mut out = Vec::new();
         let mut fanout = false;
+        let chart = self.chart();
         for a in list {
             let a = a.trim().to_ascii_lowercase();
             if a == "all" {
                 fanout = true;
-                out.extend(self.firm.workers.iter().map(|w| w.name.clone()).filter(|n| n != from));
+                out.extend(
+                    chart
+                        .workers
+                        .iter()
+                        .map(|w| w.name.clone())
+                        .filter(|n| n != from),
+                );
             } else if let Some(team) = a.strip_prefix("team:") {
-                if self.firm.worker(team).is_none() {
+                let team = self.forward(team);
+                if chart.worker(&team).is_none() {
                     bail!("team:{team}: no worker {team}");
                 }
                 fanout = true;
-                out.extend(self.firm.reports_of(team).into_iter().map(str::to_string).filter(|n| n != from));
+                out.extend(
+                    chart
+                        .reports_of(&team)
+                        .into_iter()
+                        .map(str::to_string)
+                        .filter(|n| n != from),
+                );
             } else if self.is_address(&a) {
+                let a = self.forward(&a);
                 if a != from {
                     out.push(a);
                 }
@@ -280,7 +368,12 @@ impl PostOffice {
         Ok((out, fanout))
     }
 
-    fn rate_ok(log: &mut HashMap<String, VecDeque<f64>>, who: &str, limit: usize, now: f64) -> bool {
+    fn rate_ok(
+        log: &mut HashMap<String, VecDeque<f64>>,
+        who: &str,
+        limit: usize,
+        now: f64,
+    ) -> bool {
         let q = log.entry(who.to_string()).or_default();
         while q.front().is_some_and(|t| now - t > 3600.0) {
             q.pop_front();
@@ -295,8 +388,11 @@ impl PostOffice {
     /// Sends a message; checks addresses, authority and limits.
     pub fn send(&mut self, journal: &Journal, d: Draft, now: f64) -> Result<Sent> {
         let system = d.automatic;
+        let mut d = d;
+        // A subject is optional: a new thread without one is named by its
+        // first line.
         if d.subject.trim().is_empty() && d.in_reply_to.is_none() {
-            bail!("a new thread needs a subject");
+            d.subject = subject_from(&d.body);
         }
         if d.body.len() > MAX_BODY {
             bail!("body is {} bytes; at most {MAX_BODY}", d.body.len());
@@ -323,21 +419,30 @@ impl PostOffice {
             bail!("at most {MAX_RECIPIENTS} recipients");
         }
         // Authority flows down the chart.
+        let chart = self.chart();
         if d.kind == Kind::Assignment && d.from != BOARD && !system {
             for r in &to {
-                if !self.firm.is_above(&d.from, r) {
+                if !chart.is_above(&d.from, r) {
                     bail!(
                         "{} can't give {r} an assignment: only the board and {r}'s managers can. Send a question instead, or ask {}",
                         d.from,
-                        self.firm.manager_of(r).unwrap_or(BOARD)
+                        chart.manager_of(r).unwrap_or(BOARD)
                     );
                 }
             }
         }
         let parent = match &d.in_reply_to {
             Some(id) => {
-                let m = self.messages.get(id).ok_or_else(|| anyhow!("no message {id}"))?;
-                if !system && d.from != BOARD && m.from != d.from && !m.to.contains(&d.from) && !m.cc.contains(&d.from) {
+                let m = self
+                    .messages
+                    .get(id)
+                    .ok_or_else(|| anyhow!("no message {id}"))?;
+                if !system
+                    && d.from != BOARD
+                    && m.from != d.from
+                    && !m.to.contains(&d.from)
+                    && !m.cc.contains(&d.from)
+                {
                     bail!("message {id} isn't addressed to you");
                 }
                 Some(m.clone())
@@ -353,14 +458,28 @@ impl PostOffice {
         if !system && d.from != BOARD {
             let fanout = fan_to || fan_cc;
             if fanout && !Self::rate_ok(&mut self.fanout_log, &d.from, self.fanout_per_hour, now) {
-                bail!("you sent {} messages to all or team: in the last hour; that's the limit", self.fanout_per_hour);
+                bail!(
+                    "you sent {} messages to all or team: in the last hour; that's the limit",
+                    self.fanout_per_hour
+                );
             }
             if !Self::rate_ok(&mut self.sent_log, &d.from, self.mail_per_hour, now) {
-                bail!("you sent {} messages in the last hour; that's the limit", self.mail_per_hour);
+                bail!(
+                    "you sent {} messages in the last hour; that's the limit",
+                    self.mail_per_hour
+                );
             }
             // Two workers bouncing mail back and forth: a loop.
-            for r in to.iter().chain(cc.iter()).filter(|r| self.firm.worker(r).is_some()) {
-                let key = if d.from < *r { (d.from.clone(), r.clone()) } else { (r.clone(), d.from.clone()) };
+            for r in to
+                .iter()
+                .chain(cc.iter())
+                .filter(|r| chart.worker(r).is_some())
+            {
+                let key = if d.from < *r {
+                    (d.from.clone(), r.clone())
+                } else {
+                    (r.clone(), d.from.clone())
+                };
                 let log = self.pair_log.entry(key.clone()).or_default();
                 while log.front().is_some_and(|t| now - t > 600.0) {
                     log.pop_front();
@@ -369,12 +488,21 @@ impl PostOffice {
                     let n = log.len();
                     if self.pair_told.get(&key).is_none_or(|t| now - t > 3600.0) {
                         self.pair_told.insert(key.clone(), now);
-                        journal.append("loop_guard", json!({ "workers": [key.0, key.1], "messages": n }));
+                        journal.append(
+                            "loop_guard",
+                            json!({ "workers": [key.0, key.1], "messages": n }),
+                        );
                         let body = format!(
                             "[Automatic notice] {} and {} exchanged {n} messages in ten minutes, which looks like a loop. The post office refuses more mail between them for now; it resumes as the ten-minute window moves. Check their threads, and pause the firm if they are stuck.\n",
                             key.0, key.1
                         );
-                        let mut notice = Draft::new(OFFICE, vec![BOARD.into()], &format!("Loop? {} and {}", key.0, key.1), &body, Kind::Fyi);
+                        let mut notice = Draft::new(
+                            OFFICE,
+                            vec![BOARD.into()],
+                            &format!("Loop? {} and {}", key.0, key.1),
+                            &body,
+                            Kind::Fyi,
+                        );
                         notice.automatic = true;
                         let _ = self.send_notice(journal, notice, now);
                     }
@@ -386,7 +514,11 @@ impl PostOffice {
         let id = self.next_id("m");
         let thread = thread_id.unwrap_or_else(|| format!("t-{}", id.trim_start_matches("m-")));
         let subject = match (&parent, d.subject.trim()) {
-            (Some(p), "") => self.threads.get(&p.thread).map(|t| t.subject.clone()).unwrap_or_default(),
+            (Some(p), "") => self
+                .threads
+                .get(&p.thread)
+                .map(|t| t.subject.clone())
+                .unwrap_or_default(),
             (_, s) => s.to_string(),
         };
         let expects = d.expects.unwrap_or(d.kind.default_expects());
@@ -417,16 +549,19 @@ impl PostOffice {
             preview: preview(&d.body),
             at,
         };
-        let t = self.threads.entry(thread.clone()).or_insert_with(|| Thread {
-            id: thread.clone(),
-            subject: subject.clone(),
-            participants: BTreeSet::new(),
-            messages: vec![],
-            context: d.context.clone(),
-            paused: false,
-            created: now,
-            updated: now,
-        });
+        let t = self
+            .threads
+            .entry(thread.clone())
+            .or_insert_with(|| Thread {
+                id: thread.clone(),
+                subject: subject.clone(),
+                participants: BTreeSet::new(),
+                messages: vec![],
+                context: d.context.clone(),
+                paused: false,
+                created: now,
+                updated: now,
+            });
         t.participants.insert(d.from.clone());
         t.participants.extend(to.iter().cloned());
         t.participants.extend(cc.iter().cloned());
@@ -434,7 +569,10 @@ impl PostOffice {
         t.updated = now;
         if t.messages.len() >= self.max_thread && !t.paused {
             t.paused = true;
-            journal.append("thread_paused", json!({ "thread": thread, "messages": t.messages.len() }));
+            journal.append(
+                "thread_paused",
+                json!({ "thread": thread, "messages": t.messages.len() }),
+            );
         }
 
         // The sender's answers settle what it owed in this thread.
@@ -466,7 +604,11 @@ impl PostOffice {
                     (None, Some(due)) => (due - now).max(900.0),
                     (None, None) => 0.0,
                 };
-                let max = if d.follow_up.off { 0 } else { d.follow_up.max.unwrap_or(DEFAULT_FOLLOW_UPS) };
+                let max = if d.follow_up.off {
+                    0
+                } else {
+                    d.follow_up.max.unwrap_or(DEFAULT_FOLLOW_UPS)
+                };
                 self.obligations.insert(
                     (id.clone(), r.clone()),
                     Obligation {
@@ -491,27 +633,46 @@ impl PostOffice {
         let recipients: Vec<String> = to.iter().chain(cc.iter()).cloned().collect();
         for r in &recipients {
             self.unread.entry(r.clone()).or_default().insert(id.clone());
-            if !system && self.firm.worker(r).is_some() && self.firm.worker(&d.from).is_some() {
-                let key = if d.from < *r { (d.from.clone(), r.clone()) } else { (r.clone(), d.from.clone()) };
+            if !system && chart.worker(r).is_some() && chart.worker(&d.from).is_some() {
+                let key = if d.from < *r {
+                    (d.from.clone(), r.clone())
+                } else {
+                    (r.clone(), d.from.clone())
+                };
                 self.pair_log.entry(key).or_default().push_back(now);
             }
         }
         self.messages.insert(id.clone(), meta);
-        Ok(Sent { id, thread, recipients })
+        Ok(Sent {
+            id,
+            thread,
+            recipients,
+        })
     }
 
     /// The text of a message, from the journal.
     pub fn body(&self, journal: &Journal, id: &str) -> String {
-        self.messages.get(id).and_then(|m| journal.read(m.at).ok()).and_then(|v| v["body"].as_str().map(str::to_string)).unwrap_or_default()
+        self.messages
+            .get(id)
+            .and_then(|m| journal.read(m.at).ok())
+            .and_then(|v| v["body"].as_str().map(str::to_string))
+            .unwrap_or_default()
     }
 
     pub fn can_read(&self, viewer: &str, thread: &str) -> bool {
-        viewer == BOARD || self.threads.get(thread).is_some_and(|t| t.participants.contains(viewer))
+        viewer == BOARD
+            || self
+                .threads
+                .get(thread)
+                .is_some_and(|t| t.participants.contains(viewer))
     }
 
     /// A message with its body, if `viewer` may read it.
     pub fn message(&self, journal: &Journal, id: &str, viewer: &str) -> Result<Value> {
-        let m = self.messages.get(id).ok_or_else(|| anyhow!("no message {id}"))?;
+        let m = self
+            .messages
+            .get(id)
+            .ok_or_else(|| anyhow!("no message {id}"))?;
         if !self.can_read(viewer, &m.thread) {
             bail!("no message {id}");
         }
@@ -522,11 +683,18 @@ impl PostOffice {
 
     /// A thread, oldest first, with bodies.
     pub fn thread(&self, journal: &Journal, id: &str, viewer: &str) -> Result<Value> {
-        let t = self.threads.get(id).ok_or_else(|| anyhow!("no thread {id}"))?;
+        let t = self
+            .threads
+            .get(id)
+            .ok_or_else(|| anyhow!("no thread {id}"))?;
         if !self.can_read(viewer, id) {
             bail!("no thread {id}");
         }
-        let messages: Vec<Value> = t.messages.iter().filter_map(|m| self.message(journal, m, viewer).ok()).collect();
+        let messages: Vec<Value> = t
+            .messages
+            .iter()
+            .filter_map(|m| self.message(journal, m, viewer).ok())
+            .collect();
         Ok(json!({ "thread": t, "messages": messages }))
     }
 
@@ -539,7 +707,10 @@ impl PostOffice {
     }
 
     pub fn unread(&self, who: &str) -> Vec<String> {
-        self.unread.get(who).map(|u| u.iter().cloned().collect()).unwrap_or_default()
+        self.unread
+            .get(who)
+            .map(|u| u.iter().cloned().collect())
+            .unwrap_or_default()
     }
 
     /// Messages to `who`, newest first.
@@ -574,15 +745,30 @@ impl PostOffice {
 
     /// Follow-ups and escalations that are due.
     pub fn tick(&mut self, journal: &Journal, now: f64) -> Vec<Sent> {
-        let due: Vec<(String, String)> = self.obligations.iter().filter(|(_, o)| o.next.is_some_and(|n| now >= n)).map(|(k, _)| k.clone()).collect();
+        let due: Vec<(String, String)> = self
+            .obligations
+            .iter()
+            .filter(|(_, o)| o.next.is_some_and(|n| now >= n))
+            .map(|(k, _)| k.clone())
+            .collect();
         let mut out = Vec::new();
         for key in due {
-            let Some(o) = self.obligations.get(&key).cloned() else { continue };
+            let Some(o) = self.obligations.get(&key).cloned() else {
+                continue;
+            };
             if o.follow_ups < o.max_follow_ups {
                 let overdue = now - o.due.unwrap_or(now);
                 let original = self.body(journal, &o.message);
-                let quoted: String = original.lines().take(20).map(|l| format!("> {l}\n")).collect();
-                let what = if o.expects == Expects::Done { "report" } else { "reply" };
+                let quoted: String = original
+                    .lines()
+                    .take(20)
+                    .map(|l| format!("> {l}\n"))
+                    .collect();
+                let what = if o.expects == Expects::Done {
+                    "report"
+                } else {
+                    "reply"
+                };
                 let body = format!(
                     "[Automatic follow-up on behalf of {creditor}]\n{creditor} is still waiting for your {what} on \"{subject}\", due {due} ({overdue} ago). This is follow-up {n} of {max}.\n\nTheir request:\n{quoted}\nIf you can't finish, reply with what you have, what's left, and when you expect to finish; or explain what's blocking you.\n",
                     creditor = o.creditor,
@@ -592,7 +778,13 @@ impl PostOffice {
                     n = o.follow_ups + 1,
                     max = o.max_follow_ups,
                 );
-                let mut d = Draft::new(&o.creditor, vec![o.debtor.clone()], "", &body, Kind::FollowUp);
+                let mut d = Draft::new(
+                    &o.creditor,
+                    vec![o.debtor.clone()],
+                    "",
+                    &body,
+                    Kind::FollowUp,
+                );
                 d.in_reply_to = Some(o.message.clone());
                 d.automatic = true;
                 if let Ok(sent) = self.send(journal, d, now) {
@@ -607,7 +799,11 @@ impl PostOffice {
                     ob.escalated = true;
                     ob.next = None;
                 }
-                let manager = self.firm.manager_of(&o.debtor).unwrap_or(BOARD).to_string();
+                let manager = self
+                    .chart()
+                    .manager_of(&o.debtor)
+                    .unwrap_or(BOARD)
+                    .to_string();
                 let overdue = super::prompts::ago(now - o.due.unwrap_or(now));
                 let notice = format!(
                     "[Automatic notice] A request to {debtor} (your report) is stuck.\n\"{subject}\" from {creditor}, due {due}, followed up {max} times without an answer. Thread: {thread}. You may want to check on {debtor} or reassign it.\n",
@@ -618,7 +814,13 @@ impl PostOffice {
                     max = o.max_follow_ups,
                     thread = o.thread,
                 );
-                let mut d = Draft::new(OFFICE, vec![manager.clone()], &format!("Stuck: {}", o.subject), &notice, Kind::Fyi);
+                let mut d = Draft::new(
+                    OFFICE,
+                    vec![manager.clone()],
+                    &format!("Stuck: {}", o.subject),
+                    &notice,
+                    Kind::Fyi,
+                );
                 d.automatic = true;
                 if manager != o.creditor {
                     if let Ok(sent) = self.send_notice(journal, d, now) {
@@ -631,7 +833,13 @@ impl PostOffice {
                     subject = o.subject,
                     max = o.max_follow_ups,
                 );
-                let mut d = Draft::new(OFFICE, vec![o.creditor.clone()], &format!("Unanswered: {}", o.subject), &note, Kind::Fyi);
+                let mut d = Draft::new(
+                    OFFICE,
+                    vec![o.creditor.clone()],
+                    &format!("Unanswered: {}", o.subject),
+                    &note,
+                    Kind::Fyi,
+                );
                 d.automatic = true;
                 if let Ok(sent) = self.send_notice(journal, d, now) {
                     out.push(sent);
@@ -653,20 +861,25 @@ impl PostOffice {
 
     /// The org chart for `directory()`.
     pub fn directory(&self) -> Value {
-        let workers: Vec<Value> = self
-            .firm
+        let chart = self.chart();
+        let workers: Vec<Value> = chart
             .workers
             .iter()
             .map(|w| {
                 json!({
-                    "name": w.name, "title": self.firm.title_of(&w.name), "role": w.role,
+                    "name": w.name, "title": chart.title_of(&w.name), "role": w.role,
                     "reports_to": w.reports_to.clone().unwrap_or_else(|| BOARD.into()),
-                    "reports": self.firm.reports_of(&w.name),
-                    "security_officer": self.firm.is_officer(&w.name),
+                    "reports": chart.reports_of(&w.name),
+                    "security_officer": chart.is_officer(&w.name),
                 })
             })
             .collect();
-        json!({ "board": { "address": BOARD, "name": self.firm.board.name }, "workers": workers })
+        let left: Vec<Value> = self
+            .departed
+            .iter()
+            .map(|(w, m)| json!({ "name": w, "mail_goes_to": self.forward(m) }))
+            .collect();
+        json!({ "board": { "address": BOARD, "name": chart.board.name }, "workers": workers, "left": left })
     }
 }
 
@@ -683,7 +896,12 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("zapper-mail-{}", crate::daemon::random_id(6)));
         std::fs::create_dir_all(&dir).unwrap();
         let j = Journal::create(&dir.join("journal.jsonl")).unwrap();
-        (PostOffice::new(&c.firms["acme"]), j, dir)
+        let f = c.firms["acme"].clone();
+        (
+            PostOffice::new(&f, Arc::new(RwLock::new(f.clone()))),
+            j,
+            dir,
+        )
     }
 
     fn draft(from: &str, to: &str, kind: Kind) -> Draft {
@@ -691,39 +909,118 @@ mod tests {
     }
 
     #[test]
+    fn subjects_are_optional() {
+        assert_eq!(
+            subject_from("\n## **Build** the `widget`\nmore"),
+            "Build the widget"
+        );
+        assert_eq!(subject_from("   "), "(no subject)");
+        assert_eq!(subject_from(&"x".repeat(200)).chars().count(), 81);
+        let (mut po, j, dir) = office();
+        let sent = po
+            .send(
+                &j,
+                Draft::new(
+                    "ceo",
+                    vec!["cto".into()],
+                    "",
+                    "Ship it by Friday.\nDetails…",
+                    Kind::Assignment,
+                ),
+                1.0,
+            )
+            .unwrap();
+        assert_eq!(po.threads[&sent.thread].subject, "Ship it by Friday.");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn authority_flows_down() {
         let (mut po, j, dir) = office();
-        assert!(po.send(&j, draft("board", "ada", Kind::Assignment), 0.0).is_ok());
-        assert!(po.send(&j, draft("ceo", "ada", Kind::Assignment), 0.0).is_ok());
-        assert!(po.send(&j, draft("cto", "ada", Kind::Assignment), 0.0).is_ok());
-        let e = po.send(&j, draft("ada", "cto", Kind::Assignment), 0.0).unwrap_err().to_string();
+        assert!(po
+            .send(&j, draft("board", "ada", Kind::Assignment), 0.0)
+            .is_ok());
+        assert!(po
+            .send(&j, draft("ceo", "ada", Kind::Assignment), 0.0)
+            .is_ok());
+        assert!(po
+            .send(&j, draft("cto", "ada", Kind::Assignment), 0.0)
+            .is_ok());
+        let e = po
+            .send(&j, draft("ada", "cto", Kind::Assignment), 0.0)
+            .unwrap_err()
+            .to_string();
         assert!(e.contains("can't give cto an assignment"), "{e}");
-        assert!(po.send(&j, draft("ken", "ada", Kind::Assignment), 0.0).is_err(), "a peer's report is not yours");
-        assert!(po.send(&j, draft("ada", "ken", Kind::Question), 0.0).is_ok(), "anyone may ask anyone");
-        assert!(po.send(&j, draft("ada", "cto", Kind::FollowUp), 0.0).is_err());
+        assert!(
+            po.send(&j, draft("ken", "ada", Kind::Assignment), 0.0)
+                .is_err(),
+            "a peer's report is not yours"
+        );
+        assert!(
+            po.send(&j, draft("ada", "ken", Kind::Question), 0.0)
+                .is_ok(),
+            "anyone may ask anyone"
+        );
+        assert!(po
+            .send(&j, draft("ada", "cto", Kind::FollowUp), 0.0)
+            .is_err());
         std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
     fn addresses() {
         let (mut po, j, dir) = office();
-        let s = po.send(&j, Draft::new("ceo", vec!["all".into()], "Hi", "x", Kind::Fyi), 0.0).unwrap();
+        let s = po
+            .send(
+                &j,
+                Draft::new("ceo", vec!["all".into()], "Hi", "x", Kind::Fyi),
+                0.0,
+            )
+            .unwrap();
         assert_eq!(s.recipients, vec!["cto", "ada", "ken"]);
-        let s = po.send(&j, Draft::new("ceo", vec!["team:ceo".into()], "Hi", "x", Kind::Fyi), 0.0).unwrap();
+        let s = po
+            .send(
+                &j,
+                Draft::new("ceo", vec!["team:ceo".into()], "Hi", "x", Kind::Fyi),
+                0.0,
+            )
+            .unwrap();
         assert_eq!(s.recipients, vec!["cto", "ken"]);
-        assert!(po.send(&j, Draft::new("ceo", vec!["nobody".into()], "Hi", "x", Kind::Fyi), 0.0).is_err());
-        assert!(po.send(&j, Draft::new("ceo", vec!["ceo".into()], "Hi", "x", Kind::Fyi), 0.0).is_err(), "no recipients");
+        assert!(po
+            .send(
+                &j,
+                Draft::new("ceo", vec!["nobody".into()], "Hi", "x", Kind::Fyi),
+                0.0
+            )
+            .is_err());
+        assert!(
+            po.send(
+                &j,
+                Draft::new("ceo", vec!["ceo".into()], "Hi", "x", Kind::Fyi),
+                0.0
+            )
+            .is_err(),
+            "no recipients"
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
     fn obligations_and_desks() {
         let (mut po, j, dir) = office();
-        let a = po.send(&j, draft("cto", "ada", Kind::Assignment), 0.0).unwrap();
+        let a = po
+            .send(&j, draft("cto", "ada", Kind::Assignment), 0.0)
+            .unwrap();
         assert_eq!(po.desk("ada").owed.len(), 1);
         assert_eq!(po.desk("cto").waiting.len(), 1);
         // A question back doesn't settle an assignment.
-        let mut q = Draft::new("ada", vec!["cto".into()], "", "which colour?", Kind::Question);
+        let mut q = Draft::new(
+            "ada",
+            vec!["cto".into()],
+            "",
+            "which colour?",
+            Kind::Question,
+        );
         q.in_reply_to = Some(a.id.clone());
         let q = po.send(&j, q, 1.0).unwrap();
         assert_eq!(q.thread, a.thread);
@@ -742,10 +1039,25 @@ mod tests {
         po.send(&j, done, 3.0).unwrap();
         assert!(po.desk("ada").owed.is_empty());
         assert!(po.desk("cto").waiting.is_empty());
-        assert_eq!(po.thread(&j, &a.thread, "ada").unwrap()["messages"].as_array().unwrap().len(), 4);
-        assert!(po.thread(&j, &a.thread, "ken").is_err(), "not a participant");
-        assert!(po.thread(&j, &a.thread, "board").is_ok(), "the board reads everything");
-        assert_eq!(po.message(&j, &a.id, "ada").unwrap()["body"], "Body line\nmore");
+        assert_eq!(
+            po.thread(&j, &a.thread, "ada").unwrap()["messages"]
+                .as_array()
+                .unwrap()
+                .len(),
+            4
+        );
+        assert!(
+            po.thread(&j, &a.thread, "ken").is_err(),
+            "not a participant"
+        );
+        assert!(
+            po.thread(&j, &a.thread, "board").is_ok(),
+            "the board reads everything"
+        );
+        assert_eq!(
+            po.message(&j, &a.id, "ada").unwrap()["body"],
+            "Body line\nmore"
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -754,13 +1066,20 @@ mod tests {
         let (mut po, j, dir) = office();
         let mut d = draft("cto", "ada", Kind::Assignment);
         d.due = Some(100.0);
-        d.follow_up = FollowUp { every: Some(10.0), max: Some(2), off: false };
+        d.follow_up = FollowUp {
+            every: Some(10.0),
+            max: Some(2),
+            off: false,
+        };
         let a = po.send(&j, d, 0.0).unwrap();
         assert!(po.tick(&j, 50.0).is_empty());
         let f1 = po.tick(&j, 101.0);
         assert_eq!(f1.len(), 1);
         let m = &po.messages[&f1[0].id];
-        assert_eq!((m.from.as_str(), m.kind, m.automatic, m.thread.as_str()), ("cto", Kind::FollowUp, true, a.thread.as_str()));
+        assert_eq!(
+            (m.from.as_str(), m.kind, m.automatic, m.thread.as_str()),
+            ("cto", Kind::FollowUp, true, a.thread.as_str())
+        );
         assert!(po.body(&j, &f1[0].id).contains("follow-up 1 of 2"));
         assert!(po.tick(&j, 105.0).is_empty());
         assert_eq!(po.tick(&j, 112.0).len(), 1);
@@ -783,16 +1102,33 @@ mod tests {
         let (mut po, j, dir) = office();
         po.pair_per_10min = 4;
         for i in 0..4 {
-            let (a, b) = if i % 2 == 0 { ("ada", "ken") } else { ("ken", "ada") };
+            let (a, b) = if i % 2 == 0 {
+                ("ada", "ken")
+            } else {
+                ("ken", "ada")
+            };
             po.send(&j, draft(a, b, Kind::Fyi), i as f64).unwrap();
         }
-        let e = po.send(&j, draft("ada", "ken", Kind::Fyi), 5.0).unwrap_err().to_string();
+        let e = po
+            .send(&j, draft("ada", "ken", Kind::Fyi), 5.0)
+            .unwrap_err()
+            .to_string();
         assert!(e.contains("likely loop"), "{e}");
-        assert_eq!(po.inbox("board", false, 10).len(), 1, "the board is told once");
+        assert_eq!(
+            po.inbox("board", false, 10).len(),
+            1,
+            "the board is told once"
+        );
         assert!(po.send(&j, draft("ken", "ada", Kind::Fyi), 6.0).is_err());
         assert_eq!(po.inbox("board", false, 10).len(), 1);
-        assert!(po.send(&j, draft("ada", "ceo", Kind::Fyi), 7.0).is_ok(), "other pairs are fine");
-        assert!(po.send(&j, draft("ada", "ken", Kind::Fyi), 700.0).is_ok(), "the window moves");
+        assert!(
+            po.send(&j, draft("ada", "ceo", Kind::Fyi), 7.0).is_ok(),
+            "other pairs are fine"
+        );
+        assert!(
+            po.send(&j, draft("ada", "ken", Kind::Fyi), 700.0).is_ok(),
+            "the window moves"
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -808,11 +1144,17 @@ mod tests {
         big.body = "x".repeat(MAX_BODY + 1);
         assert!(po.send(&j, big, 0.0).is_err());
         po.max_thread = 2;
-        let a = po.send(&j, draft("ceo", "ken", Kind::Question), 0.0).unwrap();
+        let a = po
+            .send(&j, draft("ceo", "ken", Kind::Question), 0.0)
+            .unwrap();
         let mut r = Draft::new("ken", vec!["ceo".into()], "", "a", Kind::Reply);
         r.in_reply_to = Some(a.id.clone());
         po.send(&j, r.clone(), 1.0).unwrap();
-        assert!(po.send(&j, r, 2.0).unwrap_err().to_string().contains("paused"));
+        assert!(po
+            .send(&j, r, 2.0)
+            .unwrap_err()
+            .to_string()
+            .contains("paused"));
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

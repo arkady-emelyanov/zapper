@@ -31,9 +31,15 @@ pub fn inbound(forwards: &[zapper_policy::proto::Forward]) -> io::Result<()> {
     for f in forwards {
         let listener = sys::VsockListener::bind(f.vsock_port)?;
         let tcp = f.tcp_port;
-        let host = if f.nic { zapper_policy::proto::GUEST_NIC_ADDR } else { "127.0.0.1" };
+        let host = if f.nic {
+            zapper_policy::proto::GUEST_NIC_ADDR
+        } else {
+            "127.0.0.1"
+        };
         thread::spawn(move || loop {
-            let Ok((conn, cid)) = listener.accept() else { continue };
+            let Ok((conn, cid)) = listener.accept() else {
+                continue;
+            };
             if cid != HOST_CID {
                 continue;
             }
@@ -48,7 +54,9 @@ pub fn inbound(forwards: &[zapper_policy::proto::Forward]) -> io::Result<()> {
 }
 
 fn splice(conn: TcpStream, upstream: std::fs::File) {
-    let (Ok(mut conn_r), Ok(mut up_w)) = (conn.try_clone(), upstream.try_clone()) else { return };
+    let (Ok(mut conn_r), Ok(mut up_w)) = (conn.try_clone(), upstream.try_clone()) else {
+        return;
+    };
     let (mut conn_w, mut up_r) = (conn, upstream);
     let t = thread::spawn(move || {
         let _ = copy(&mut conn_r, &mut up_w);

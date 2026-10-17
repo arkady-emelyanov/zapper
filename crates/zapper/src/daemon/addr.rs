@@ -20,7 +20,11 @@ impl std::str::FromStr for Cidr {
         let (a, p) = s.split_once('/').unwrap_or((s, ""));
         let addr: IpAddr = a.parse().with_context(|| format!("network {s:?}"))?;
         let max = if addr.is_ipv4() { 32 } else { 128 };
-        let prefix = if p.is_empty() { max } else { p.parse().with_context(|| format!("network {s:?}"))? };
+        let prefix = if p.is_empty() {
+            max
+        } else {
+            p.parse().with_context(|| format!("network {s:?}"))?
+        };
         if prefix > max {
             return Err(anyhow!("network {s:?}: prefix too long"));
         }
@@ -32,11 +36,19 @@ impl Cidr {
     pub fn contains(&self, ip: IpAddr) -> bool {
         match (self.addr, ip) {
             (IpAddr::V4(n), IpAddr::V4(a)) => {
-                let mask = if self.prefix == 0 { 0 } else { u32::MAX << (32 - self.prefix) };
+                let mask = if self.prefix == 0 {
+                    0
+                } else {
+                    u32::MAX << (32 - self.prefix)
+                };
                 u32::from(n) & mask == u32::from(a) & mask
             }
             (IpAddr::V6(n), IpAddr::V6(a)) => {
-                let mask = if self.prefix == 0 { 0 } else { u128::MAX << (128 - self.prefix) };
+                let mask = if self.prefix == 0 {
+                    0
+                } else {
+                    u128::MAX << (128 - self.prefix)
+                };
                 u128::from(n) & mask == u128::from(a) & mask
             }
             _ => false,
@@ -50,15 +62,30 @@ pub struct AddressPolicy {
 }
 
 fn is_private(ip: IpAddr) -> bool {
-    const RANGES: [&str; 7] =
-        ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "198.18.0.0/15", "fc00::/7", "fec0::/10"];
-    RANGES.iter().any(|r| r.parse::<Cidr>().unwrap().contains(ip))
+    const RANGES: [&str; 7] = [
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+        "100.64.0.0/10",
+        "198.18.0.0/15",
+        "fc00::/7",
+        "fec0::/10",
+    ];
+    RANGES
+        .iter()
+        .any(|r| r.parse::<Cidr>().unwrap().contains(ip))
 }
 
 impl AddressPolicy {
     pub fn new(private_networks: &[String]) -> Result<Self> {
-        let private_allowed = private_networks.iter().map(|n| n.parse()).collect::<Result<_>>()?;
-        Ok(Self { host_addrs: host_addrs(), private_allowed })
+        let private_allowed = private_networks
+            .iter()
+            .map(|n| n.parse())
+            .collect::<Result<_>>()?;
+        Ok(Self {
+            host_addrs: host_addrs(),
+            private_allowed,
+        })
     }
 
     /// Why `ip` may not be reached, if it may not.
@@ -68,8 +95,20 @@ impl AddressPolicy {
             v4 => v4,
         };
         let special = match ip {
-            IpAddr::V4(a) => a.is_loopback() || a.is_unspecified() || a.is_link_local() || a.is_multicast() || a.is_broadcast() || a.octets()[0] == 0,
-            IpAddr::V6(a) => a.is_loopback() || a.is_unspecified() || a.is_multicast() || (a.segments()[0] & 0xffc0) == 0xfe80,
+            IpAddr::V4(a) => {
+                a.is_loopback()
+                    || a.is_unspecified()
+                    || a.is_link_local()
+                    || a.is_multicast()
+                    || a.is_broadcast()
+                    || a.octets()[0] == 0
+            }
+            IpAddr::V6(a) => {
+                a.is_loopback()
+                    || a.is_unspecified()
+                    || a.is_multicast()
+                    || (a.segments()[0] & 0xffc0) == 0xfe80
+            }
         };
         if special {
             return Err("loopback, link-local or special address");
@@ -99,7 +138,9 @@ fn host_addrs() -> Vec<IpAddr> {
                 match (*a).sa_family as i32 {
                     libc::AF_INET => {
                         let sin = &*(a as *const libc::sockaddr_in);
-                        out.push(IpAddr::V4(Ipv4Addr::from(u32::from_be(sin.sin_addr.s_addr))));
+                        out.push(IpAddr::V4(Ipv4Addr::from(u32::from_be(
+                            sin.sin_addr.s_addr,
+                        ))));
                     }
                     libc::AF_INET6 => {
                         let sin6 = &*(a as *const libc::sockaddr_in6);
@@ -121,7 +162,10 @@ mod tests {
 
     #[test]
     fn checks() {
-        let p = AddressPolicy { host_addrs: vec!["192.0.2.7".parse().unwrap()], private_allowed: vec!["10.107.111.0/24".parse().unwrap()] };
+        let p = AddressPolicy {
+            host_addrs: vec!["192.0.2.7".parse().unwrap()],
+            private_allowed: vec!["10.107.111.0/24".parse().unwrap()],
+        };
         let check = |s: &str| p.check(s.parse().unwrap());
         assert!(check("1.1.1.1").is_ok());
         assert!(check("127.0.0.1").is_err());

@@ -12,10 +12,12 @@ pub mod httplog;
 mod nic;
 pub mod office;
 mod proxy;
+pub mod record;
 pub mod session;
 mod spec;
 pub mod tls;
 mod ui;
+pub mod uievents;
 pub mod vm;
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
@@ -131,7 +133,10 @@ pub enum EventBody {
 }
 
 pub fn now() -> f64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs_f64()
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs_f64()
 }
 
 /// A pending `ask` decision.
@@ -176,6 +181,8 @@ pub struct Daemon {
     seq: AtomicU64,
     approvals: Mutex<HashMap<String, Pending>>,
     pub ui_token: String,
+    /// Where the UI's events go.
+    pub ui_events: uievents::UiEvents,
     pub office: office::Office,
 }
 
@@ -189,7 +196,9 @@ pub fn is_session_id(s: &str) -> bool {
 pub fn random_id(len: usize) -> String {
     use rand::Rng;
     let mut rng = rand::thread_rng();
-    (0..len).map(|_| ID_CHARS[rng.gen_range(0..ID_CHARS.len())] as char).collect()
+    (0..len)
+        .map(|_| ID_CHARS[rng.gen_range(0..ID_CHARS.len())] as char)
+        .collect()
 }
 
 /// Finds the guest agent binary.
@@ -205,7 +214,12 @@ fn find_agent(configured: &str) -> Result<PathBuf> {
         dir.join("../x86_64-unknown-linux-musl/release/zapper-agent"),
         dir.join("../../x86_64-unknown-linux-musl/release/zapper-agent"),
     ];
-    candidates.into_iter().find(|p| p.is_file()).ok_or_else(|| anyhow!("zapper-agent not found next to {}; set daemon.agent", exe.display()))
+    candidates.into_iter().find(|p| p.is_file()).ok_or_else(|| {
+        anyhow!(
+            "zapper-agent not found next to {}; set daemon.agent",
+            exe.display()
+        )
+    })
 }
 
 /// Writes `data` to `path` atomically with mode 0600.
@@ -213,7 +227,12 @@ pub fn write_private(path: &Path, data: &[u8]) -> Result<()> {
     let tmp = path.with_extension("tmp");
     {
         use std::io::Write;
-        let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&tmp)?;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&tmp)?;
         f.write_all(data)?;
         f.sync_all()?;
     }
@@ -226,15 +245,23 @@ use std::os::unix::fs::OpenOptionsExt;
 impl Daemon {
     pub fn new(startup_path: PathBuf) -> Result<Arc<Self>> {
         let config = if startup_path.exists() {
-            let text = std::fs::read_to_string(&startup_path).with_context(|| format!("reading {}", startup_path.display()))?;
-            Config::from_yaml(&text).with_context(|| format!("loading {}", startup_path.display()))?
+            let text = std::fs::read_to_string(&startup_path)
+                .with_context(|| format!("reading {}", startup_path.display()))?;
+            Config::from_yaml(&text)
+                .with_context(|| format!("loading {}", startup_path.display()))?
         } else {
-            tracing::warn!("{} does not exist; starting with an empty config", startup_path.display());
+            tracing::warn!(
+                "{} does not exist; starting with an empty config",
+                startup_path.display()
+            );
             Config::default()
         };
         if let Ok(meta) = std::fs::metadata(&startup_path) {
             if meta.permissions().mode() & 0o077 != 0 && config.has_inline_secrets() {
-                tracing::warn!("{} is readable by others; it may hold secrets (chmod 600)", startup_path.display());
+                tracing::warn!(
+                    "{} is readable by others; it may hold secrets (chmod 600)",
+                    startup_path.display()
+                );
             }
         }
         let d = &config.daemon;
@@ -246,6 +273,8 @@ impl Daemon {
         for dir in std::fs::read_dir(state.join("sessions"))?.flatten() {
             let _ = std::fs::remove_dir_all(vm::vm_dir(&dir.path()));
         }
+        // The record: through the keeper, if configured; it must answer.
+        record::init(&state, d.keeper.as_ref())?;
         office::close_orphans(&state);
         let initrd = state.join("initrd.cpio");
         vm::build_initrd(&find_agent(&d.agent)?, &initrd)?;
@@ -261,6 +290,7 @@ impl Daemon {
         }
         let addrs = addr::AddressPolicy::new(&d.private_networks)?;
         let (events, _) = broadcast::channel(1024);
+        let ui_events = uievents::UiEvents::from_config(&config.daemon.ui_events)?;
         Ok(Arc::new(Daemon {
             config: RwLock::new(config),
             startup_path,
@@ -272,12 +302,18 @@ impl Daemon {
             seq: AtomicU64::new(1),
             approvals: Mutex::new(HashMap::new()),
             ui_token: random_id(24),
+            ui_events,
             office: office::Office::default(),
         }))
     }
 
     pub fn emit(&self, session: Option<&Session>, body: EventBody) {
-        let event = Event { seq: self.seq.fetch_add(1, Ordering::Relaxed), ts: now(), session: session.map(|s| s.id.clone()), body };
+        let event = Event {
+            seq: self.seq.fetch_add(1, Ordering::Relaxed),
+            ts: now(),
+            session: session.map(|s| s.id.clone()),
+            body,
+        };
         if let Some(s) = session {
             s.record(&event);
         }
@@ -293,11 +329,20 @@ impl Daemon {
 
     pub fn recent_events(&self, session: Option<&str>) -> Vec<Event> {
         let recent = self.recent.lock().unwrap();
-        recent.iter().filter(|e| session.is_none() || e.session.as_deref() == session).cloned().collect()
+        recent
+            .iter()
+            .filter(|e| session.is_none() || e.session.as_deref() == session)
+            .cloned()
+            .collect()
     }
 
     pub fn session(&self, id: &str) -> Result<Arc<Session>> {
-        self.sessions.read().unwrap().get(id).cloned().ok_or_else(|| anyhow!("no session {id}"))
+        self.sessions
+            .read()
+            .unwrap()
+            .get(id)
+            .cloned()
+            .ok_or_else(|| anyhow!("no session {id}"))
     }
 
     /// Applies a change to the running config if the result is valid.
@@ -310,7 +355,12 @@ impl Daemon {
             *self.addrs.write().unwrap() = addr::AddressPolicy::new(&next.daemon.private_networks)?;
         }
         *self.config.write().unwrap() = next;
-        self.emit(None, EventBody::Config { change: what.to_string() });
+        self.emit(
+            None,
+            EventBody::Config {
+                change: what.to_string(),
+            },
+        );
         Ok(out)
     }
 
@@ -361,21 +411,32 @@ impl Daemon {
             Err(e) => format!("# startup file does not load: {e:#}\n"),
         };
         let running = self.redacted_config().to_yaml();
-        similar::TextDiff::from_lines(&startup, &running).unified_diff().header("startup", "running").to_string()
+        similar::TextDiff::from_lines(&startup, &running)
+            .unified_diff()
+            .header("startup", "running")
+            .to_string()
     }
 
     /// Writes the running config to the startup file.
     pub fn save(&self) -> Result<()> {
         let yaml = self.running_yaml();
         if self.startup_path.exists() {
-            let _ = std::fs::copy(&self.startup_path, self.startup_path.with_extension("yaml.bak"));
+            let _ = std::fs::copy(
+                &self.startup_path,
+                self.startup_path.with_extension("yaml.bak"),
+            );
         }
         if let Some(dir) = self.startup_path.parent() {
             std::fs::create_dir_all(dir)?;
         }
         let header = "# zapper startup config, written by `zapper config save`.\n";
         write_private(&self.startup_path, format!("{header}{yaml}").as_bytes())?;
-        self.emit(None, EventBody::Config { change: format!("saved to {}", self.startup_path.display()) });
+        self.emit(
+            None,
+            EventBody::Config {
+                change: format!("saved to {}", self.startup_path.display()),
+            },
+        );
         Ok(())
     }
 
@@ -389,7 +450,13 @@ impl Daemon {
     }
 
     /// Waits for an operator's answer to an `ask`; denies on timeout.
-    pub async fn ask(&self, session: &Session, kind: Kind, subject: String, suggestion: AnyRule) -> bool {
+    pub async fn ask(
+        &self,
+        session: &Session,
+        kind: Kind,
+        subject: String,
+        suggestion: AnyRule,
+    ) -> bool {
         let id = random_id(8);
         let (tx, rx) = oneshot::channel();
         let pending = Pending {
@@ -404,16 +471,39 @@ impl Daemon {
         {
             let mut approvals = self.approvals.lock().unwrap();
             // A session cannot flood the operator.
-            if approvals.values().filter(|p| p.session == session.id).count() >= 32 {
+            if approvals
+                .values()
+                .filter(|p| p.session == session.id)
+                .count()
+                >= 32
+            {
                 return false;
             }
             approvals.insert(id.clone(), pending);
         }
-        self.emit(Some(session), EventBody::Ask { id: id.clone(), kind, subject });
+        self.emit(
+            Some(session),
+            EventBody::Ask {
+                id: id.clone(),
+                kind,
+                subject,
+            },
+        );
         let timeout = Duration::from_secs(self.config.read().unwrap().daemon.ask_timeout_secs);
-        let allow = tokio::time::timeout(timeout, rx).await.ok().and_then(Result::ok).unwrap_or(false);
+        let allow = tokio::time::timeout(timeout, rx)
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .unwrap_or(false);
         if self.approvals.lock().unwrap().remove(&id).is_some() {
-            self.emit(Some(session), EventBody::Answer { id, allow: false, remember: Some("timeout".into()) });
+            self.emit(
+                Some(session),
+                EventBody::Answer {
+                    id,
+                    allow: false,
+                    remember: Some("timeout".into()),
+                },
+            );
         }
         allow
     }
@@ -425,7 +515,12 @@ impl Daemon {
     }
 
     pub fn answer(&self, id: &str, allow: bool, remember: Option<Remember>) -> Result<()> {
-        let pending = self.approvals.lock().unwrap().remove(id).ok_or_else(|| anyhow!("no pending approval {id}"))?;
+        let pending = self
+            .approvals
+            .lock()
+            .unwrap()
+            .remove(id)
+            .ok_or_else(|| anyhow!("no pending approval {id}"))?;
         let session = self.session(&pending.session)?;
         if let Some(r) = remember {
             let mut rule = pending.suggestion.clone();
@@ -445,7 +540,14 @@ impl Daemon {
             let _ = tx.send(allow);
         }
         let remember = remember.map(|r| format!("{r:?}").to_lowercase());
-        self.emit(Some(&session), EventBody::Answer { id: id.into(), allow, remember });
+        self.emit(
+            Some(&session),
+            EventBody::Answer {
+                id: id.into(),
+                allow,
+                remember,
+            },
+        );
         Ok(())
     }
 }
@@ -471,6 +573,9 @@ mod tests {
         let yaml = redact(c).to_yaml();
         assert!(!yaml.contains("s3cr3t-inline"), "{yaml}");
         assert!(yaml.contains(REDACTED));
-        assert!(yaml.contains("claude-token"), "file sources are kept: they are paths, not values");
+        assert!(
+            yaml.contains("claude-token"),
+            "file sources are kept: they are paths, not values"
+        );
     }
 }
