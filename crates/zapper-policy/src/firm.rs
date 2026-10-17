@@ -323,6 +323,9 @@ pub struct Budget {
     /// CEO has taken one to measure: the CEO sizes the budget in turns
     /// priced with this. Set it for a firm on a different model.
     pub turn_price: u64,
+    /// How long one turn may run (`30m`): then the agent is stopped and
+    /// the turn charged at the worker's turn price.
+    pub turn_timeout: String,
 }
 
 impl Default for Budget {
@@ -336,6 +339,7 @@ impl Default for Budget {
             security_share: 0.2,
             quote_fee: 30_000,
             turn_price: 10_000,
+            turn_timeout: "30m".into(),
         }
     }
 }
@@ -733,6 +737,14 @@ impl Firm {
         }
         if let Err(e) = parse_duration(&self.security.answer_within) {
             err(format!("security.answer_within: {e}"));
+        }
+        match parse_duration(&self.budget.turn_timeout) {
+            Err(e) => err(format!("budget.turn_timeout: {e}")),
+            Ok(d) if d.is_zero() => err("budget.turn_timeout must be above 0".into()),
+            Ok(_) => {}
+        }
+        if self.budget.turn_price == 0 {
+            err("budget.turn_price must be at least 1".into());
         }
         for (field, v) in [
             ("artifact_size", &self.limits.artifact_size),

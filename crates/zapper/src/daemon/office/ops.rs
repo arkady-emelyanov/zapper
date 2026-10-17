@@ -289,8 +289,9 @@ pub fn tools(p: Powers) -> Vec<Value> {
             decide,
             tool(
                 "background_check",
-                "Clear a new hire to start, or object (with the reason): an objection cancels the hire and returns its budget to the hirer.",
-                json!({ "screening": s("c-2"), "clear": { "type": "boolean" }, "note": s("One line; the hirer and the board read it. Required to object") }),
+                "Clear a new hire to start, or object (with the reason): an objection cancels the hire and returns its budget to the hirer. Clearing can grant the access the brief names (not admin on git or the cluster, which is the CEO's).",
+                json!({ "screening": s("c-2"), "clear": { "type": "boolean" }, "note": s("One line; the hirer and the board read it. Required to object"),
+                    "grants": { "type": "array", "description": "With clear: access the brief names, granted at once", "items": { "type": "object", "properties": { "resource": s("git, cluster or drive:<space>"), "level": { "type": "string", "enum": ["read", "write", "admin"] }, "expires_in": s("e.g. 8h; default the firm's") }, "required": ["resource", "level"] } } }),
                 &["screening", "clear"],
             ),
             tool("access_revoke", "Remove a standing approval.", json!({ "rule": s("Rule id"), "reason": s("Why") }), &["rule", "reason"]),
@@ -841,6 +842,7 @@ pub async fn dispatch(
                 .as_bool()
                 .ok_or_else(|| anyhow!("clear is required: true or false"))?,
             &opt_str(args, "note").unwrap_or_default(),
+            &args["grants"],
         ),
         "escalate" => security::escalate(
             run,

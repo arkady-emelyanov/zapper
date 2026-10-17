@@ -25,6 +25,9 @@ use crate::daemon::Daemon;
 
 /// Restarts allowed within ten minutes before the worker is marked broken.
 const MAX_RESTARTS: usize = 5;
+/// Turns in a row that may run out of time before the worker is marked
+/// broken and their manager told.
+const MAX_TIMEOUTS: u32 = 3;
 
 enum Out {
     /// A turn ended.
@@ -33,6 +36,8 @@ enum Out {
     Write(Vec<u8>),
     /// The process exited.
     Exit(Option<i32>),
+    /// The turn ran past `budget.turn_timeout`.
+    Late,
 }
 
 struct Proc {
@@ -41,6 +46,15 @@ struct Proc {
     conv: Arc<std::sync::Mutex<Box<dyn Conversation>>>,
     /// The harness takes messages while the agent works.
     steers: bool,
+    /// Reads the agent's output; it holds the connection's other half.
+    reader: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for Proc {
+    /// Closes the connection both ways: the agent hangs the process up.
+    fn drop(&mut self) {
+        self.reader.abort();
+    }
 }
 
 impl Proc {
@@ -92,7 +106,7 @@ async fn start(
     let (mut r, stdin) = stream.into_split();
     let (tx, events) = mpsc::channel(16);
     let (run, w) = (run.clone(), w.clone());
-    tokio::spawn(async move {
+    let reader_task = tokio::spawn(async move {
         let mut buf: Vec<u8> = Vec::new();
         let mut err: Vec<u8> = Vec::new();
         let mut last_activity = Instant::now() - Duration::from_secs(10);
@@ -184,6 +198,7 @@ async fn start(
         events,
         conv,
         steers,
+        reader: reader_task,
     };
     for line in opening {
         p.write(line).await?;
@@ -216,6 +231,44 @@ async fn nap(run: &FirmRun, w: &WorkerRt, secs: u64) {
     }
 }
 
+/// Why the worker can't take a turn now: the state to show, its detail,
+/// and how long to wait before looking again.
+fn blocked(
+    run: &FirmRun,
+    w: &WorkerRt,
+    backoff_until: f64,
+) -> Option<(WorkerState, Option<String>, u64)> {
+    let paused = *run.state.lock().unwrap() == RunState::Paused;
+    let has_work = !w.queue.lock().unwrap().is_empty() || security::has_work(run, w);
+    if paused || !has_work || now() < backoff_until {
+        // An error stays on show until a turn goes through.
+        let st = match w.state() {
+            WorkerState::Error => WorkerState::Error,
+            _ => idle_state(run, w),
+        };
+        let detail = (st == WorkerState::Error)
+            .then(|| w.state.lock().unwrap().1.clone())
+            .flatten();
+        return Some((st, detail, 5));
+    }
+    // No turns while the record can't be written: work isn't done unrecorded.
+    if !crate::daemon::record::healthy() {
+        return Some((
+            WorkerState::Error,
+            Some("the record can't be written (is zapper-keeper running?)".into()),
+            10,
+        ));
+    }
+    // A new hire starts once the security officers cleared them.
+    if security::screening_pending(run, &w.name) {
+        return Some((WorkerState::Waiting, Some("background check".into()), 10));
+    }
+    if !run.budget_allows(&w.name) {
+        return Some((WorkerState::OverBudget, None, 30));
+    }
+    None
+}
+
 pub async fn run(_d: Arc<Daemon>, run: Arc<FirmRun>, w: Arc<WorkerRt>) {
     let transcript = match Journal::create(
         &run.dir
@@ -232,51 +285,37 @@ pub async fn run(_d: Arc<Daemon>, run: Arc<FirmRun>, w: Arc<WorkerRt>) {
     let mut proc: Option<Proc> = None;
     let mut restarts: VecDeque<f64> = VecDeque::new();
     let mut backoff_until = 0.0;
+    let mut timeouts = 0;
+    let turn_timeout = zapper_policy::parse_duration(&run.config.budget.turn_timeout)
+        .unwrap_or(Duration::from_secs(1800));
     run.set_state(&w, idle_state(&run, &w), None);
     loop {
         if run.ended() {
             return;
         }
         let Some(session) = w.session() else { return };
-        let paused = *run.state.lock().unwrap() == RunState::Paused;
-        let has_work = !w.queue.lock().unwrap().is_empty() || security::has_work(&run, &w);
-        if paused || !has_work || now() < backoff_until {
-            let st = w.state();
-            if !matches!(st, WorkerState::Error) {
-                run.set_state(&w, idle_state(&run, &w), None);
-            }
-            nap(&run, &w, 5).await;
-            continue;
-        }
-        // No turns while the record can't be written: work isn't done unrecorded.
-        if !crate::daemon::record::healthy() {
-            run.set_state(
-                &w,
-                WorkerState::Error,
-                Some("the record can't be written (is zapper-keeper running?)".into()),
-            );
-            nap(&run, &w, 10).await;
-            continue;
-        }
-        // A new hire starts once the security officers cleared them.
-        if security::screening_pending(&run, &w.name) {
-            run.set_state(&w, WorkerState::Waiting, Some("background check".into()));
-            nap(&run, &w, 10).await;
-            continue;
-        }
-        if !run.budget_allows(&w.name) {
-            run.set_state(&w, WorkerState::OverBudget, None);
-            nap(&run, &w, 30).await;
+        if let Some((st, detail, secs)) = blocked(&run, &w, backoff_until) {
+            run.set_state(&w, st, detail);
+            nap(&run, &w, secs).await;
             continue;
         }
         let permit = match run.turns.clone().try_acquire_owned() {
             Ok(p) => p,
             Err(_) => {
                 run.set_state(&w, WorkerState::Queued, None);
-                tokio::select! {
+                let p = tokio::select! {
                     p = run.turns.clone().acquire_owned() => match p { Ok(p) => p, Err(_) => return },
                     _ = run.stopping.notified() => return,
+                };
+                // Things change while queued (a pause, the budget, the
+                // record): the gates again, before the turn.
+                if let Some((st, detail, secs)) = blocked(&run, &w, backoff_until) {
+                    drop(p);
+                    run.set_state(&w, st, detail);
+                    nap(&run, &w, secs).await;
+                    continue;
                 }
+                p
             }
         };
         if run.ended() {
@@ -367,10 +406,12 @@ pub async fn run(_d: Arc<Daemon>, run: Arc<FirmRun>, w: Arc<WorkerRt>) {
         );
         transcript.append("wake", json!({ "text": prompt }));
         let started = Instant::now();
+        let deadline = tokio::time::Instant::now() + turn_timeout;
         let p = proc.as_mut().unwrap();
         let outcome = match p.send(&prompt).await {
             Ok(()) => loop {
                 tokio::select! {
+                    _ = tokio::time::sleep_until(deadline) => break Out::Late,
                     o = p.events.recv() => match o {
                         Some(Out::Write(line)) => {
                             if p.write(line).await.is_err() {
@@ -429,6 +470,53 @@ pub async fn run(_d: Arc<Daemon>, run: Arc<FirmRun>, w: Arc<WorkerRt>) {
                         json!({ "worker": w.name, "event": "end", "ms": ms, "tokens": t });
                     zapper_policy::merge(&mut rec, &end.detail);
                     run.journal.append("turn", rec);
+                    // A turn that went through clears an earlier error.
+                    timeouts = 0;
+                    if w.state() == WorkerState::Error {
+                        run.set_state(&w, idle_state(&run, &w), None);
+                    }
+                }
+            }
+            Out::Late => {
+                // Dropping the process closes its connection: the agent
+                // hangs Claude up, and the next turn resumes the
+                // conversation. The mail isn't handed over again (Claude
+                // has seen it); a note says what the turn was on.
+                proc = None;
+                let price = run
+                    .ledger
+                    .lock()
+                    .unwrap()
+                    .turn_price(&w.name, run.config.budget.turn_price);
+                run.count_turn(&w.name, price);
+                let subjects: Vec<String> = {
+                    let po = run.post.lock().unwrap();
+                    ids.iter()
+                        .filter_map(|id| po.messages.get(id))
+                        .map(|m| format!("{} from {}", m.subject, m.from))
+                        .collect()
+                };
+                let limit = run.config.budget.turn_timeout.clone();
+                w.notes
+                    .lock()
+                    .unwrap()
+                    .push(prompts::timeout_note(&limit, &subjects));
+                run.journal.append(
+                    "turn",
+                    json!({ "worker": w.name, "event": "timed_out", "ms": ms, "tokens": price, "messages": ids }),
+                );
+                timeouts += 1;
+                if timeouts >= MAX_TIMEOUTS {
+                    timeouts = 0;
+                    let why = format!("{MAX_TIMEOUTS} turns in a row ran past {limit}");
+                    run.set_state(&w, WorkerState::Error, Some(why.clone()));
+                    let manager = run
+                        .chart()
+                        .manager_of(&w.name)
+                        .unwrap_or(zapper_policy::BOARD)
+                        .to_string();
+                    run.notice(&manager, &format!("{} is stuck", w.name), &format!("[Automatic notice] {}: {why}, each stopped and charged. They rest for ten minutes. Narrow what you ask of them (smaller assignments, one deliverable each), or take the work back.\n", w.name));
+                    backoff_until = now() + 600.0;
                 }
             }
             // Written while waiting for the turn's end.
@@ -436,6 +524,7 @@ pub async fn run(_d: Arc<Daemon>, run: Arc<FirmRun>, w: Arc<WorkerRt>) {
             Out::Exit(code) => {
                 proc = None;
                 requeue(&w, ids);
+                requeue_access(&w, access_ids, digest_was_due);
                 let at = now();
                 w.notes.lock().unwrap().push(prompts::restart_note(at));
                 run.journal.append("turn", json!({ "worker": w.name, "event": "interrupted", "ms": ms, "exit_code": code }));
@@ -471,7 +560,11 @@ fn requeue_access(w: &WorkerRt, ids: Vec<String>, digest: bool) {
     }
     let mut q = w.access_queue.lock().unwrap();
     let rest = std::mem::take(&mut *q);
-    *q = ids.into_iter().chain(rest).collect();
+    for id in ids.into_iter().chain(rest) {
+        if !q.contains(&id) {
+            q.push(id);
+        }
+    }
     if digest {
         w.digest_due
             .store(true, std::sync::atomic::Ordering::Relaxed);

@@ -350,6 +350,7 @@ pub fn decide_screening(
     id: &str,
     clear: bool,
     note: &str,
+    grants: &Value,
 ) -> Result<Value> {
     let board = by == BOARD;
     if !board && !run.chart().is_officer(by) {
@@ -359,6 +360,22 @@ pub fn decide_screening(
     if !clear && note.is_empty() {
         bail!("give a reason for the objection; the hirer and the board read it");
     }
+    // The grants that come with clearing, all checked before anything is
+    // decided.
+    let grants = if clear {
+        let role = run
+            .security
+            .lock()
+            .unwrap()
+            .screenings
+            .get(id)
+            .map(|s| s.role.clone())
+            .ok_or_else(|| anyhow!("no background check {id}"))?;
+        let officer_hire = run.config.roles.get(&role).is_some_and(|r| r.officer);
+        super::access::check_clearance(run, by, officer_hire, grants)?
+    } else {
+        vec![]
+    };
     let s = {
         let mut sec = run.security.lock().unwrap();
         let s = sec
@@ -385,6 +402,7 @@ pub fn decide_screening(
             if run.config.roles.get(&w.role).is_some_and(|r| r.officer) {
                 appoint(d, run, &s.worker, by);
             }
+            super::access::grant_at_clearance(d, run, by, &s.worker, id, &grants);
             w.wake.notify_one();
         }
     } else if run.rt(&s.worker).is_some() {
@@ -707,7 +725,7 @@ pub fn take_wake(run: &FirmRun, w: &WorkerRt) -> Option<String> {
     };
     for c in &checks {
         out.push_str(c);
-        out.push_str("Decide with background_check(screening, clear, note).\n\n");
+        out.push_str("Decide with background_check(screening, clear, note, grants?). Clearing can\ngrant the access the brief names, and no more, e.g. grants: [{resource:\n\"git\", level: \"write\"}, {resource: \"drive:general\", level: \"write\"}]: the\nhire then starts working instead of asking.\n\n");
     }
     let reqs: Vec<Value> = {
         let sec = run.security.lock().unwrap();

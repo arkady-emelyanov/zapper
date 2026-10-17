@@ -579,6 +579,7 @@ async fn screening_decide(
         &id,
         clear,
         v["note"].as_str().unwrap_or(""),
+        &v["grants"],
     )?))
 }
 

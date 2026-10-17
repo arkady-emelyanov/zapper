@@ -531,6 +531,24 @@ pub fn restart_note(at: f64) -> String {
     )
 }
 
+/// Prepended to the next wake after a turn ran out of time.
+pub fn timeout_note(limit: &str, subjects: &[String]) -> String {
+    let on = if subjects.is_empty() {
+        String::new()
+    } else {
+        format!(
+            " It was handling:\n{}",
+            subjects
+                .iter()
+                .map(|s| format!("  - {s}\n"))
+                .collect::<String>()
+        )
+    };
+    format!(
+        "Note: your previous turn ran past the {limit} a turn may take and was stopped.{on}\nThat mail is not shown again. Check your desk, the drive and git for what\nyou finished, and do the rest in smaller steps: end a turn when a piece is\ndone and sent."
+    )
+}
+
 /// The officer's prompt for pending access requests.
 pub fn access_requests(reqs: &[Value]) -> String {
     let mut s = String::new();

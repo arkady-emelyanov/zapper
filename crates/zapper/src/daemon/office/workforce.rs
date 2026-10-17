@@ -888,6 +888,7 @@ pub async fn hire(d: &Arc<Daemon>, run: &Arc<FirmRun>, by: &str, a: HireArgs) ->
             &check,
             true,
             "The board clears the firm's first security officer without being asked.",
+            &serde_json::Value::Null,
         );
     }
     let left = run.ledger.lock().unwrap().balance(by);
@@ -1045,6 +1046,7 @@ pub fn let_go(
     super::security::officer_left(run, worker, by);
     // What they had to decide (as the owner of the firm's services) moves on.
     super::security::requeue(run, worker);
+    super::access::reassign(run, worker);
     super::contracts::left(run, worker, reason);
     // Offboarding: every grant goes.
     super::access::revoke_all(

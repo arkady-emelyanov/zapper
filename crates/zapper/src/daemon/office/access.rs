@@ -97,6 +97,12 @@ pub struct Grant {
     warned: bool,
 }
 
+/// How long before a grant expires its holder is warned, and may renew it:
+/// a tenth of its life, from a minute to an hour.
+fn renew_window(granted: f64, expires: f64) -> f64 {
+    ((expires - granted) / 10.0).clamp(60.0, 3600.0)
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct Request {
     pub id: String,
@@ -105,6 +111,9 @@ pub struct Request {
     pub level: Level,
     pub reason: String,
     pub created: f64,
+    /// A renewal: when the grant it renews expires.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub renews: Option<f64>,
     /// `pending`, `escalated` (to the CEO or the board), `granted`, `denied`.
     pub state: String,
     /// Who decides it now; None is the board.
@@ -371,11 +380,17 @@ fn next_decider(run: &FirmRun, from: Option<&str>, worker: &str) -> Option<Strin
 
 fn request_text(q: &Request) -> String {
     format!(
-        "Credential request {} — {} asks for {} on {}.\nReason (the requester's words):\n{}\nDecide with credentials_decide(request: \"{}\", grant, level?, expires_in?, note), or hand it up with credentials_escalate.\n",
+        "Credential request {} — {} asks for {} on {}{}.\nReason (the requester's words):\n{}\nDecide with credentials_decide(request: \"{}\", grant, level?, expires_in?, note), or hand it up with credentials_escalate.\n",
         q.id,
         q.worker,
         q.level.name(),
         q.resource,
+        q.renews
+            .map(|e| format!(
+                " (a renewal: the grant they hold expires at {})",
+                super::prompts::when(e)
+            ))
+            .unwrap_or_default(),
         q.reason.lines().map(|l| format!("> {l}\n")).collect::<String>(),
         q.id
     )
@@ -410,12 +425,35 @@ pub fn request(
     if reason.trim().is_empty() {
         bail!("give a reason: what your work needs it for");
     }
-    if self::level(run, worker, &resource) >= level {
-        bail!(
-            "you already have {} on {resource}",
-            self::level(run, worker, &resource).name()
-        );
-    }
+    // At the level held: a renewal, once the grant is about to expire.
+    let held = self::level(run, worker, &resource);
+    let renews = if held >= level {
+        let g = run
+            .access
+            .lock()
+            .unwrap()
+            .grants
+            .get(worker)
+            .and_then(|g| g.get(&resource))
+            .map(|g| (g.granted, g.expires));
+        match g {
+            Some((granted, Some(e))) if held == level => {
+                let from = e - renew_window(granted, e);
+                if now() < from {
+                    bail!(
+                        "you have {} on {resource} until {}; renew it from {}",
+                        held.name(),
+                        super::prompts::when(e),
+                        super::prompts::when(from)
+                    );
+                }
+                Some(e)
+            }
+            _ => bail!("you already have {} on {resource}", held.name()),
+        }
+    } else {
+        None
+    };
     let decider = first_decider(run, worker, &resource, level);
     let q = {
         let mut a = run.access.lock().unwrap();
@@ -434,6 +472,7 @@ pub fn request(
             level,
             reason: reason.trim().chars().take(2000).collect(),
             created: now(),
+            renews,
             state: if decider.is_some() {
                 "pending"
             } else {
@@ -601,6 +640,102 @@ pub fn revoke(
     Ok(json!({ "worker": worker, "resource": resource, "revoked": true }))
 }
 
+/// A grant made when a hire is cleared: resource, level, expiry.
+pub type Clearance = (String, Level, f64);
+
+/// Checks the grants an officer (or the board) gives with a background
+/// check, all before any is made: the resources exist, levels are within
+/// them, admin on git and the cluster is only the CEO's or the board's to
+/// give, and an officer hire (a policy owner once cleared) gets none.
+pub fn check_clearance(
+    run: &FirmRun,
+    by: &str,
+    officer_hire: bool,
+    grants: &Value,
+) -> Result<Vec<Clearance>> {
+    let list = match grants {
+        Value::Null => return Ok(vec![]),
+        Value::Array(a) => a,
+        _ => bail!("grants: a list of {{resource, level, expires_in?}}"),
+    };
+    if list.is_empty() {
+        return Ok(vec![]);
+    }
+    if officer_hire {
+        bail!("an officer hire owns policy once cleared: give no grants");
+    }
+    let ceo = run.chart().root().map(str::to_string);
+    let mut out: Vec<Clearance> = Vec::new();
+    for g in list {
+        let r = resource(run, g["resource"].as_str().unwrap_or(""))?;
+        let level = Level::parse(g["level"].as_str().unwrap_or(""))?;
+        if level == Level::None || level > max_level(&r) {
+            bail!("{r} levels go up to {}", max_level(&r).name());
+        }
+        if level == Level::Admin
+            && !r.starts_with("drive:")
+            && by != BOARD
+            && ceo.as_deref() != Some(by)
+        {
+            bail!("admin on {r} is the CEO's to grant: leave it out, the hire asks for it with credentials_request");
+        }
+        let ttl = g["expires_in"]
+            .as_str()
+            .map(str::to_string)
+            .unwrap_or_else(|| run.config.credentials.expiry.clone());
+        let expires = now() + parse_duration(&ttl)?.as_secs_f64();
+        if out.iter().any(|(x, ..)| *x == r) {
+            bail!("{r} is in the grants twice");
+        }
+        out.push((r, level, expires));
+    }
+    Ok(out)
+}
+
+/// Makes the grants of a background check, and tells the hire once.
+pub fn grant_at_clearance(
+    d: &Arc<Daemon>,
+    run: &Arc<FirmRun>,
+    by: &str,
+    worker: &str,
+    screening: &str,
+    grants: &[Clearance],
+) {
+    if grants.is_empty() {
+        return;
+    }
+    let note = format!("cleared with background check {screening}");
+    for (r, level, expires) in grants {
+        put(
+            d,
+            run,
+            worker,
+            r,
+            *level,
+            by,
+            &note,
+            Some(*expires),
+            None,
+            false,
+        );
+    }
+    let lines: String = grants
+        .iter()
+        .map(|(r, l, e)| {
+            format!(
+                "  - {} on {r}, until {}\n",
+                l.name(),
+                super::prompts::when(*e)
+            )
+        })
+        .collect();
+    run.notice(
+        worker,
+        "Your access",
+        &format!("[Automatic notice] {by} cleared you and granted:\n{lines}Ask for anything else your work needs with credentials_request.\n"),
+    );
+}
+
 /// The board grants directly.
 pub fn board_grant(
     d: &Arc<Daemon>,
@@ -637,11 +772,95 @@ pub fn board_grant(
     Ok(json!({ "worker": worker, "resource": resource, "level": level, "expires": expires }))
 }
 
+/// Requests `from` was to decide (they left, or stopped being an officer):
+/// to whoever decides them now.
+pub fn reassign(run: &FirmRun, from: &str) {
+    let mine: Vec<Request> = run
+        .access
+        .lock()
+        .unwrap()
+        .requests
+        .values()
+        .filter(|q| q.state == "pending" && q.decider.as_deref() == Some(from))
+        .cloned()
+        .collect();
+    for q in mine {
+        let next = first_decider(run, &q.worker, &q.resource, q.level)
+            .filter(|d| d != from)
+            .or_else(|| next_decider(run, Some(from), &q.worker));
+        let q = {
+            let mut a = run.access.lock().unwrap();
+            let Some(r) = a.requests.get_mut(&q.id) else {
+                continue;
+            };
+            r.decider = next;
+            if r.decider.is_none() {
+                r.state = "escalated".into();
+            }
+            r.created = now();
+            r.clone()
+        };
+        run.journal.append("credentials", json!({ "event": "reassigned", "id": q.id, "from": from, "to": q.decider.clone().unwrap_or_else(|| BOARD.into()) }));
+        notify_decider(
+            run,
+            &q,
+            &format!("{from} no longer decides this; it is yours now.\n"),
+        );
+    }
+}
+
+/// Requests an officer left unanswered for `security.answer_within` go up
+/// to the CEO.
+fn escalate_late(run: &FirmRun) {
+    let within = parse_duration(&run.config.security.answer_within)
+        .map(|d| d.as_secs_f64())
+        .unwrap_or(900.0);
+    let ceo = run.chart().root().map(str::to_string);
+    let late: Vec<Request> = run
+        .access
+        .lock()
+        .unwrap()
+        .requests
+        .values()
+        .filter(|q| {
+            q.state == "pending"
+                && q.decider.is_some()
+                && q.decider != ceo
+                && now() - q.created > within
+        })
+        .cloned()
+        .collect();
+    for q in late {
+        let from = q.decider.clone().unwrap_or_default();
+        let next = next_decider(run, Some(&from), &q.worker);
+        let q = {
+            let mut a = run.access.lock().unwrap();
+            let Some(r) = a.requests.get_mut(&q.id) else {
+                continue;
+            };
+            r.decider = next;
+            r.state = "escalated".into();
+            r.created = now();
+            r.clone()
+        };
+        run.journal.append("credentials", json!({ "event": "escalated", "id": q.id, "by": "office", "to": q.decider.clone().unwrap_or_else(|| BOARD.into()), "recommendation": format!("{from} didn't answer within {}", run.config.security.answer_within) }));
+        notify_decider(
+            run,
+            &q,
+            &format!(
+                "{from} didn't answer this within {}, so it comes to you.\n",
+                run.config.security.answer_within
+            ),
+        );
+    }
+}
+
 /// A worker and a resource they hold.
 type Held = (String, String);
 
 /// Grants that lapse, and a warning before they do.
 pub fn tick(d: &Arc<Daemon>, run: &Arc<FirmRun>) {
+    escalate_late(run);
     let t = now();
     // (worker, resource) that lapsed; and those to warn, with their expiry.
     let (expired, warn): (Vec<Held>, Vec<(Held, f64)>) = {
@@ -653,7 +872,7 @@ pub fn tick(d: &Arc<Daemon>, run: &Arc<FirmRun>) {
                 let Some(e) = g.expires else { continue };
                 if e <= t {
                     expired.push((w.clone(), r.clone()));
-                } else if !g.warned && e - t < ((e - g.granted) / 10.0).clamp(60.0, 3600.0) {
+                } else if !g.warned && e - t < renew_window(g.granted, e) {
                     g.warned = true;
                     warn.push(((w.clone(), r.clone()), e));
                 }
@@ -665,7 +884,7 @@ pub fn tick(d: &Arc<Daemon>, run: &Arc<FirmRun>) {
         take(d, run, &w, &r, "office", "the grant expired", true);
     }
     for ((w, r), e) in warn {
-        run.notice(&w, &format!("Access to {r} expires soon"), &format!("[Automatic notice] Your access to {r} expires at {}. If your work still needs it, ask again with credentials_request.\n", super::prompts::when(e)));
+        run.notice(&w, &format!("Access to {r} expires soon"), &format!("[Automatic notice] Your access to {r} expires at {}. If your work still needs it, renew it now: credentials_request for the same resource and level, saying what is left to do.\n", super::prompts::when(e)));
     }
 }
 

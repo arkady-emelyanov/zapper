@@ -124,12 +124,19 @@ rules:
       - background_check: { screening: $screening, clear: false, note: "a developer's git and cluster access for copywriting" }
   - when: { contains: "Background check" }
     do:
-      - background_check: { screening: $screening, clear: true, note: "role fits the brief" }
+      - shell: "office background_check '{\"screening\": \"$screening\", \"clear\": true, \"grants\": [{\"resource\": \"drive:general\", \"level\": \"admin\"}]}' >> /work/clear-admin.txt 2>&1; true"
+      - background_check: { screening: $screening, clear: true, note: "role fits the brief", grants: [{ resource: "drive:general", level: write }] }
 EOF
 # first: the security officer is the first hire; nobody is hired or
-# contracted before.
+# contracted before. A turn that runs past budget.turn_timeout is stopped.
 cat > "$T/fake/first-ceo.yaml" <<'EOF'
 rules:
+  - when: { contains: "ran past" }
+    do:
+      - shell: "echo timeout note > /work/timeout.txt"
+  - when: { subject: "Stuck" }
+    do:
+      - sleep: 60
   - when: { from: board, kind: assignment }
     do:
       - budget_request: { total: "20k", plan: "An officer, then an engineer.", reason: "to build it" }
@@ -324,7 +331,7 @@ firms:
       - { name: ceo, role: boss }
     security: { officer_first: false, digest_every: { minutes: 60, requests: 0 } }
   first:
-    budget: { max_concurrent: 3, seed: 1000 }
+    budget: { max_concurrent: 3, seed: 1000, turn_timeout: 8s }
     roles:
       boss: { profile: worker, skills: { work: ceo }, fake: $T/fake/first-ceo.yaml, hires: [dev, officer], avatar: { figure: ceo } }
       dev: { profile: worker, skills: { work: software-engineer }, fake: $T/fake/none.yaml }
@@ -511,6 +518,7 @@ cwait_for "screening c-[0-9]* grace cleared by sec-1" 90 && pass "the officer do
 cwait_for 'grace → ceo \[report\]' 120 && pass "the hire boots, gets the brief and reports" || fail "the hire boots, gets the brief and reports" "$(cjournal | tail -8)"
 order=$(cjournal | grep -n "screening c-[0-9]* grace cleared\|turn grace start" | head -1)
 expect "the hire takes no turn before being cleared" "$order" "cleared"
+expect "clearing grants what the brief names" "$(cjournal)" "credentials grant grace drive:general write by sec-1"
 cwait_for "left mallory" 90 && pass "an objection cancels the hire" || fail "an objection cancels the hire" "$(cjournal | grep -i "screening\|mallory" | tail -5)"
 expect "with the officer's reason" "$(cjournal)" "mallory objected by sec-1: a developer's git and cluster access for copywriting"
 refute "the objected hire never took a turn" "$(cjournal)" "turn mallory start"
@@ -519,6 +527,7 @@ expect "the hirer gets the reason by mail" "$(cjournal)" 'office → ceo [fyi] "
 expect "the board sees background checks" "$("$Z" firm security corp)" "objected"
 csec=$("$Z" --json firm status corp | python3 -c 'import sys,json; print([w["session"] for w in json.load(sys.stdin)["run"]["workers"] if w["name"]=="sec-1"][0])')
 expect "an officer lists the pending checks, with the brief" "$("$Z" exec "$csec" -- cat /work/checks.txt 2>&1)" "Write the marketing copy."
+expect "grants beyond a resource's levels are refused before clearing" "$("$Z" exec "$csec" -- cat /work/clear-admin.txt 2>&1)" "drive:general levels go up to write"
 cwait_for "credentials p-1 ken asks drive:engineering read" 120 && pass "a hire asks for access, with a reason" || fail "a hire asks for access, with a reason" "$(cjournal | grep "credentials\|ken" | tail -5)"
 cwait_for "credentials p-1 granted drive:engineering by sec-1" 90 && pass "the security officer decides it" || fail "the security officer decides it" "$(cjournal | grep credentials | tail -5)"
 ckenl=$("$Z" --json firm status corp | python3 -c 'import sys,json; print([w["session"] for w in json.load(sys.stdin)["run"]["workers"] if w["name"]=="ken"][0])')
@@ -528,6 +537,19 @@ expect "the grant expires" "$(echo "$cr" | grep "ken ")" "drive:engineering"
 expect "the policy owners hold every space" "$(echo "$cr" | grep "sec-1 ")" "while they hold the role"
 "$Z" firm credentials corp grant ken drive:design read --expires 3s > /dev/null
 cwait_for "credentials revoked ken drive:design by office (the grant expired)" 30 && pass "an expired grant is revoked" || fail "an expired grant is revoked" "$(cjournal | grep credentials | tail -5)"
+# Renewal: asking again at the level held, once the grant nears its expiry.
+"$Z" firm credentials corp grant ken drive:research read --expires 1h > /dev/null
+expect "a grant far from its expiry isn't renewed yet" "$("$Z" exec "$ckenl" -- office credentials_request '{"resource": "drive:research", "level": "read", "reason": "still needed"}' 2>&1)" "renew it from"
+"$Z" firm credentials corp grant ken drive:product read --expires 50s > /dev/null
+"$Z" exec "$ckenl" -- office credentials_request '{"resource": "drive:product", "level": "read", "reason": "still reading the brief"}' > /dev/null 2>&1
+cwait_for "credentials p-[0-9]* granted drive:product by sec-1" 90 && pass "near its expiry, asking again renews it" || fail "near its expiry, asking again renews it" "$(cjournal | grep credentials | tail -5)"
+expect "the decider sees a renewal" "$("$Z" --json firm journal corp | python3 -c '
+import sys, json
+for l in sys.stdin:
+    e = json.loads(l)
+    r = e.get("request") or {}
+    if e.get("type") == "credentials" and e.get("event") == "requested" and r.get("resource") == "drive:product":
+        print("renewal" if r.get("renews") else "new")')" "renewal"
 cwait_for "left grace" 60 && pass "the CEO lets the hire go" || fail "the CEO lets the hire go" "$(cjournal | tail -5)"
 returned=$(cjournal | grep "left grace" | sed 's/.*returned //')
 [ "${returned:-0}" -gt 0 ] && pass "unspent budget returns to the manager ($returned)" || fail "unspent budget returns to the manager" "returned $returned"
@@ -650,6 +672,19 @@ expect "the officer was hired before the engineer" "$("$Z" --json firm journal f
 import sys, json
 names = [json.loads(l)["worker"]["name"] for l in sys.stdin if json.loads(l).get("type") == "hired"]
 print(names)')" "['otto', 'ada']"
+# A turn past budget.turn_timeout is stopped and charged; the next wake
+# says what it was on.
+"$Z" mail send first --to ceo --kind fyi --subject "Stuck" --body "This takes forever." > /dev/null
+fwait_for "turn ceo timed_out" 60 && pass "a turn past its time is stopped" || fail "a turn past its time is stopped" "$(fjournal | grep 'turn ceo' | tail -4)"
+"$Z" mail send first --to ceo --kind fyi --subject "Next" --body "Carry on." > /dev/null
+i=0; while [ $i -lt 60 ] && ! "$Z" exec "$fceo" -- cat /work/timeout.txt 2>/dev/null | grep -q "timeout note"; do sleep 1; i=$((i + 1)); done
+expect "the next wake says what the stopped turn was on" "$("$Z" exec "$fceo" -- cat /work/timeout.txt 2>&1)" "timeout note"
+expect "the timed-out turn is charged" "$("$Z" --json firm journal first | python3 -c '
+import sys, json
+for l in sys.stdin:
+    e = json.loads(l)
+    if e.get("type") == "turn" and e.get("event") == "timed_out":
+        print("charged" if e.get("tokens", 0) > 0 else "free")')" "charged"
 "$Z" firm down first > /dev/null
 
 echo "== scenarios"
@@ -786,9 +821,10 @@ echo "apps=$(curl -s -m 5 http://apps.lab.internal/)"' 2>&1)
     expect "git read: clone" "$out" "cloned"
     expect "git read: no push" "$out" "you can read this repository, not push to it"
     "$Z" firm credentials lab grant ken git write > /dev/null
-    out=$("$Z" exec "$ken" -- sh -c 'cd /tmp/p && git push -q origin ken/x 2>&1; echo branch=$?; git switch -q main && echo y > y && git add y && git commit -qm y && git push -q origin main 2>&1; echo main=$?' 2>&1)
+    out=$("$Z" exec "$ken" -- sh -c 'cd /tmp/p && git push -q origin ken/x 2>&1; echo branch=$?; git switch -q main && echo y > y && git add y && git commit -qm y && git push -q origin main 2>&1; echo main=$?; git push -q origin HEAD:refs/heads/main/x 2>&1; echo under=$?' 2>&1)
     expect "git write: push a branch" "$out" "branch=0"
     expect "git write: not main" "$out" "refs/heads/main needs admin"
+    expect "git write: nor a branch under main/" "$out" "refs/heads/main/x needs admin"
     "$Z" firm credentials lab grant ken cluster read > /dev/null
     for i in $(seq 30); do "$Z" exec "$ken" -- sh -c 'test -s ~/.kube/config' 2>/dev/null && break; sleep 2; done
     out=$("$Z" exec "$ken" -- sh -c "$ca

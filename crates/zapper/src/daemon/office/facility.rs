@@ -360,14 +360,15 @@ async fn git_request(
         .unwrap_or_else(|_| plain(StatusCode::INTERNAL_SERVER_ERROR, "bad CGI response"))
 }
 
-/// The repository's `pre-receive` hook: below admin, no updates to `main`
-/// or tags (the git handler sets `ZAPPER_GIT_LEVEL` from the pusher's grant).
+/// The repository's `pre-receive` hook: below admin, no updates to `main`,
+/// branches under `main/`, or tags (the git handler sets `ZAPPER_GIT_LEVEL` from the pusher's grant).
 const PRE_RECEIVE: &str = r#"#!/bin/sh
-# Installed by zapper: write may push branches; only admin updates main and tags.
+# Installed by zapper: write may push branches; only admin updates main and tags
+# (and main/..., which would block main).
 [ "$ZAPPER_GIT_LEVEL" = admin ] && exit 0
 while read old new ref; do
     case "$ref" in
-        refs/heads/main|refs/tags/*)
+        refs/heads/main|refs/heads/main/*|refs/tags/*)
             echo "zapper: $REMOTE_USER has write access: push a branch; $ref needs admin (ask with credentials_request)" >&2
             exit 1 ;;
     esac
