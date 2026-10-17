@@ -74,10 +74,11 @@
   .menu .pop { position: absolute; right: 0; top: calc(100% + 6px); background: var(--card); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); min-width: 300px; max-height: 60vh; overflow: auto; padding: 6px; z-index: 30; }
   .menu .pop .item { display:flex; justify-content: space-between; gap: 12px; padding: 7px 10px; border-radius: 8px; cursor: pointer; }
   .menu .pop .item:hover { background: var(--accent-soft); }
-  nav.tabs { display:flex; gap: 4px; padding: 0 20px; }
-  nav.tabs button, nav.tabs a { background: none; border: 0; border-bottom: 2px solid transparent; padding: 8px 12px 10px; cursor: pointer; color: var(--muted); text-decoration: none; display:inline-flex; align-items:center; gap:6px; }
-  nav.tabs button.on { color: var(--text); border-bottom-color: var(--accent); }
-  nav.tabs button:hover, nav.tabs a:hover { color: var(--text); }
+  nav.tabs { display:flex; gap: 2px; padding: 4px 20px 0; }
+  nav.tabs button, nav.tabs a { background: none; border: 0; border-bottom: 3px solid transparent; border-radius: 8px 8px 0 0; padding: 9px 16px 9px; cursor: pointer; color: var(--text); opacity: .72; font: inherit; font-size: 15px; font-weight: 500; text-decoration: none; display:inline-flex; align-items:center; gap:6px; transition: background .15s, opacity .15s; }
+  nav.tabs button.on { opacity: 1; color: var(--accent-ink); border-bottom-color: var(--accent); background: var(--accent-soft); font-weight: 600; }
+  nav.tabs button:hover, nav.tabs a:hover { opacity: 1; background: color-mix(in srgb, var(--line) 60%, transparent); }
+  nav.tabs button.on:hover { background: var(--accent-soft); }
   nav.tabs .right { margin-left: auto; }
   .replaybar { display:flex; align-items:center; gap: 10px; padding: 8px 24px; background: var(--accent-soft); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
   .replaybar .close { margin-left: 4px; font-size: 16px; line-height: 1; padding: 4px 10px; }
