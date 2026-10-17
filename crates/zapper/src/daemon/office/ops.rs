@@ -139,10 +139,11 @@ pub fn tools(officer: bool) -> Vec<Value> {
             tool("access_rules", "Standing approvals made so far, with how many requests each allowed.", json!({}), &[]),
             tool(
                 "access_decide",
-                "Decide an access request. scope once (one connection or request), worker or role (standing). Narrow with methods and path; give an expiry.",
+                "Decide an access request. scope once (one connection or request), worker or role (standing). Give an expiry. methods or path make the proxy inspect TLS with the session's CA, which only worker VMs trust: for the cluster, and for CONNECT tunnels, pass methods: [] to let the connection through untouched.",
                 json!({
                     "request": s("r-4"), "allow": { "type": "boolean" }, "scope": { "type": "string", "enum": ["once", "worker", "role"] }, "reason": s("One line; the worker and the board read it"),
-                    "methods": { "type": "array", "items": { "type": "string" } }, "path": s("URL path glob"), "expires_in": s("e.g. 4h"),
+                    "methods": { "type": "array", "items": { "type": "string" }, "description": "HTTP methods to allow, e.g. [\"GET\"] (inspects TLS). [] approves the host and port without inspection. Omitted: the request's own methods. Never [\"CONNECT\"]." },
+                    "path": s("URL path glob (inspects TLS)"), "expires_in": s("e.g. 4h"),
                 }),
                 &["request", "allow", "scope", "reason"],
             ),

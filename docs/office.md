@@ -305,6 +305,8 @@ When something looks wrong the officer can revoke a standing approval, deny a ho
 3. The officer researches if needed (opens the site, checks what it is) and calls `access_decide(request, allow, scope, reason)`, where `scope` is:
    - `once`: this request only;
    - `worker` or `role`: a **standing approval**, a rule at the worker's or role's layer, optionally narrowed to methods and paths and optionally with an expiry.
+
+   How the approval is written decides how the proxy handles the traffic. A host and port alone (`methods: []`) passes TLS through untouched, so the client sees the site's real certificate. `methods` or `path` make the proxy inspect the connection, re-signing it with the session's CA, which only worker VMs trust. So the firm's cluster (its pods and image pulls) gets host-and-port approvals only. The session CA is never handed out, and `methods: ["CONNECT"]` is never right: it turns on inspection and then matches none of the requests inside the tunnel. The security officers' skill says so.
 4. The daemon applies it with the officer's name and reason, emits an event, and mails the worker the decision in the request's thread. That mail wakes the worker, which retries. Standing approvals belong to the running firm and end with it; the board sees them in the UI and can revoke them, or promote one into the running config, where `zapper config save` keeps it.
 
 ### Limits that hold whatever an officer decides
