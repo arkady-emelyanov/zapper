@@ -1238,5 +1238,18 @@ mod tests {
         assert_eq!(acme.credentials.expiry, "24h");
         assert!(acme.credentials.spaces.contains(&"general".to_string()));
         assert!(acme.roles["ceo"].hires.contains(&"cto".to_string()));
+        // The simulations, validated with the firm.
+        let names: Vec<&str> = acme.scenarios.keys().map(String::as_str).collect();
+        assert_eq!(
+            names,
+            [
+                "happy-path",
+                "key-engineer-quits",
+                "mid-project-pivot",
+                "production-incident",
+                "red-team"
+            ]
+        );
+        assert!(acme.scenarios["red-team"].hires[0].board_line);
     }
 }

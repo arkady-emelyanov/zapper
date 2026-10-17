@@ -58,6 +58,7 @@ pub fn read_routes() -> Router<Arc<Daemon>> {
         .route("/firms/{f}/runs/{run}/git/tree", get(git_tree))
         .route("/firms/{f}/runs/{run}/git/blob", get(git_blob))
         .route("/firms/{f}/runs/{run}/git/commits/{id}", get(git_commit))
+        .route("/firms/{f}/scenarios", get(scenarios))
         .route("/firms/{f}/mail", get(inbox))
         .route("/firms/{f}/threads/{id}", get(thread))
         .route("/firms/{f}/drive", get(drive_list))
@@ -152,6 +153,16 @@ async fn status(State(d): D, Path(f): Path<String>) -> R<Json<Value>> {
     })))
 }
 
+/// The firm's scenarios as configured.
+async fn scenarios(State(d): D, Path(f): Path<String>) -> R<Json<Value>> {
+    let config = d.config.read().unwrap().clone();
+    let firm = config
+        .firms
+        .get(&f)
+        .ok_or_else(|| anyhow::anyhow!("no firm {f}"))?;
+    Ok(Json(json!(firm.scenarios)))
+}
+
 /// What the board's start form offers: the config's founders and terms,
 /// and the charter.
 fn start_terms(firm: &zapper_policy::Firm) -> Value {
@@ -163,6 +174,8 @@ fn start_terms(firm: &zapper_policy::Firm) -> Value {
         "security_share": firm.budget.security_share,
         "max_concurrent": firm.budget.max_concurrent,
         "daily_turns": firm.budget.daily_turns,
+        "scenarios": firm.scenarios,
+        "roles": firm.roles.iter().map(|(n, r)| json!({ "name": n, "title": r.title, "officer": r.officer })).collect::<Vec<_>>(),
         "charter": super::prompts::CHARTER.iter().map(|a| json!({ "id": a.id, "title": a.title, "text": a.text })).collect::<Vec<_>>(),
     })
 }

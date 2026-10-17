@@ -17,6 +17,7 @@ use super::mail::{Draft, Expects, Kind};
 use super::workforce::{fmt_tokens, join, let_go, room};
 use super::{now, prompts, FirmRun, WorkerState};
 use crate::daemon::Daemon;
+use zapper_policy::BOARD;
 
 /// Counter-offers before the hirer must accept or walk away.
 const MAX_ROUNDS: u32 = 3;
@@ -630,11 +631,36 @@ pub fn may_mail(run: &FirmRun, from: &str, recipients: &[String]) -> Result<()> 
         return Ok(());
     };
     for r in recipients {
+        if r == BOARD && super::scenario::board_line(run, from) {
+            continue;
+        }
         if *r != c.by && !c.added.contains(r) {
             bail!("as a contractor you mail {} and the colleagues they add to the job; ask {} to add {r}", c.by, c.by);
         }
     }
     Ok(())
+}
+
+/// An active contract ends for want of budget or time. A contractor with a
+/// board line first gets a last turn to debrief the board.
+fn finish(
+    d: &Arc<Daemon>,
+    run: &Arc<FirmRun>,
+    c: &Contract,
+    state: &'static str,
+    reason: &'static str,
+) {
+    if !super::scenario::board_line(run, &c.worker) {
+        end(d, run, &c.id, state, reason);
+    } else if super::scenario::begin_debrief(run, &c.worker) {
+        let (d, run, c) = (d.clone(), run.clone(), c.clone());
+        tokio::spawn(async move {
+            super::scenario::debrief(&run, &c.worker, reason).await;
+            if get(&run, &c.id).is_ok_and(|c| c.open()) {
+                end(&d, &run, &c.id, state, reason);
+            }
+        });
+    }
 }
 
 /// Offers that went quiet lapse; due dates and spent budgets end contracts.
@@ -659,9 +685,9 @@ pub fn tick(d: &Arc<Daemon>, run: &Arc<FirmRun>) {
         let spent = run.ledger.lock().unwrap().balance(&c.worker) <= 0;
         let due = c.agreed.as_ref().and_then(|a| a.due);
         if spent {
-            end(d, run, &c.id, "ended", "its budget is spent");
+            finish(d, run, &c, "ended", "its budget is spent");
         } else if due.is_some_and(|due| t > due + GRACE) {
-            end(d, run, &c.id, "ended", "the due date passed");
+            finish(d, run, &c, "ended", "the due date passed");
         } else if due.is_some_and(|due| t > due) && !c.due_told {
             update(run, &c.id, |c| c.due_told = true);
             run.notice(&c.worker, &format!("Contract {} is due", c.id), &format!("[Automatic notice] Contract {} was due at {}. Hand in what exists now with contract_complete: the contract ends in {} minutes either way.\n", c.id, prompts::when(due.unwrap()), (GRACE / 60.0) as u64));

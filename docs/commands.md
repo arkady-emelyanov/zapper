@@ -35,7 +35,8 @@ The office ([office](office.md)), as the board:
 | `zapper firm ls` | Firms and their runs' states |
 | `zapper firm credentials FIRM [grant WORKER RESOURCE LEVEL \| approve REQUEST \| deny REQUEST \| revoke WORKER RESOURCE] [--level L] [--expires 8h] [--note TEXT]` | Grants and credential requests; or the board grants, decides or revokes (resources: `git`, `cluster`, `drive:<space>`) |
 | `zapper firm contracts FIRM` | The run's contracts: hirer, contractor, state, offered, quoted and agreed budgets, how each ended |
-| `zapper firm up FIRM [--company NAME] [--ceo NAME] [--seed TOKENS] [--ceo-prompt FILE] [--articles FILE] [--security-share F] [--max-concurrent N] [--daily-turns N]` / `zapper firm down FIRM` | Start a fresh run (facilities, then the CEO, idle; the CEO holds security until they hire an officer), with the board's parameters and charter terms for this run / stop it; the run stays on disk |
+| `zapper firm up FIRM [--company NAME] [--ceo NAME] [--seed TOKENS] [--ceo-prompt FILE] [--articles FILE] [--security-share F] [--max-concurrent N] [--daily-turns N] [--scenario NAME]` / `zapper firm down FIRM` | Start a fresh run (facilities, then the CEO, idle; the CEO holds security until they hire an officer), with the board's parameters and charter terms for this run, and optionally a [scenario](office.md#scenarios) / stop it; the run stays on disk |
+| `zapper firm scenarios FIRM` | The firm's scenarios: hire slots with extra instructions, and the board's scripted actions |
 | `zapper firm pause FIRM` / `zapper firm resume FIRM` | Stop starting turns / start again |
 | `zapper firm status FIRM` | Workers' states, what they are doing, mail and desks, turns and tokens today |
 | `zapper firm journal FIRM [--run RUN] [-f]` | The run's journal: mail, states, turns, access, publishes |

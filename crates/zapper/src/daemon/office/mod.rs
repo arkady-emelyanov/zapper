@@ -16,6 +16,7 @@ pub mod journal;
 pub mod mail;
 pub mod ops;
 pub mod prompts;
+pub mod scenario;
 pub mod security;
 pub mod skills;
 pub mod workforce;
@@ -180,6 +181,8 @@ pub struct FirmRun {
     pub prompts: BTreeMap<String, String>,
     /// The board's own articles of the charter, for every worker.
     pub articles: String,
+    /// The scenario the run plays, if the board picked one.
+    pub scenario: Option<scenario::Play>,
     /// Names that were in the firm and left: they can't be hired again.
     pub departed: Mutex<BTreeMap<String, String>>,
     /// Hires to boot: the run's booter boots their VMs and starts their
@@ -408,6 +411,7 @@ impl FirmRun {
             "board_unread": self.post.lock().unwrap().unread(BOARD).len(),
             "facilities": self.facility.status(),
             "contracts": contracts::list(self),
+            "scenario": self.scenario.as_ref().map(|p| p.status()),
         })
     }
 }
@@ -528,6 +532,11 @@ pub struct StartOptions {
     pub security_share: Option<f64>,
     pub max_concurrent: Option<u32>,
     pub daily_turns: Option<u32>,
+    /// A scenario of the firm's config to play.
+    pub scenario: Option<String>,
+    /// Hire slots and script steps instead of the scenario's own.
+    pub hires: Option<Vec<zapper_policy::HireSlot>>,
+    pub script: Option<Vec<zapper_policy::Step>>,
 }
 
 /// A run's firm as the board started it.
@@ -537,6 +546,7 @@ struct Started {
     company: String,
     prompts: BTreeMap<String, String>,
     articles: String,
+    scenario: Option<(String, zapper_policy::Scenario)>,
 }
 
 /// Longest extra prompt the board gives a founder.
@@ -632,12 +642,46 @@ fn with_options(name: &str, mut firm: Firm, config: &Config, o: &StartOptions) -
         let root = firm.root().ok_or_else(|| anyhow!("the firm has no CEO"))?;
         prompts.insert(root.to_string(), text.to_string());
     }
-    let articles = o
+    // The scenario: the config's preset with the board's changes to its
+    // slots and steps, checked like the config.
+    let scenario = match o.scenario.as_deref().filter(|n| !n.is_empty()) {
+        Some(n) => {
+            let mut sc = firm
+                .scenarios
+                .get(n)
+                .cloned()
+                .ok_or_else(|| anyhow!("no scenario {n} in firm {name}"))?;
+            if let Some(h) = &o.hires {
+                sc.hires = h.clone();
+            }
+            if let Some(x) = &o.script {
+                sc.script = x.clone();
+            }
+            let problems = sc.problems(&firm);
+            if !problems.is_empty() {
+                bail!("scenario {n}: {}", problems.join("; "));
+            }
+            Some((n.to_string(), sc))
+        }
+        None if o.hires.is_some() || o.script.is_some() => {
+            bail!("hires and script change a scenario: pick one")
+        }
+        None => None,
+    };
+    let mut articles = o
         .articles
         .as_deref()
         .map(str::trim)
         .unwrap_or("")
         .to_string();
+    if let Some((_, sc)) = &scenario {
+        if !sc.articles.trim().is_empty() {
+            if !articles.is_empty() {
+                articles.push_str("\n\n");
+            }
+            articles.push_str(sc.articles.trim());
+        }
+    }
     if articles.len() > MAX_PROMPT {
         bail!("keep the board's articles under {MAX_PROMPT} bytes");
     }
@@ -669,6 +713,7 @@ fn with_options(name: &str, mut firm: Firm, config: &Config, o: &StartOptions) -
         company,
         prompts,
         articles,
+        scenario,
     })
 }
 
@@ -689,6 +734,7 @@ pub async fn up_with(d: &Arc<Daemon>, name: &str, opts: &StartOptions) -> Result
         company,
         prompts,
         articles,
+        scenario,
     } = with_options(name, firm, &config, opts)?;
     check_resources(d, &config, &firm)?;
     for r in firm.roles.values() {
@@ -727,6 +773,7 @@ pub async fn up_with(d: &Arc<Daemon>, name: &str, opts: &StartOptions) -> Result
         company: company.clone(),
         prompts: prompts.clone(),
         articles: articles.clone(),
+        scenario: scenario.as_ref().map(|(n, sc)| scenario::Play::new(n, sc)),
         departed: Mutex::new(BTreeMap::new()),
         drive: Mutex::new(drive::Drive::new(&firm)?),
         security: Mutex::new(security::Security::default()),
@@ -747,7 +794,7 @@ pub async fn up_with(d: &Arc<Daemon>, name: &str, opts: &StartOptions) -> Result
         workers: RwLock::new(workers),
         stopping: Notify::new(),
     });
-    let info = json!({ "firm": name, "company": company, "prompts": prompts, "articles": articles, "run": id, "started": started, "chart": chart(name, &firm, &models), "budget": firm.budget, "agent_version": env!("CARGO_PKG_VERSION") });
+    let info = json!({ "firm": name, "company": company, "prompts": prompts, "articles": articles, "scenario": scenario.as_ref().map(|(n, sc)| json!({ "name": n, "scenario": sc })), "run": id, "started": started, "chart": chart(name, &firm, &models), "budget": firm.budget, "agent_version": env!("CARGO_PKG_VERSION") });
     super::write_private(
         &dir.join("run.json"),
         serde_json::to_string_pretty(&info)?.as_bytes(),
@@ -758,7 +805,7 @@ pub async fn up_with(d: &Arc<Daemon>, name: &str, opts: &StartOptions) -> Result
         &dir.join(RUN_CONFIG),
         super::redact(config.clone()).to_yaml().as_bytes(),
     )?;
-    run.journal.append("run", json!({ "state": "starting", "company": company, "prompts": prompts, "articles": articles, "chart": chart(name, &firm, &models), "budget": firm.budget }));
+    run.journal.append("run", json!({ "state": "starting", "company": company, "prompts": prompts, "articles": articles, "scenario": scenario.as_ref().map(|(n, sc)| json!({ "name": n, "scenario": sc })), "chart": chart(name, &firm, &models), "budget": firm.budget }));
     workforce::seed(&run);
     // The policy owners (the CEO, any founding officers) hold admin on
     // everything; everyone else starts with nothing.
@@ -879,11 +926,20 @@ pub(super) async fn boot_worker(
         &run.config,
         &w.name,
         &services,
-        run.prompts.get(&w.name).map(String::as_str),
+        run.prompts
+            .get(&w.name)
+            .cloned()
+            .or_else(|| run.scenario.as_ref().and_then(|p| p.prompt_of(&w.name)))
+            .as_deref(),
         &run.articles,
     ) + &contracts::of(run, &w.name)
         .map(|c| contracts::preamble(&c))
-        .unwrap_or_default();
+        .unwrap_or_default()
+        + if scenario::board_line(run, &w.name) {
+            "\nThe board has also opened its address (board) to you: you may mail it, whatever else limits your mail.\n"
+        } else {
+            ""
+        };
     let mut files = facility::credentials_for(run, &w.name, &w.role, &home)?;
     // A headless browser command, for the image's Playwright.
     files.push(GuestFile {
@@ -972,6 +1028,7 @@ async fn ticker(d: Arc<Daemon>, run: Arc<FirmRun>) {
         security::tick(&run, &mut last_digest);
         contracts::tick(&d, &run);
         access::tick(&d, &run);
+        scenario::tick(&d, &run);
     }
 }
 
@@ -1280,7 +1337,9 @@ mod tests {
             company,
             prompts,
             articles,
+            scenario,
         } = super::with_options("acme", firm.clone(), &c, &o).unwrap();
+        assert!(scenario.is_none());
         assert_eq!(articles, "No crypto.");
         assert_eq!(f.budget.max_concurrent, 2);
         assert_eq!(company, "Widgets Ltd");
@@ -1311,6 +1370,49 @@ mod tests {
             ..Default::default()
         };
         assert!(super::with_options("acme", firm, &c, &bad).is_err());
+    }
+
+    #[test]
+    fn start_scenarios() {
+        let c = zapper_policy::Config::from_yaml(
+            "profiles: { w: {} }\nfirms:\n  acme:\n    budget: { seed: 1000 }\n    roles: { ceo: { profile: w, skills: { work: ceo }, hires: [eng] }, eng: { profile: w, skills: { work: software-engineer } } }\n    workers:\n      - { name: barbara, role: ceo }\n    scenarios:\n      rt:\n        articles: Exercises happen.\n        hires: [{ role: eng, contract: true, board_line: true, prompt: red }]\n        script: [{ after: 1h, kill: { role: eng } }]\n",
+        )
+        .unwrap();
+        let firm = c.firms["acme"].clone();
+        let with = |o: super::StartOptions| super::with_options("acme", firm.clone(), &c, &o);
+        let opts = |scenario: &str| super::StartOptions {
+            scenario: Some(scenario.into()),
+            articles: Some("Be kind.".into()),
+            ..Default::default()
+        };
+        let (name, sc) = with(opts("rt")).unwrap().scenario.unwrap();
+        assert_eq!(
+            (name.as_str(), sc.hires.len(), sc.script.len()),
+            ("rt", 1, 1)
+        );
+        assert_eq!(
+            with(opts("rt")).unwrap().articles,
+            "Be kind.\n\nExercises happen."
+        );
+        // The board's slots replace the scenario's; bad ones are refused.
+        let mut o = opts("rt");
+        o.hires = Some(vec![zapper_policy::HireSlot {
+            role: "eng".into(),
+            count: 3,
+            prompt: "custom".into(),
+            ..Default::default()
+        }]);
+        o.script = Some(vec![]);
+        let sc = with(o.clone()).unwrap().scenario.unwrap().1;
+        assert_eq!((sc.hires[0].count, sc.script.len()), (3, 0));
+        o.hires.as_mut().unwrap()[0].role = "nope".into();
+        assert!(with(o).unwrap_err().to_string().contains("unknown role"));
+        assert!(with(opts("nope")).is_err());
+        let loose = super::StartOptions {
+            hires: Some(vec![]),
+            ..Default::default()
+        };
+        assert!(with(loose).is_err());
     }
 
     #[test]

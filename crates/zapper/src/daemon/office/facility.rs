@@ -506,7 +506,7 @@ pub async fn cluster_access(
 }
 
 /// Runs a shell command as root in a session's VM; its stdout.
-async fn sh(s: &Session, script: &str) -> Result<(i32, String)> {
+pub(super) async fn sh(s: &Session, script: &str) -> Result<(i32, String)> {
     let mut out = Vec::new();
     let (code, err) = drive::guest_command(
         s,
@@ -932,6 +932,30 @@ pub fn credentials_for(
         });
     }
     Ok(files)
+}
+
+/// Breaks the cluster on purpose, for a scenario: `prod` deletes the
+/// workloads of namespace prod (redeploying fixes it), `api` freezes the
+/// API server (resume it with `zapper exec --system`: kill -CONT its
+/// process). Its output.
+pub async fn break_cluster(run: &FirmRun, mode: &str) -> Result<String> {
+    let s = run
+        .facility
+        .cluster
+        .lock()
+        .unwrap()
+        .clone()
+        .ok_or_else(|| anyhow!("the cluster isn't running"))?;
+    let script = match mode {
+        "prod" => "k3s kubectl -n prod delete deploy,sts,ds,job,cronjob,ingress,svc --all --ignore-not-found 2>&1",
+        "api" => "for d in /proc/[0-9]*; do tr '\\0' ' ' < $d/cmdline 2>/dev/null | grep -q '^k3s server' && kill -STOP ${d#/proc/}; done; echo frozen",
+        other => bail!("break_cluster mode {other}: prod or api"),
+    };
+    let (code, out) = sh(&s, script).await?;
+    if code != 0 {
+        bail!("breaking the cluster: {out}");
+    }
+    Ok(out.trim().chars().take(500).collect())
 }
 
 #[cfg(test)]

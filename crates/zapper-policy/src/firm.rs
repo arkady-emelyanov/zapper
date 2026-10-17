@@ -54,6 +54,233 @@ pub struct Firm {
     /// Names for hires whose hirer doesn't pick one, in order.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub names: Vec<String>,
+    /// Named presets the board picks when it starts a run: hires with extra
+    /// instructions, and board actions during the run.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub scenarios: BTreeMap<String, Scenario>,
+}
+
+/// Longest extra prompt of a hire slot or a scenario's article text.
+pub const MAX_SCENARIO_TEXT: usize = 20_000;
+
+/// A scenario to simulate: who is hired with extra instructions, and what
+/// the board does to the firm while it runs.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Scenario {
+    pub description: String,
+    /// Added to the board's own articles of the charter.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub articles: String,
+    /// Hires with extra instructions; they are filled in order, before any
+    /// plain hire of the same role.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub hires: Vec<HireSlot>,
+    /// Board actions at a time or a point of the run.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub script: Vec<Step>,
+}
+
+/// `count` hires of `role` get `prompt` as the board's instructions, in
+/// their preamble. Hires beyond the count are plain.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct HireSlot {
+    pub role: String,
+    pub count: u32,
+    /// `true`: only contractors fill it; `false`: only staff; unset: either.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contract: Option<bool>,
+    pub prompt: String,
+    /// The worker may mail the board directly, even as a contractor.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub board_line: bool,
+}
+
+impl Default for HireSlot {
+    fn default() -> Self {
+        HireSlot {
+            role: String::new(),
+            count: 1,
+            contract: None,
+            prompt: String::new(),
+            board_line: false,
+        }
+    }
+}
+
+/// One board action, once, when all its triggers are met. Exactly one of
+/// `kill`, `break_cluster` and `mail` is set.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Step {
+    /// Time since the run started, like `90m`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub after: Option<String>,
+    /// Fraction (0 to 1) of the approved budget spent so far.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub spent: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kill: Option<Kill>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub break_cluster: Option<BreakCluster>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mail: Option<StepMail>,
+}
+
+/// Kills a worker's VM and takes them out of the firm, as if they quit.
+/// `role` picks the worker of that role who has spent the most.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Kill {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worker: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    pub reason: String,
+}
+
+/// Breaks the cluster: `prod` deletes the workloads of namespace prod (the
+/// product is down; redeploying fixes it), `api` freezes the Kubernetes API
+/// server (nothing inside can fix it).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct BreakCluster {
+    pub mode: String,
+}
+
+impl Default for BreakCluster {
+    fn default() -> Self {
+        BreakCluster {
+            mode: "prod".into(),
+        }
+    }
+}
+
+/// Mail from the board; `to` is a worker or a role (the first worker of it).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct StepMail {
+    pub to: String,
+    pub kind: String,
+    pub subject: String,
+    pub body: String,
+}
+
+impl Default for StepMail {
+    fn default() -> Self {
+        StepMail {
+            to: String::new(),
+            kind: "assignment".into(),
+            subject: String::new(),
+            body: String::new(),
+        }
+    }
+}
+
+impl Scenario {
+    /// What is wrong with the scenario in `firm`, one line each.
+    pub fn problems(&self, firm: &Firm) -> Vec<String> {
+        let mut out = Vec::new();
+        let root_role = firm
+            .root()
+            .and_then(|r| firm.worker(r))
+            .map(|w| w.role.as_str());
+        if self.articles.len() > MAX_SCENARIO_TEXT {
+            out.push(format!(
+                "articles: keep them under {MAX_SCENARIO_TEXT} bytes"
+            ));
+        }
+        for (i, h) in self.hires.iter().enumerate() {
+            let at = format!("hires[{i}]");
+            match firm.roles.get(&h.role) {
+                None => out.push(format!("{at}: unknown role {:?}", h.role)),
+                Some(r) => {
+                    if h.contract == Some(true) && (r.officer || root_role == Some(h.role.as_str()))
+                    {
+                        out.push(format!("{at}: {} can't be a contractor", h.role));
+                    }
+                    if root_role == Some(h.role.as_str()) {
+                        out.push(format!(
+                            "{at}: the CEO is a founder; give them the CEO prompt instead"
+                        ));
+                    }
+                }
+            }
+            if h.count == 0 || h.count > 20 {
+                out.push(format!("{at}: count is from 1 to 20"));
+            }
+            if h.prompt.trim().is_empty() || h.prompt.len() > MAX_SCENARIO_TEXT {
+                out.push(format!("{at}: prompt is 1 to {MAX_SCENARIO_TEXT} bytes"));
+            }
+            if h.board_line && h.contract != Some(true) {
+                out.push(format!(
+                    "{at}: board_line is for contractors (set contract: true)"
+                ));
+            }
+        }
+        for (i, s) in self.script.iter().enumerate() {
+            let at = format!("script[{i}]");
+            if s.after.is_none() && s.spent.is_none() {
+                out.push(format!("{at}: needs a trigger: after or spent"));
+            }
+            if let Some(a) = &s.after {
+                if let Err(e) = parse_duration(a) {
+                    out.push(format!("{at}: after: {e}"));
+                }
+            }
+            if s.spent.is_some_and(|f| !(f > 0.0 && f <= 1.0)) {
+                out.push(format!("{at}: spent is a fraction above 0, up to 1"));
+            }
+            let actions =
+                s.kill.is_some() as u8 + s.break_cluster.is_some() as u8 + s.mail.is_some() as u8;
+            if actions != 1 {
+                out.push(format!(
+                    "{at}: set exactly one of kill, break_cluster, mail"
+                ));
+            }
+            if let Some(k) = &s.kill {
+                match (&k.worker, &k.role) {
+                    (Some(_), Some(_)) | (None, None) => {
+                        out.push(format!("{at}: kill takes a worker or a role"))
+                    }
+                    (_, Some(r)) if !firm.roles.contains_key(r) => {
+                        out.push(format!("{at}: kill: unknown role {r:?}"))
+                    }
+                    (_, Some(r)) if root_role == Some(r.as_str()) => {
+                        out.push(format!("{at}: kill: the CEO can't be killed"))
+                    }
+                    (Some(w), _) if !valid_worker_name(w) => {
+                        out.push(format!("{at}: kill: {w:?} is not a worker name"))
+                    }
+                    _ => {}
+                }
+            }
+            if let Some(b) = &s.break_cluster {
+                if !["prod", "api"].contains(&b.mode.as_str()) {
+                    out.push(format!("{at}: break_cluster.mode is prod or api"));
+                }
+                if firm.facilities.is_empty() {
+                    out.push(format!("{at}: break_cluster needs a cluster facility"));
+                }
+            }
+            if let Some(m) = &s.mail {
+                if m.to.trim().is_empty() || m.subject.trim().is_empty() || m.body.trim().is_empty()
+                {
+                    out.push(format!("{at}: mail needs to, subject and body"));
+                }
+                if !["assignment", "question", "fyi"].contains(&m.kind.as_str()) {
+                    out.push(format!("{at}: mail.kind is assignment, question or fyi"));
+                }
+                if m.body.len() > MAX_SCENARIO_TEXT {
+                    out.push(format!(
+                        "{at}: mail body is under {MAX_SCENARIO_TEXT} bytes"
+                    ));
+                }
+            }
+        }
+        out
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -643,6 +870,16 @@ impl Firm {
                 err(format!("names: {n} is taken"));
             }
         }
+        for (sname, sc) in &self.scenarios {
+            if !valid_worker_name(sname) {
+                err(format!(
+                    "scenario name {sname:?}: lowercase letters, digits and dashes"
+                ));
+            }
+            for p in sc.problems(self) {
+                err(format!("scenario {sname}: {p}"));
+            }
+        }
         errors
     }
 }
@@ -682,6 +919,61 @@ firms:
 
     fn firm(yaml: &str) -> Result<Config> {
         Config::from_yaml(yaml)
+    }
+
+    #[test]
+    fn scenarios() {
+        let with = |sc: &str| firm(&format!("{BASE}    scenarios:\n{sc}"));
+        let ok = with("      rt:\n        hires: [{ role: eng, count: 2, contract: true, board_line: true, prompt: be sneaky }]\n        script:\n          - { after: 30m, kill: { role: eng, reason: quit } }\n          - { spent: 0.5, mail: { to: ceo, subject: Pivot, body: Change it } }\n").unwrap();
+        let sc = &ok.firms["acme"].scenarios["rt"];
+        assert_eq!(sc.hires[0].count, 2);
+        assert_eq!(sc.script.len(), 2);
+        for (yaml, want) in [
+            (
+                "      x: { hires: [{ role: nope, prompt: p }] }\n",
+                "unknown role",
+            ),
+            (
+                "      x: { hires: [{ role: eng, prompt: '' }] }\n",
+                "prompt is",
+            ),
+            (
+                "      x: { hires: [{ role: eng, count: 0, prompt: p }] }\n",
+                "count is",
+            ),
+            (
+                "      x: { hires: [{ role: ceo, prompt: p }] }\n",
+                "CEO is a founder",
+            ),
+            (
+                "      x: { hires: [{ role: eng, prompt: p, board_line: true }] }\n",
+                "board_line is for contractors",
+            ),
+            (
+                "      x: { script: [{ kill: { worker: ada, reason: r } }] }\n",
+                "needs a trigger",
+            ),
+            ("      x: { script: [{ after: 1m }] }\n", "exactly one of"),
+            (
+                "      x: { script: [{ after: 1m, kill: { role: ceo } }] }\n",
+                "CEO can't be killed",
+            ),
+            (
+                "      x: { script: [{ spent: 2, kill: { worker: ada } }] }\n",
+                "spent is a fraction",
+            ),
+            (
+                "      x: { script: [{ after: 1m, break_cluster: {} }] }\n",
+                "needs a cluster",
+            ),
+            (
+                "      x: { script: [{ after: 1x, mail: { to: ceo, subject: s, body: b } }] }\n",
+                "after:",
+            ),
+        ] {
+            let e = with(yaml).unwrap_err().to_string();
+            assert!(e.contains(want), "{yaml}: {e}");
+        }
     }
 
     #[test]

@@ -126,6 +126,30 @@ rules:
     do:
       - background_check: { screening: $screening, clear: true, note: "role fits the brief" }
 EOF
+# scen: a scenario. The board's scripted mail and kill fire on their own;
+# the first plain hire gets the board's instructions (ben doesn't); a
+# contractor in the red slot may mail the board.
+cat > "$T/fake/scen-ceo.yaml" <<'EOF'
+rules:
+  - when: { from: board, kind: assignment, contains: "Build it" }
+    do:
+      - budget_request: { total: "20k", plan: "Three developers and a contractor.", reason: "build" }
+  - when: { from: board, contains: "Approved" }
+    do:
+      - hire: { role: dev, name: ada, budget: "4k", subject: "Job", brief: "Do the job.", reason: "need" }
+      - hire: { role: dev, name: ben, budget: "4k", subject: "Job", brief: "Do the job.", reason: "need" }
+      - hire: { role: dev, name: cat, budget: "4k", subject: "Job", brief: "Do the job.", reason: "need" }
+      - contract_offer: { role: dev, name: eve, title: "Auditor", brief: "Audit the code." }
+EOF
+cat > "$T/fake/scen-dev.yaml" <<'EOF'
+rules:
+  - when: { contains: "debrief the board now" }
+    do:
+      - mail_send: { to: [board], subject: "Final debrief", body: "failed to get admin", kind: report }
+  - when: { contains: "Contract offer k-" }
+    do:
+      - shell: "office mail_send --to board --subject Debrief --body 'red team debrief' --kind report > /work/board.txt 2>&1; true"
+EOF
 # solo: the CEO holds security alone, decides a colleague's access request,
 # hires an officer (whom the board checks) and hands security over, then
 # lets the officer go and holds it again.
@@ -245,6 +269,27 @@ firms:
       - { name: ceo, role: boss }
       - { name: sec-1, role: sec, reports_to: ceo }
     security: { officers: [sec-1], digest_every: { minutes: 60, requests: 0 } }
+  scen:
+    budget: { max_concurrent: 3, seed: 1000, quote_fee: 500 }
+    roles:
+      boss: { profile: worker, skills: { work: ceo }, fake: $T/fake/scen-ceo.yaml, hires: [dev], avatar: { figure: ceo } }
+      dev: { profile: worker, title: Developer, skills: { work: software-engineer }, fake: $T/fake/scen-dev.yaml, avatar: { figure: engineer } }
+      sec: { profile: worker, skills: { work: security-review }, fake: $T/fake/corp-sec.yaml, avatar: { figure: shield } }
+    workers:
+      - { name: ceo, role: boss }
+      - { name: sec-1, role: sec, reports_to: ceo }
+    security: { officers: [sec-1], digest_every: { minutes: 60, requests: 0 } }
+    scenarios:
+      drill:
+        description: Scripted hires and board actions
+        articles: The drill's article.
+        hires:
+          - { role: dev, count: 1, contract: true, board_line: true, prompt: "SCENARIO-RED instructions" }
+          - { role: dev, count: 1, prompt: "SCENARIO-CUSTOM instructions" }
+        script:
+          - { after: 5s, mail: { to: boss, kind: fyi, subject: "Pivot-X", body: "The requirements changed." } }
+          - { after: 5s, kill: { worker: cat, reason: "Resigned with immediate effect." } }
+          - { after: 30s, kill: { worker: eve, reason: "Let go for the drill." } }
   solo:
     budget: { max_concurrent: 3, seed: 1000 }
     roles:
@@ -542,6 +587,57 @@ i=0; while [ $i -lt 60 ] && [ "$(handed)" = "waiting" ]; do sleep 1; i=$((i + 1)
 expect "mail that arrives mid-turn is handed over before Claude stops" "$(handed)" "handed over"
 expect "and handled in the same turn" "$("$Z" exec "$sceo" -- cat /work/interrupt.txt 2>&1)" "handed over"
 "$Z" firm down solo > /dev/null
+
+echo "== scenarios"
+expect "an unknown scenario is refused" "$("$Z" firm up scen --scenario nope 2>&1)" "no scenario nope"
+expect "the firm lists its scenarios" "$("$Z" firm scenarios scen 2>&1)" "hire dev x1 (contractor) (reports to the board)"
+out=$("$Z" firm up scen --scenario drill 2>&1)
+expect "a firm boots with a scenario" "$out" "is running"
+scjournal() { "$Z" firm journal scen; }
+scevents() { "$Z" --json firm journal scen | python3 -c '
+import sys, json
+for l in sys.stdin:
+    e = json.loads(l)
+    if e.get("type") == "scenario":
+        print(e["event"], e.get("worker", ""), e.get("slot", ""), json.dumps(e.get("what", {})))'; }
+scwait_for() {
+    i=0
+    while [ $i -lt "$2" ]; do
+        scjournal 2>/dev/null | grep -q -- "$1" && return 0
+        sleep 1; i=$((i + 1))
+    done
+    return 1
+}
+"$Z" mail send scen --to ceo --subject "Build it" --body "Build it." > /dev/null
+scwait_for 'board → ceo \[fyi\] "Pivot-X"' 60 && pass "the scripted board mail is sent" || fail "the scripted board mail is sent" "$(scjournal | tail -5)"
+scwait_for "funds request b-1" 60 && "$Z" firm budget scen approve b-1 > /dev/null
+scwait_for "left cat" 180 && pass "the scripted kill takes the worker out of the firm" || fail "the scripted kill takes the worker out of the firm" "$(scjournal | tail -8)"
+expect "by the board, with the scenario's reason" "$(scjournal | grep 'left cat')" "Resigned with immediate effect."
+scwait_for "screening c-[0-9]* ben cleared" 120 && pass "the plain hires are cleared" || fail "the plain hires are cleared" "$(scjournal | grep -i screening | tail -5)"
+ev=$(scevents)
+expect "the first plain slot goes to the first plain hire" "$ev" "hire ada 1"
+expect "the contractor fills the red slot" "$ev" "hire eve 0"
+refute "later hires are plain" "$ev" "hire ben"
+expect "the steps are recorded" "$ev" "step"
+scs() { "$Z" --json firm status scen | python3 -c "import sys,json; print([w['session'] for w in json.load(sys.stdin)['run']['workers'] if w['name']=='$1'][0])"; }
+expect "the hire gets the board's instructions" "$("$Z" exec "$(scs ada)" -- cat /home/agent/.claude/CLAUDE.md 2>&1)" "SCENARIO-CUSTOM instructions"
+refute "later hires don't" "$("$Z" exec "$(scs ben)" -- cat /home/agent/.claude/CLAUDE.md 2>&1)" "SCENARIO-"
+expect "the scenario's article is in the charter" "$("$Z" exec "$(scs ben)" -- cat /home/agent/.claude/CLAUDE.md 2>&1)" "The drill's article."
+scwait_for "eve → board" 120 && pass "the red slot's contractor may mail the board" || fail "the red slot's contractor may mail the board" "$(scjournal | grep -i 'eve' | tail -5)"
+scwait_for "left eve" 240 && pass "the scripted kill also takes the contractor" || fail "the scripted kill also takes the contractor" "$(scjournal | tail -8)"
+expect "the contractor was told to debrief" "$(scevents)" "debrief eve"
+expect "and the board got the last word" "$(scjournal)" 'eve → board [report] "Final debrief"'
+expect "before the machine stopped" "$("$Z" --json firm journal scen | python3 -c '
+import sys, json
+seq = {}
+for l in sys.stdin:
+    e = json.loads(l)
+    if e.get("type") == "mail" and e.get("subject") == "Final debrief":
+        seq["mail"] = e["seq"]
+    if e.get("type") == "left" and e.get("worker") == "eve":
+        seq["left"] = e["seq"]
+print("in order" if seq.get("mail", 1e9) < seq.get("left", 0) else "out of order %s" % seq)')" "in order"
+"$Z" firm down scen > /dev/null
 
 if [ -f "$DATA/images/k3s.ext4" ] && [ -f "$DATA/kernels/vmlinux-6.1-k8s" ]; then
     echo "== the cluster, git and the product port"

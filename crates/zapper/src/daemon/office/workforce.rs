@@ -74,6 +74,20 @@ impl Ledger {
         self.balance.get(w).copied().unwrap_or(0)
     }
 
+    /// Tokens the worker has spent in turns.
+    pub fn spent_by(&self, w: &str) -> u64 {
+        self.spent.get(w).copied().unwrap_or(0)
+    }
+
+    /// The share of the approved budget spent so far; 0 before the board
+    /// approves one.
+    pub fn progress(&self) -> f64 {
+        if self.approved == 0 {
+            return 0.0;
+        }
+        self.spent.values().sum::<u64>() as f64 / self.approved as f64
+    }
+
     /// Moves `tokens` from `from` (the board if `None`) to `to`.
     pub(super) fn transfer(&mut self, from: Option<&str>, to: &str, tokens: u64) {
         if let Some(f) = from {
@@ -725,6 +739,8 @@ pub(super) fn join(
         c.workers.push(w.clone());
     }
     let firm = run.chart();
+    // A scenario's slot for this hire gives them the board's instructions.
+    super::scenario::claim(run, role, contract.is_some(), &name);
     let rt = Arc::new(WorkerRt::new(&firm, &w));
     run.workers
         .write()
@@ -779,6 +795,9 @@ pub async fn release(
     }
     if reason.trim().is_empty() {
         bail!("give a reason");
+    }
+    if super::scenario::begin_debrief(run, worker) {
+        super::scenario::debrief(run, worker, reason.trim()).await;
     }
     Ok(let_go(d, run, by, worker, reason, true))
 }

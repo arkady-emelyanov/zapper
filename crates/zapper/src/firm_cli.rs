@@ -44,6 +44,14 @@ pub enum FirmCmd {
         /// Turns the whole firm may take per day; 0 is no limit.
         #[arg(long)]
         daily_turns: Option<u32>,
+        /// A scenario of the firm's config to play: hires with extra
+        /// instructions and board actions (`zapper firm scenarios`).
+        #[arg(long)]
+        scenario: Option<String>,
+    },
+    /// The firm's scenarios, with their hire slots and script.
+    Scenarios {
+        firm: String,
     },
     /// Stop the run; its journal, transcripts and shared drive stay on disk.
     Down {
@@ -408,6 +416,33 @@ pub fn journal_line(e: &Value) -> String {
                 e["reason"].as_str().unwrap_or("")
             ),
         },
+        "scenario" => match e["event"].as_str().unwrap_or("") {
+            "hire" => format!(
+                "scenario {}: {} ({}) fills hire slot {}{}",
+                s(&e["scenario"]),
+                s(&e["worker"]),
+                s(&e["role"]),
+                e["slot"],
+                if e["board_line"] == json!(true) {
+                    ", may mail the board"
+                } else {
+                    ""
+                }
+            ),
+            "step" => format!(
+                "scenario {}: step {} played: {}",
+                s(&e["scenario"]),
+                e["index"],
+                e["what"]
+            ),
+            "failed" => format!(
+                "scenario {}: step {} failed: {}",
+                s(&e["scenario"]),
+                e["index"],
+                s(&e["error"])
+            ),
+            other => format!("scenario {other} {e}"),
+        },
         "left" => format!(
             "left {}, let go by {} ({}); to {}, returned {}",
             s(&e["worker"]),
@@ -539,6 +574,49 @@ pub async fn firm(c: &Client, cmd: FirmCmd, json_out: bool) -> Result<i32> {
                 table(&["firm", "workers", "state", "run", "description"], rows);
             }
         }
+        FirmCmd::Scenarios { firm } => {
+            let v = c
+                .json(Method::GET, &format!("/v1/firms/{firm}/scenarios"), None)
+                .await?;
+            if json_out {
+                print_json(&v);
+            } else {
+                for (name, sc) in v.as_object().into_iter().flatten() {
+                    println!("{name}: {}", s(&sc["description"]));
+                    for h in sc["hires"].as_array().into_iter().flatten() {
+                        println!(
+                            "  hire {} x{}{}{}",
+                            s(&h["role"]),
+                            h["count"],
+                            if h["contract"] == json!(true) {
+                                " (contractor)"
+                            } else {
+                                ""
+                            },
+                            if h["board_line"] == json!(true) {
+                                " (reports to the board)"
+                            } else {
+                                ""
+                            }
+                        );
+                    }
+                    for st in sc["script"].as_array().into_iter().flatten() {
+                        let when = [("after", &st["after"]), ("spent", &st["spent"])]
+                            .iter()
+                            .filter(|(_, x)| !x.is_null())
+                            .map(|(k, x)| format!("{k} {}", s(x)))
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        let what = ["kill", "break_cluster", "mail"]
+                            .iter()
+                            .find(|k| !st[**k].is_null())
+                            .copied()
+                            .unwrap_or("?");
+                        println!("  at {when}: {what}");
+                    }
+                }
+            }
+        }
         FirmCmd::Up {
             firm,
             company,
@@ -549,6 +627,7 @@ pub async fn firm(c: &Client, cmd: FirmCmd, json_out: bool) -> Result<i32> {
             security_share,
             max_concurrent,
             daily_turns,
+            scenario,
         } => {
             eprintln!("zapper: starting firm {firm}…");
             let read = |p: &Option<std::path::PathBuf>| -> Result<Option<String>> {
@@ -562,6 +641,7 @@ pub async fn firm(c: &Client, cmd: FirmCmd, json_out: bool) -> Result<i32> {
             let body = json!({
                 "company": company, "ceo": ceo, "seed": seed, "ceo_prompt": read(&ceo_prompt)?, "articles": read(&articles)?,
                 "security_share": security_share, "max_concurrent": max_concurrent, "daily_turns": daily_turns,
+                "scenario": scenario,
             });
             let v = c
                 .json(

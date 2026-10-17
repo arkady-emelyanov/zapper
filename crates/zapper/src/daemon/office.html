@@ -378,6 +378,11 @@
   .sprite img { width: 48px; height: 48px; }
   .sprite figcaption { font: 11px var(--mono); color: var(--muted); word-break: break-all; text-align: center; }
   .ko-charter { max-width: 760px; margin-top: 4px; }
+  .ko-slot, .ko-step { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; margin: 6px 0; display: flex; flex-direction: column; gap: 6px; }
+  .ko-slot .row, .ko-step .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .ko-slot textarea, .ko-step textarea { width: 100%; }
+  .ko-slot input[type=number], .ko-step input[type=number] { width: 70px; }
+  .ko-step input.after { width: 80px; }
   .ko-art { border-left: 3px solid var(--line); padding: 2px 0 2px 12px; display: flex; flex-direction: column; gap: 4px; }
   .ko-art-h { font-weight: 600; font-size: 13px; }
   .ko-art textarea { width: 100%; }
@@ -3280,6 +3285,79 @@ function startForm(running) {
   const conc = el('input', { type: 'number', min: 1, max: 64, step: 1, value: String(st.max_concurrent || 3) });
   const turns = el('input', { type: 'number', min: 0, step: 10, value: String(st.daily_turns != null ? st.daily_turns : 400) });
   const articles = el('textarea', { rows: 4, maxlength: 20000, placeholder: 'Optional: your own articles, binding on everyone, e.g. "No paid services without the board\'s approval." "Everything we ship is open source."' });
+  // A scenario: hires with extra instructions and board actions during the
+  // run, from the config's presets, all editable here.
+  const scenarios = st.scenarios || {};
+  const hireRoles = arr(st.roles).filter((r) => !r.officer && r.name !== 'ceo').map((r) => str(r.name));
+  const scSel = el('select', { onchange: () => loadScenario() }, el('option', { value: '' }, 'None: a plain run'), ...Object.keys(scenarios).map((n) => el('option', { value: n }, n)));
+  const scDesc = el('div', { class: 'muted small' });
+  const slotsBox = el('div');
+  const stepsBox = el('div');
+  const scBody = el('div', { class: 'hidden' },
+    el('h4', { style: 'margin:8px 0 2px' }, 'Hires with extra instructions'),
+    el('div', { class: 'muted small' }, 'The first hires of the role, in this order, get the instructions; later hires are plain.'),
+    slotsBox,
+    el('button', { class: 'btn', type: 'button', onclick: () => addSlot({ role: hireRoles[0] || '', count: 1, contract: null, prompt: '', board_line: false }) }, 'Add hire'),
+    el('h4', { style: 'margin:12px 0 2px' }, 'What the board does during the run'),
+    stepsBox);
+  const slotRows = [];
+  const stepRows = [];
+  const addSlot = (h) => {
+    const role = el('select', {}, ...hireRoles.map((r) => el('option', { value: r, selected: r === h.role }, r)));
+    if (h.role && !hireRoles.includes(h.role)) role.append(el('option', { value: h.role, selected: true }, h.role));
+    const count = el('input', { type: 'number', min: 1, max: 20, value: String(h.count || 1) });
+    const kind = el('select', {}, el('option', { value: '', selected: h.contract == null }, 'staff or contractor'), el('option', { value: 'staff', selected: h.contract === false }, 'staff only'), el('option', { value: 'contract', selected: h.contract === true }, 'contractor only'));
+    const line = el('input', { type: 'checkbox', checked: !!h.board_line });
+    const prompt = el('textarea', { rows: 6, maxlength: 20000, placeholder: 'The board\'s instructions for these hires' });
+    prompt.value = str(h.prompt);
+    const box = el('div', { class: 'ko-slot' });
+    const row = { role, count, kind, line, prompt, box };
+    slotRows.push(row);
+    box.append(el('div', { class: 'row' }, role, el('label', {}, '× ', count), kind, el('label', { class: 'small' }, line, ' may mail the board'),
+      el('button', { class: 'btn', type: 'button', onclick: () => { slotRows.splice(slotRows.indexOf(row), 1); box.remove(); } }, 'Remove')), prompt);
+    slotsBox.append(box);
+  };
+  const stepText = (x) => x.kill ? 'Kill ' + (x.kill.worker ? x.kill.worker : 'the busiest ' + str(x.kill.role)) + ' and take them out of the firm' : x.break_cluster ? 'Break the cluster (' + str(x.break_cluster.mode) + ')' : x.mail ? 'Mail ' + str(x.mail.to) : '';
+  const addStep = (x) => {
+    const on = el('input', { type: 'checkbox', checked: true });
+    const after = el('input', { class: 'after', maxlength: 8, placeholder: '90m', value: str(x.after) });
+    const spent = el('input', { type: 'number', min: 0, max: 100, step: 5, value: x.spent != null ? String(Math.round(Number(x.spent) * 100)) : '' });
+    const row = { x, on, after, spent };
+    const box = el('div', { class: 'ko-step' }, el('div', { class: 'row' }, el('label', {}, on, ' ' + stepText(x)),
+      el('label', { class: 'small' }, 'after ', after), el('label', { class: 'small' }, 'or once ', spent, ' % of the budget is spent (both if both)')));
+    if (x.mail) {
+      row.subject = el('input', { maxlength: 200, value: str(x.mail.subject) });
+      row.body = el('textarea', { rows: 5, maxlength: 20000 });
+      row.body.value = str(x.mail.body);
+      box.append(row.subject, row.body);
+    }
+    stepRows.push(row);
+    stepsBox.append(box);
+  };
+  const loadScenario = () => {
+    slotRows.length = 0; stepRows.length = 0;
+    slotsBox.replaceChildren(); stepsBox.replaceChildren();
+    const sc = scenarios[scSel.value];
+    scBody.classList.toggle('hidden', !sc);
+    scDesc.textContent = sc ? str(sc.description) : '';
+    if (!sc) return;
+    arr(sc.hires).forEach(addSlot);
+    arr(sc.script).forEach(addStep);
+    if (!arr(sc.script).length) stepsBox.append(el('div', { class: 'muted small' }, 'Nothing: the run is left alone.'));
+  };
+  // The scenario as the board shaped it, for the start request.
+  const scenarioBody = () => {
+    if (!scSel.value) return {};
+    const hires = slotRows.map((r) => ({ role: r.role.value, count: Number(r.count.value) || 1, contract: r.kind.value === '' ? null : r.kind.value === 'contract', prompt: r.prompt.value.trim(), board_line: r.line.checked }));
+    const script = stepRows.filter((r) => r.on.checked).map((r) => {
+      const x = JSON.parse(JSON.stringify(r.x));
+      x.after = r.after.value.trim() || null;
+      x.spent = r.spent.value === '' ? null : Number(r.spent.value) / 100;
+      if (x.mail) { x.mail.subject = r.subject.value.trim(); x.mail.body = r.body.value.trim(); }
+      return x;
+    });
+    return { scenario: scSel.value, hires, script };
+  };
   // The rules, on the right: the charter's articles, which the terms on
   // the left fill in.
   const charter = arr(st.charter).map((a, i) => el('div', { class: 'ko-art' },
@@ -3303,6 +3381,7 @@ function startForm(running) {
         seed: seed.value.trim() || null, security_share: pct / 100,
         max_concurrent: Number(conc.value) || null, daily_turns: turns.value === '' ? null : Number(turns.value),
         articles: articles.value.trim() || null,
+        ...scenarioBody(),
       });
       KO.starting = false; KO.sig = null; KO.startEl = null;
       toast('Started ' + (company.value.trim() || S.firm));
@@ -3321,6 +3400,7 @@ function startForm(running) {
     el('div', { class: 'ko-terms' }, el('label', { class: 'f' }, 'Seed (tokens, to scope the task)', seed), el('label', { class: 'f' }, 'Security\'s share of every grant (%)', share)),
     el('div', { class: 'ko-terms' }, el('label', { class: 'f' }, 'Agent parallelism', conc), el('label', { class: 'f' }, 'Turns a day, whole firm (0: no limit)', turns)),
     el('label', { class: 'f' }, 'Your own articles, added to the charter', articles),
+    Object.keys(scenarios).length ? el('fieldset', { class: 'ko-founder' }, el('legend', {}, 'Scenario'), el('label', { class: 'f' }, 'Simulate', scSel), scDesc, scBody) : '',
     el('div', { style: 'display:flex;gap:10px;align-items:center' }, go,
       running ? el('button', { class: 'btn', type: 'button', onclick: () => { KO.starting = false; KO.sig = null; KO.startEl = null; updateKickoff(); } }, 'Cancel') : '', note));
   const rules = el('div', { class: 'ko-rules' },
