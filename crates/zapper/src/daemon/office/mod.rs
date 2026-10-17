@@ -1034,6 +1034,7 @@ async fn ticker(d: Arc<Daemon>, run: Arc<FirmRun>) {
         security::tick(&run, &mut last_digest);
         contracts::tick(&d, &run);
         access::tick(&d, &run);
+        workforce::tick(&run);
         scenario::tick(&d, &run);
     }
 }

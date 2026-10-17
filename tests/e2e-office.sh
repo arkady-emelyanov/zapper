@@ -292,7 +292,7 @@ firms:
       - { name: sec-1, role: security, reports_to: ceo }
     security: { officers: [sec-1], digest_every: { minutes: 60, requests: 0 } }
   corp:
-    budget: { max_concurrent: 2, seed: 1000, quote_fee: 500 }
+    budget: { max_concurrent: 2, seed: 1000, quote_fee: 500, stall_after: 5s }
     roles:
       boss: { profile: worker, skills: { work: ceo }, fake: $T/fake/corp-ceo.yaml, hires: [dev], avatar: { figure: ceo } }
       dev: { profile: worker, title: Developer, skills: { work: software-engineer }, fake: $T/fake/corp-dev.yaml, avatar: { figure: engineer } }
@@ -573,6 +573,8 @@ cwait_for "turn ken end" 120
 "$Z" mail send corp --to ken --kind fyi --subject "One more" --body "And the tests." > /dev/null
 cwait_for "funds ken ran out" 120 && pass "a worker out of budget stops taking turns" || fail "a worker out of budget stops taking turns" "$(cjournal | tail -5)"
 expect "and their manager is told" "$(cjournal)" 'office → ceo [fyi] "ken ran out of budget'
+cwait_for 'office → ceo \[fyi\] "ken is still out of budget' 60 && pass "left stalled, the CEO is reminded" || fail "left stalled, the CEO is reminded" "$(cjournal | grep -i 'ken' | tail -4)"
+cwait_for 'office → board \[fyi\] "ken is stalled' 60 && pass "and then the board is told" || fail "and then the board is told" "$(cjournal | grep -i 'ken' | tail -4)"
 expect "the directory shows the hire" "$("$Z" exec "$ceo" -- sh -c 'office directory' 2>&1)" '"ken"'
 "$Z" firm down corp > /dev/null
 

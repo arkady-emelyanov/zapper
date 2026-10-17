@@ -56,8 +56,9 @@ pub struct Ledger {
     turns: BTreeMap<String, u32>,
     received: BTreeMap<String, u64>,
     requests: Vec<BudgetRequest>,
-    /// Workers whose manager was told they ran out, until they are funded.
-    told: BTreeSet<String>,
+    /// Workers whose manager was told they ran out, until they are funded:
+    /// when, and how far it has gone up since (see `tick`).
+    told: BTreeMap<String, (f64, u8)>,
 }
 
 impl Ledger {
@@ -73,7 +74,7 @@ impl Ledger {
             turns: BTreeMap::new(),
             received: BTreeMap::new(),
             requests: Vec::new(),
-            told: BTreeSet::new(),
+            told: BTreeMap::new(),
         }
     }
 
@@ -383,9 +384,10 @@ pub fn allows(run: &FirmRun, w: &str) -> bool {
     if !l.enabled || l.balance(w) > 0 {
         return true;
     }
-    if !l.told.insert(w.to_string()) {
+    if l.told.contains_key(w) {
         return false;
     }
+    l.told.insert(w.to_string(), (super::now(), 0));
     let spent = l.spent.get(w).copied().unwrap_or(0) as i64;
     drop(l);
     let chart = run.chart();
@@ -408,11 +410,21 @@ pub fn allows(run: &FirmRun, w: &str) -> bool {
             &format!("{w} ran out of budget"),
             &format!("[Automatic notice] {w}, {}, has spent their budget ({} tokens) and stopped taking turns{}. Fund them with `zapper firm fund {} {w} TOKENS --reason …`.\n", chart.title_of(w), fmt_tokens(spent), if chart.is_officer(w) { "; their pending access requests and background checks went to the other officers or to you in the Security tab" } else { "" }, run.firm),
         ),
-        Some(m) => run.notice(
-            &m,
-            &format!("{w} ran out of budget"),
-            &format!("[Automatic notice] {w} has spent their budget ({} tokens) and stopped taking turns; their mail waits. Fund them with fund(worker: \"{w}\", tokens: …, reason: …) from your own balance, or reassign their work.\n", fmt_tokens(spent)),
-        ),
+        Some(m) => {
+            run.notice(
+                &m,
+                &format!("{w} ran out of budget"),
+                &format!("[Automatic notice] {w} has spent their budget ({} tokens) and stopped taking turns; their mail waits, and whoever waits on them stalls. Fund them now with fund(worker: \"{w}\", tokens: …, reason: …) from your own balance, or take their work back. If your balance can't cover it, ask your manager.\n", fmt_tokens(spent)),
+            );
+            // Nobody stalls for want of budget: the CEO answers for it.
+            if let Some(ceo) = chart.root().filter(|c| *c != m && *c != w && !chart.is_officer(w)) {
+                run.notice(
+                    ceo,
+                    &format!("{w} ran out of budget"),
+                    &format!("[Automatic notice] {w} ({}, reporting to {m}) has spent their budget ({} tokens) and stopped taking turns; {m} was asked to fund them. Make sure someone does, or that their work moves: a worker out of tokens stalls everyone waiting on them.\n", chart.title_of(w), fmt_tokens(spent)),
+                );
+            }
+        }
         None => run.notice(
             BOARD,
             &format!("{w} ran out of budget"),
@@ -420,6 +432,55 @@ pub fn allows(run: &FirmRun, w: &str) -> bool {
         ),
     }
     false
+}
+
+/// Workers still out of tokens with mail waiting: the CEO is reminded after
+/// `budget.stall_after`, the board told after three times that. Called by
+/// the run's ticker.
+pub fn tick(run: &FirmRun) {
+    let t = super::now();
+    let remind = zapper_policy::parse_duration(&run.config.budget.stall_after)
+        .map(|d| d.as_secs_f64())
+        .unwrap_or(600.0);
+    let stalled: Vec<(String, f64, u8)> = {
+        let l = run.ledger.lock().unwrap();
+        if !l.enabled {
+            return;
+        }
+        l.told
+            .iter()
+            .filter(|(w, _)| l.balance(w) <= 0)
+            .map(|(w, (since, level))| (w.clone(), *since, *level))
+            .collect()
+    };
+    let chart = run.chart();
+    for (w, since, level) in stalled {
+        let waiting = run.rt(&w).map_or(0, |r| r.queue.lock().unwrap().len());
+        // Contracts end when their budget is spent; officers are the board's.
+        if waiting == 0 || super::contracts::of(run, &w).is_some() || chart.is_officer(&w) {
+            continue;
+        }
+        let ceo = chart.root().filter(|c| *c != w);
+        let mins = ((t - since) / 60.0).round();
+        let next = if level == 0 && t - since > remind && ceo.is_some() {
+            if let Some(c) = ceo {
+                run.notice(c, &format!("{w} is still out of budget"), &format!("[Automatic notice] {w} ({}) has been out of tokens for {mins} minutes with {waiting} message(s) waiting. Fund them with fund(worker: \"{w}\", tokens: …, reason: …), or take their work back; if the firm's budget is short, ask the board with budget_request.\n", chart.title_of(&w)));
+            }
+            1
+        } else if level <= 1 && t - since > 3.0 * remind {
+            run.notice(BOARD, &format!("{w} is stalled: out of budget"), &format!("[Automatic notice] {w} ({}) has been out of tokens for {mins} minutes with {waiting} message(s) waiting; {} was told and hasn't funded them. Fund them with `zapper firm fund {} {w} TOKENS --reason …`, or tell the CEO.\n", chart.title_of(&w), ceo.unwrap_or("their manager"), run.firm));
+            2
+        } else {
+            continue;
+        };
+        run.journal.append(
+            "funds",
+            json!({ "event": "stalled", "worker": w, "minutes": mins, "told": if next == 1 { ceo.unwrap_or(BOARD) } else { BOARD } }),
+        );
+        if let Some(e) = run.ledger.lock().unwrap().told.get_mut(&w) {
+            e.1 = next;
+        }
+    }
 }
 
 /// The CEO asks the board for a budget: one number, a plan and a reason, in

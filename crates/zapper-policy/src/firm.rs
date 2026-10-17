@@ -333,6 +333,9 @@ pub struct Budget {
     /// How long one turn may run (`30m`): then the agent is stopped and
     /// the turn charged at the worker's turn price.
     pub turn_timeout: String,
+    /// How long a worker may stay out of tokens with mail waiting before
+    /// the CEO is reminded (`10m`); the board is told at three times that.
+    pub stall_after: String,
 }
 
 impl Default for Budget {
@@ -347,6 +350,7 @@ impl Default for Budget {
             quote_fee: 30_000,
             turn_price: 10_000,
             turn_timeout: "30m".into(),
+            stall_after: "10m".into(),
         }
     }
 }
@@ -749,6 +753,9 @@ impl Firm {
             Err(e) => err(format!("budget.turn_timeout: {e}")),
             Ok(d) if d.is_zero() => err("budget.turn_timeout must be above 0".into()),
             Ok(_) => {}
+        }
+        if let Err(e) = parse_duration(&self.budget.stall_after) {
+            err(format!("budget.stall_after: {e}"));
         }
         if self.budget.turn_price == 0 {
             err("budget.turn_price must be at least 1".into());

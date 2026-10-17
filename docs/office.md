@@ -72,7 +72,7 @@ firms:
 | Field | Meaning |
 |---|---|
 | `domain` | Names the firm's services; default `<firm>.internal` |
-| `budget` | `daily_turns`, `worker_daily_turns`, `daily_tokens` (0 is no limit), `max_concurrent`; days end at midnight UTC. `seed` (tokens, 0: none) gives the run a budget agreed with the board ([the workforce](#the-workforce-hiring-and-budgets)); `security_share` (0.2) is the officers' share of it; `quote_fee` (30000) is what a contract offer gives the candidate for quoting; `turn_price` (10000) is what a turn costs in tokens on the firm's models until the CEO has measured their own, and prices the sizing in the CEO's `budget()` (set it for a firm on other models); `turn_timeout` (`30m`) is how long one turn may run ([waking an idle worker](#waking-an-idle-worker)) |
+| `budget` | `daily_turns`, `worker_daily_turns`, `daily_tokens` (0 is no limit), `max_concurrent`; days end at midnight UTC. `seed` (tokens, 0: none) gives the run a budget agreed with the board ([the workforce](#the-workforce-hiring-and-budgets)); `security_share` (0.2) is the officers' share of it; `quote_fee` (30000) is what a contract offer gives the candidate for quoting; `turn_price` (10000) is what a turn costs in tokens on the firm's models until the CEO has measured their own, and prices the sizing in the CEO's `budget()` (set it for a firm on other models); `stall_after` (`10m`) is how long a worker may stay out of tokens with mail waiting before the CEO is reminded (the board is told at three times that); `turn_timeout` (`30m`) is how long one turn may run ([waking an idle worker](#waking-an-idle-worker)) |
 | `limits` | `thread_messages` (60), `mail_per_hour` (120), `fanout_per_hour` (10), `pair_per_10min` (30), `mail_per_run` (20000), `artifact_size` (50MiB), `drive_size` (2GiB) |
 | `roles.<r>` | `profile`, `model` (default: the profile's), `title`, `skills: {work, communication, publishing}`, `avatar: {figure, color}`, `hires` (roles its workers may hire; needs `budget.seed`), `officer` (hired workers of the role become security officers once cleared), `fake` (a fake Claude script, for tests) |
 | `workers` | The founders, who boot with the firm: `name`, `role`, `reports_to`, `title` |
@@ -151,7 +151,7 @@ The CEO doesn't itemize spending to the board; it reports a summary with key met
 
 ### Balances
 
-Budgets are totals for the run, in tokens (input and output, as each turn reports them). Every worker has a balance: each turn is paid from it, and a worker whose balance is spent stops taking turns, mail kept, until their manager funds them; the manager is told (the board, for the CEO and the officers). The daily limits in `budget` still apply on top.
+Budgets are totals for the run, in tokens (input and output, as each turn reports them). Every worker has a balance: each turn is paid from it, and a worker whose balance is spent stops taking turns, mail kept, until their manager funds them; the manager is told (the board, for the CEO and the officers), and so is the CEO, who answers for nobody stalling. A worker still out of tokens with mail waiting after `budget.stall_after` (10 minutes) is a reminder to the CEO, and after three times that a notice to the board (`funds stalled` in the journal). Contractors are left out: a contract ends when its budget is spent. The daily limits in `budget` still apply on top.
 
 ### Hiring and letting go
 
