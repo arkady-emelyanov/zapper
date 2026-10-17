@@ -3348,7 +3348,7 @@ function startForm(running) {
   const addStep = (x) => {
     const on = el('input', { type: 'checkbox', checked: true });
     const after = el('input', { class: 'after', maxlength: 8, placeholder: '90m', value: str(x.after) });
-    const spent = el('input', { type: 'number', min: 0, max: 100, step: 5, value: x.spent != null ? String(Math.round(Number(x.spent) * 100)) : '' });
+    const spent = el('input', { type: 'number', min: 0, max: 100, step: 1, value: x.spent != null ? String(Math.round(Number(x.spent) * 100)) : '' });
     const row = { x, on, after, spent };
     const box = el('div', { class: 'ko-step' }, el('div', { class: 'row' }, el('label', {}, on, ' ' + stepText(x)),
       el('label', { class: 'small' }, 'after ', after), el('label', { class: 'small' }, 'or once ', spent, ' % of the budget is spent (both if both)')));

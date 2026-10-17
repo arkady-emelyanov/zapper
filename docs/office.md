@@ -72,7 +72,7 @@ firms:
 | Field | Meaning |
 |---|---|
 | `domain` | Names the firm's services; default `<firm>.internal` |
-| `budget` | `daily_turns`, `worker_daily_turns`, `daily_tokens` (0 is no limit), `max_concurrent`; days end at midnight UTC. `seed` (tokens, 0: none) gives the run a budget agreed with the board ([the workforce](#the-workforce-hiring-and-budgets)); `security_share` (0.2) is the officers' share of it; `quote_fee` (30000) is what a contract offer gives the candidate for quoting |
+| `budget` | `daily_turns`, `worker_daily_turns`, `daily_tokens` (0 is no limit), `max_concurrent`; days end at midnight UTC. `seed` (tokens, 0: none) gives the run a budget agreed with the board ([the workforce](#the-workforce-hiring-and-budgets)); `security_share` (0.2) is the officers' share of it; `quote_fee` (30000) is what a contract offer gives the candidate for quoting; `turn_price` (10000) is what a turn costs in tokens on the firm's models until the CEO has measured their own, and prices the sizing in the CEO's `budget()` (set it for a firm on other models) |
 | `limits` | `thread_messages` (60), `mail_per_hour` (120), `fanout_per_hour` (10), `pair_per_10min` (30), `mail_per_run` (20000), `artifact_size` (50MiB), `drive_size` (2GiB) |
 | `roles.<r>` | `profile`, `model` (default: the profile's), `title`, `skills: {work, communication, publishing}`, `avatar: {figure, color}`, `hires` (roles its workers may hire; needs `budget.seed`), `officer` (hired workers of the role become security officers once cleared), `fake` (a fake Claude script, for tests) |
 | `workers` | The founders, who boot with the firm: `name`, `role`, `reports_to`, `title` |

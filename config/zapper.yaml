@@ -183,7 +183,7 @@ firms:
     description: A small product company
     board: { name: Board }
     # The CEO scopes the board's task on the seed and asks for the run's
-    # budget; the board approves it in the UI. 10% goes to security.
+    # budget; the board approves it in the UI. 20% goes to security.
     budget: { daily_turns: 400, max_concurrent: 3, seed: 1200000, security_share: 0.2 }
     git: {}
     product_port: 0.0.0.0:8080           # the product, on your LAN too; 127.0.0.1:8080 keeps it on this machine

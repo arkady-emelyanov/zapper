@@ -128,6 +128,15 @@ impl Ledger {
         *self.turns.entry(w.to_string()).or_default() += 1;
     }
 
+    /// What a turn costs worker `w`, in tokens: their own average once they
+    /// took one, else the firm's reference price.
+    pub fn turn_price(&self, w: &str, reference: u64) -> u64 {
+        match (self.turns.get(w), self.spent.get(w)) {
+            (Some(&t), Some(&s)) if t > 0 => (s / t as u64).max(1),
+            _ => reference,
+        }
+    }
+
     /// What turns have cost so far, by role: workers, turns, tokens, and
     /// tokens per turn on average. Prices differ by model, so the CEO sizes
     /// the budget from this, not from fixed numbers.
@@ -321,10 +330,32 @@ pub fn balance_note(run: &FirmRun, w: &str) -> Option<String> {
         s.push_str(&format!(" Your reports' balances: {}.", team.join(", ")));
     }
     if run.chart().root() == Some(w) && l.approved == 0 {
-        s.push_str(" No budget is approved yet: scope the board's task on the seed, then ask with budget_request.");
+        s.push_str(" No budget is approved yet: scope the board's task on the seed, call budget() for the turn price and the sizing, then ask with budget_request.");
     }
     Some(s)
 }
+
+/// What common work costs in tokens at `price` per CEO turn, from a real run
+/// of a small product: turns of work times its turn cost relative to the CEO's.
+pub fn sizing(price: u64) -> Value {
+    let row = |work: &str, turns: f64, x: f64| json!({ "work": work, "turns": turns, "tokens": (turns * x * price as f64).round() as u64 });
+    json!({
+        "per_worker": [
+            row("engineer: a build and deploy assignment", 5.0, 2.0),
+            row("product manager: brief and acceptance", 5.0, 1.0),
+            row("designer: a deliverable", 3.0, 1.0),
+            row("security officer: a small team's requests and checks", 15.0, 0.3),
+            row("contractor: a bounded job", 3.0, 5.0),
+            row("CEO: coordination of a small product", 13.0, 1.0),
+        ],
+        "reserve": "25% on top",
+        "small_product_total": SMALL_PRODUCT_TURNS * price,
+        "note": "a small product (one page, a small backend, a container, dev and prod, accepted) took about 50 CEO turns in all; far above that needs a reason",
+    })
+}
+
+/// CEO turns' worth of tokens a small product costs, as measured.
+const SMALL_PRODUCT_TURNS: u64 = 50;
 
 /// Your balance and your team's, for the `budget` tool.
 pub fn summary(run: &FirmRun, w: &str) -> Value {
@@ -338,7 +369,10 @@ pub fn summary(run: &FirmRun, w: &str) -> Value {
         .collect();
     let mine = json!({ "balance": l.balance(w), "spent": l.spent.get(w).copied().unwrap_or(0), "received": l.received.get(w).copied().unwrap_or(0) });
     let firm = (chart.root() == Some(w))
-        .then(|| json!({ "approved": l.approved, "seed": l.seed, "requests": l.requests, "observed_cost": l.observed(&chart, &run.models) }));
+        .then(|| {
+            let price = l.turn_price(w, run.config.budget.turn_price);
+            json!({ "approved": l.approved, "seed": l.seed, "requests": l.requests, "observed_cost": l.observed(&chart, &run.models), "turn_price": price, "sizing": sizing(price) })
+        });
     json!({ "enabled": l.enabled, "you": mine, "team": team, "firm": firm })
 }
 
@@ -424,7 +458,21 @@ pub fn request(run: &FirmRun, by: &str, total: i64, plan: &str, reason: &str) ->
         );
     }
     let id = format!("b-{}", run.ledger.lock().unwrap().requests.len() + 1);
-    let body = format!("**Budget request {id}: {} tokens in all, seed included.**\n\n{}\n\n**Why:** {}\n\nApprove or decline it in the Kickoff tab; a decline with a note sends it back.\n", fmt_tokens(total), plan.trim(), reason.trim());
+    // The office's own check, for the board: the request against what a
+    // small product has cost.
+    let check = {
+        let l = run.ledger.lock().unwrap();
+        let price = l.turn_price(by, run.config.budget.turn_price);
+        format!(
+            "**Office check:** a turn costs {} tokens ({}), so this is {} CEO turns' worth; a small product took about {} turns ({}).",
+            fmt_tokens(price as i64),
+            if l.turns.get(by).is_some_and(|t| *t > 0) { "measured on the CEO's turns" } else { "the firm's reference, nothing measured yet" },
+            total as u64 / price.max(1),
+            SMALL_PRODUCT_TURNS,
+            fmt_tokens((SMALL_PRODUCT_TURNS * price) as i64)
+        )
+    };
+    let body = format!("**Budget request {id}: {} tokens in all, seed included.**\n\n{}\n\n**Why:** {}\n\n{check}\n\nApprove or decline it in the Kickoff tab; a decline with a note sends it back.\n", fmt_tokens(total), plan.trim(), reason.trim());
     let mut d = Draft::new(
         by,
         vec![BOARD.into()],
@@ -1082,6 +1130,22 @@ mod tests {
         assert_eq!(tokens_arg(&json!(1200), "t").unwrap(), 1200);
         assert_eq!(fmt_tokens(40_000_000), "40.0M");
         assert_eq!(fmt_tokens(-1500), "-2k");
+    }
+
+    #[test]
+    fn turn_price_and_sizing() {
+        let mut f = Firm::default();
+        f.budget.seed = 1000;
+        let mut l = Ledger::new(&f);
+        // Nothing measured: the firm's reference.
+        assert_eq!(l.turn_price("ceo", 10_000), 10_000);
+        l.spend("ceo", 6000);
+        l.spend("ceo", 10_000);
+        assert_eq!(l.turn_price("ceo", 10_000), 8000);
+        let s = sizing(8000);
+        assert_eq!(s["small_product_total"], 400_000);
+        let eng = &s["per_worker"][0];
+        assert_eq!(eng["tokens"], 5 * 2 * 8000);
     }
 
     #[test]

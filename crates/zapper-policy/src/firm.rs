@@ -319,6 +319,10 @@ pub struct Budget {
     /// Tokens a contract offer moves from the hirer to the candidate for
     /// their quoting turns.
     pub quote_fee: u64,
+    /// What a turn costs, in tokens, on the models the firm runs, before the
+    /// CEO has taken one to measure: the CEO sizes the budget in turns
+    /// priced with this. Set it for a firm on a different model.
+    pub turn_price: u64,
 }
 
 impl Default for Budget {
@@ -331,6 +335,7 @@ impl Default for Budget {
             seed: 0,
             security_share: 0.2,
             quote_fee: 30_000,
+            turn_price: 10_000,
         }
     }
 }
