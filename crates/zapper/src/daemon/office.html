@@ -223,9 +223,24 @@
   .vrow.sel { background: var(--accent-soft); }
   .vrow.sel .vnum { color: var(--accent-ink); font-weight: 600; }
   .vnum { font-family: var(--mono); font-size: 12.5px; color: var(--muted); }
-  .ov-product { margin-left: auto; display:flex; gap: 8px; align-items: center; }
+  .hlinks { margin-left: auto; display:flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .hlinks a { text-decoration: none; }
   .vm-dash { display:flex; gap: 8px; align-items: center; }
-  .ov-product a { text-decoration: none; }
+  /* the organization, with its legend as a list on the right */
+  .ovrow { display:flex; gap: 14px; align-items: flex-start; }
+  .ovrow .stagebox { flex: 1; min-width: 0; }
+  .legend.side { flex-direction: column; flex-wrap: nowrap; gap: 5px; margin-top: 0; width: 190px; flex: none; }
+  .legend.side h4 { margin: 6px 0 0; font-size: 12px; color: var(--text); font-weight: 600; }
+  .legend.side h4:first-child { margin-top: 0; }
+  .legend.side .lg { display:flex; align-items: center; gap: 6px; }
+  .legend .gauge { display:inline-block; width: 26px; height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; flex: none; }
+  .legend .gauge i { display:block; height: 100%; margin: 0; border-radius: 0; vertical-align: 0; }
+  .legend .ic { display:inline-flex; align-items:center; gap: 2px; font-size: 11px; background: var(--card); border: 1px solid var(--line2); border-radius: 999px; padding: 0 6px; height: 17px; flex: none; }
+  .legend .ic.mail { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .legend .ic.lock { color: var(--warn); }
+  .legend .ic.clock { color: var(--bad); }
+  .legend .dashed { display:inline-block; width: 14px; height: 10px; border: 1.5px dashed var(--line2); border-radius: 3px; flex: none; }
+  @media (max-width: 900px) { .ovrow { flex-direction: column; } .legend.side { width: auto; } }
   /* VMs */
   .vm-host { padding: 14px 18px; margin: 12px 0 0; }
   .vm-host-t { display:flex; gap: 12px; align-items: baseline; }
@@ -537,6 +552,7 @@
       <span class="desc" id="firmdesc"></span>
     </div>
     <div class="hstats" id="hstats"></div>
+    <div class="hlinks" id="hlinks"></div>
   </div>
   <nav class="tabs" id="tabs"></nav>
 </header>
@@ -730,7 +746,7 @@ function newModel() {
     // budget requests, what the board approved.
     fundsIn: new Map(), fundsOut: new Map(), moves: [], budgetReqs: new Map(), approved: 0, hires: [],
     // Background checks on new hires.
-    screenings: new Map(), scenarioLog: [],
+    screenings: new Map(), scenarioLog: [], scenario: null,
     // Who held security when, and the board's own articles.
     officerChanges: [], articles: '',
     // Contracts: offers, negotiations, agreed terms, how they ended.
@@ -785,6 +801,7 @@ function apply(M, e) {
       if (e.budget) M.budget = e.budget;
       if (typeof e.company === 'string') M.company = e.company;
       if (typeof e.articles === 'string') M.articles = e.articles;
+      if (e.scenario && typeof e.scenario === 'object' && e.scenario.scenario) M.scenario = { name: str(e.scenario.name), script: arr(e.scenario.scenario.script) };
       if (e.state) { M.runState = e.state; M.runStates.push({ state: e.state, ts, reason: e.reason || e.error || '' }); }
       if (e.state === 'ended' || e.state === 'failed') for (const w of M.workers.values()) setState(M, w, 'off', '', ts);
       break;
@@ -1343,16 +1360,30 @@ function mountOverview() {
       el('button', { class: 'btn primary', type: 'button', onclick: () => showTab('kickoff') }, 'Go to Kickoff'))),
     el('div', { id: 'ov-body' }));
   $('ov-body').append(
-    el('div', { class: 'ovhead' }, el('h2', { class: 'sec', style: 'margin:0' }, 'Organization'), el('span', { class: 'muted', id: 'ov-sub' }), el('span', { id: 'ov-product', class: 'ov-product' })),
+    el('div', { class: 'ovhead' }, el('h2', { class: 'sec', style: 'margin:0' }, 'Organization'), el('span', { class: 'muted', id: 'ov-sub' })),
     el('div', { class: 'hint hidden', id: 'ov-hint' }),
-    el('div', { class: 'stagebox', id: 'stagebox' }, el('div', { class: 'stage', id: 'stage' })),
-    el('div', { class: 'legend', id: 'ov-legend' }));
+    el('div', { class: 'ovrow' },
+      el('div', { class: 'stagebox', id: 'stagebox' }, el('div', { class: 'stage', id: 'stage' })),
+      el('div', { class: 'legend side', id: 'ov-legend' })));
   const lg = $('ov-legend');
+  const row = (...kids) => el('div', { class: 'lg' }, ...kids);
+  lg.append(el('h4', {}, 'State'));
   for (const s of ['idle', 'working', 'reviewing', 'waiting', 'queued', 'booting', 'over-budget', 'error', 'off']) {
-    const sw = sv('svg', { width: 10, height: 10 }, sv('rect', { class: 's-' + s, width: 10, height: 10, rx: 3 }));
-    lg.append(el('span', {}, sw, ' ', s));
+    lg.append(row(sv('svg', { width: 10, height: 10 }, sv('rect', { class: 's-' + s, width: 10, height: 10, rx: 3 })), s));
   }
-  lg.append(el('span', {}, '· envelopes fly as mail is sent; click a worker to write to them'));
+  // The bar under each worker: what they spent of the tokens they were given.
+  const gauge = (pct, color) => el('span', { class: 'gauge' }, el('i', { style: 'width:' + pct + '%;background:var(--' + color + ')' }));
+  lg.append(el('div', { id: 'ov-legend-budget' }, el('h4', {}, 'Budget'),
+    row(gauge(60, 'ok'), 'spent of what they were given'),
+    row(gauge(90, 'warn'), 'under 15% left'),
+    row(gauge(100, 'bad'), 'out of tokens'),
+    el('div', { class: 'muted small' }, 'Hover a bar for the numbers.')));
+  lg.append(el('h4', {}, 'Marks'),
+    row(el('span', { class: 'ic mail' }, ICONS.mail(), '2'), 'unread mail'),
+    row(el('span', { class: 'ic lock' }, ICONS.lock()), 'access request pending'),
+    row(el('span', { class: 'ic clock' }, ICONS.clock(), '1'), 'overdue work'),
+    row(el('span', { class: 'dashed' }), 'contractor'),
+    el('div', { class: 'muted small' }, 'Envelopes fly as mail is sent; click a worker to write to them.'));
   OV.sig = null;
   syncOverviewOff();
 }
@@ -1419,15 +1450,7 @@ function updateOverview() {
   if (M.domain) sub.push(M.domain);
   if (M.started) sub.push((live() ? 'run started ' : 'run of ') + fmtDate(M.started));
   $('ov-sub').textContent = sub.join(' · ');
-  // The product: the cluster's ingress on the host, from the config.
-  const pp = str(S.info && S.info.product_port);
-  const pbox = $('ov-product');
-  const dsig = pp + '|' + dashboardSig();
-  if (pbox.dataset.sig !== dsig) {
-    pbox.dataset.sig = dsig;
-    const a = productLink(pp);
-    pbox.replaceChildren(...(a ? [a] : []), ...dashboardButtons());
-  }
+  $('ov-legend-budget').classList.toggle('hidden', !fundsOn(M));
   for (const [name, n] of OV.nodes) {
     if (name === BOARD) {
       const unread = live() ? S.boardUnread.size : 0;
@@ -4153,6 +4176,94 @@ function buildHeader() {
     nav.append(b);
   }
 }
+// ───────────────────────── the scenario's next step ─────────────────────────
+//
+// What the board's script does next and how close it is, from the journal:
+// the steps that played or failed, what a due step waits for, and its
+// triggers against the clock and the budget spent.
+
+function durSecs(d) {
+  const m = /^(\d+(?:\.\d+)?)\s*(s|m|h|d)?$/.exec(str(d).trim());
+  return m ? Number(m[1]) * ({ s: 1, m: 60, h: 3600, d: 86400 }[m[2] || 's']) : null;
+}
+// 1:05:09, 4:07, 0:42: a countdown that ticks every second.
+function countdown(secs) {
+  const t = Math.max(0, Math.ceil(secs)), h = Math.floor(t / 3600), m = Math.floor(t % 3600 / 60), x = t % 60;
+  const p2 = (n) => String(n).padStart(2, '0');
+  return h ? h + ':' + p2(m) + ':' + p2(x) : m + ':' + p2(x);
+}
+function stepText(st) {
+  if (st.kill) return 'kill ' + (st.kill.worker ? cap(str(st.kill.worker)) : 'the key ' + str(st.kill.role));
+  if (st.break_cluster) return 'break the cluster (' + str(st.break_cluster.mode) + ')';
+  if (st.mail) return 'mail ' + str(st.mail.to) + ': "' + clip(str(st.mail.subject), 40) + '"';
+  return 'a step';
+}
+function scenarioNext(M, now) {
+  if (!M || !M.scenario) return null;
+  const script = M.scenario.script;
+  const done = new Set(), waits = new Map();
+  for (const x of M.scenarioLog) {
+    if (x.ts > now) continue;
+    if (x.event === 'step' || x.event === 'failed') { done.add(x.index); waits.delete(x.index); }
+    if (x.event === 'waiting') waits.set(x.index, x.why);
+  }
+  const seed = Number(M.budget && M.budget.seed) || 0;
+  const spent = [...M.workers.values()].reduce((n, w) => n + w.tokens, 0);
+  const frac = M.approved > 0 ? spent / (seed + M.approved) : 0;
+  let best = null;
+  script.forEach((st, i) => {
+    if (done.has(i)) return;
+    const after = st.after != null ? durSecs(st.after) : null;
+    const left = after != null && M.started ? M.started + after - now : 0;
+    const need = st.spent != null ? Number(st.spent) : null;
+    const gap = need != null ? need - frac : 0;
+    // Close: within two minutes and 5% of the budget of every trigger.
+    const due = left <= 0 && gap <= 0;
+    const soon = !due && left <= 120 && gap <= 0.05;
+    const parts = [];
+    if (after != null && left > 0) parts.push('in ' + countdown(left));
+    if (need != null && gap > 0) parts.push('in ' + Math.max(1, Math.round(gap * 100)) + '% of the budget (at ' + Math.round(need * 100) + '%, now ' + Math.round(frac * 100) + '%)');
+    const n = { i, text: stepText(st), when: parts.join(', '), due, soon, waits: waits.get(i) || null, rank: due ? -1 : Math.max(left / 120, gap / 0.05) };
+    if (!best || n.rank < best.rank) best = n;
+  });
+  return { name: M.scenario.name, total: script.length, played: done.size, next: best };
+}
+function scenarioButton(M, now) {
+  const sc = scenarioNext(M, now);
+  // Only while a scenario plays: none, or all its steps played, shows nothing.
+  if (!sc || !sc.next || ['ended', 'failed'].includes(str(M.runState))) return null;
+  const n = sc.next;
+  let text, warn = false, title;
+  if (n.waits) { text = 'step ' + n.i + ' waits: ' + n.waits; warn = true; title = n.text + ' is due and waits for its target'; }
+  else if (n.due) { text = 'step ' + n.i + ' firing: ' + n.text; warn = true; title = 'Its triggers are met'; }
+  else { text = 'next: ' + n.text + ' · '; warn = n.soon; title = n.soon ? 'About to fire' : 'The next step of the board\'s script'; }
+  // The countdown ticks in place, so the button isn't rebuilt every second.
+  const when = n.due || n.waits ? '' : n.when;
+  if (SCN.whenEl && SCN.whenSig === [sc.name, sc.played, n.i, !!n.waits, n.due, warn].join('|')) SCN.whenEl.textContent = when;
+  const w = el('span', { class: 'mono' }, when);
+  const b = el('button', { class: 'btn small ' + (warn ? '' : 'ghost'), type: 'button', title: title + ' · ' + sc.played + ' of ' + sc.total + ' steps played · open People for what played', onclick: () => showTab('people') },
+    warn ? el('span', { class: 'badge warn' }, '!') : '', warn ? ' ' : '', 'Scenario ', el('b', {}, sc.name), ' · ' + text, w);
+  const sig = [sc.name, sc.played, n.i, !!n.waits, n.due, warn].join('|');
+  return { el: b, sig: sig + '|' + (n.waits || ''), next: n, name: sc.name, adopt: () => { SCN.whenEl = w; SCN.whenSig = sig; } };
+}
+// A toast when a step is about to fire, and when it plays: once each.
+const SCN = { told: new Set(), whenEl: null, whenSig: null };
+function scenarioToasts(M, now, next) {
+  if (!live() || !M) return;
+  if (next && (next.soon || next.due) && !SCN.told.has('soon:' + S.run + ':' + next.i)) {
+    SCN.told.add('soon:' + S.run + ':' + next.i);
+    toast('Scenario: step ' + next.i + ' is about to fire — ' + next.text);
+  }
+  for (const x of M.scenarioLog) {
+    if (x.event !== 'step' && x.event !== 'failed') continue;
+    const k = 'played:' + S.run + ':' + x.index;
+    if (SCN.told.has(k)) continue;
+    SCN.told.add(k);
+    // Steps already in the journal when the page opened aren't news.
+    if (now - x.ts < 30) toast('Scenario: step ' + x.index + (x.event === 'step' ? ' played' : ' failed: ' + clip(x.why, 120)), x.event === 'failed');
+  }
+}
+
 function renderHeader() {
   const M = S.M;
   const pick = $('firmpick');
@@ -4192,13 +4303,26 @@ function renderHeader() {
     const pend = pendingBudget(M);
     if (pend) { bsig += '|' + pend.id; stats.push(el('button', { class: 'btn small', type: 'button', onclick: goDecideBudget }, el('span', { class: 'badge warn' }, '!'), ' budget request ' + pend.id + ': ' + fmtTok(pend.total) + ' — decide')); }
   }
+  // The scenario's next step, with a countdown, while one is playing.
+  const scb = scenarioButton(M, T());
+  if (scb) { stats.push(scb.el); bsig += '|' + scb.sig; scenarioToasts(M, T(), scb.next); }
   const esc = M ? escalationsWaiting(M).length + checksWaiting(M).length + credWaiting(M).length : 0;
   if (esc) stats.push(el('button', { class: 'btn small', type: 'button', onclick: () => showTab('security') }, el('span', { class: 'badge warn' }, String(esc)), ' waiting for the board'));
   if (live() && S.boardUnread.size) stats.push(el('button', { class: 'btn small', type: 'button', onclick: () => { MSG.view = 'inbox'; MSG.sig = null; showTab('messages'); } }, el('span', { class: 'badge' }, String(S.boardUnread.size)), ' unread'));
   // Rebuilt only when something in it changes, so a click isn't lost to a
   // render between press and release.
   const hsig = [S.mode, S.firm, st, live() && S.info && S.info.run ? str(S.info.run.state) : '', M && M.overBudget, esc, live() ? S.boardUnread.size : 0, bsig].join('|');
-  if ($('hstats').dataset.sig !== hsig) { $('hstats').dataset.sig = hsig; $('hstats').replaceChildren(...stats); }
+  if ($('hstats').dataset.sig !== hsig) { $('hstats').dataset.sig = hsig; $('hstats').replaceChildren(...stats); if (scb) scb.adopt(); else SCN.whenEl = null; }
+  // The product (the cluster's ingress on the host) and the cluster's
+  // dashboard, top right on every tab.
+  const pp = str(S.info && S.info.product_port);
+  const lsig = (S.firm || '') + '|' + pp + '|' + dashboardSig();
+  const hl = $('hlinks');
+  if (hl.dataset.sig !== lsig) {
+    hl.dataset.sig = lsig;
+    const a = S.firm ? productLink(pp) : null;
+    hl.replaceChildren(...(a ? [a] : []), ...(S.firm ? dashboardButtons() : []));
+  }
   const tbSec = $('tb-security');
   if (tbSec) { tbSec.textContent = String(esc); tbSec.classList.toggle('hidden', !esc); }
   const tbMsg = $('tb-messages');
@@ -4591,6 +4715,8 @@ async function start() {
     scheduleRender();
   }, 5000);
   setInterval(() => { if (!document.hidden) loadFirms().then(renderHeader); }, 30000);
+  // The scenario's countdown ticks every second (in place; see scenarioButton).
+  setInterval(() => { if (!document.hidden && SCN.whenEl && live()) renderHeader(); }, 1000);
 }
 start();
 </script>
