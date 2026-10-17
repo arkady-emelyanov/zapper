@@ -478,12 +478,16 @@ impl Default for Engine {
     }
 }
 
+/// Agent harnesses zapper knows (`agent.kind`); each is implemented in the
+/// daemon's `harness` module.
+pub const AGENT_KINDS: &[&str] = &["claude-code", "generic"];
+
 /// What runs inside the sandbox and how it is configured.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct AgentSpec {
-    /// `claude-code` renders Claude Code's settings; `generic` only writes
-    /// `files` and `env`.
+    /// The agent harness (`AGENT_KINDS`): `claude-code` sets Claude Code up
+    /// and can run office workers; `generic` only writes `files` and `env`.
     pub kind: String,
     /// Default command of `zapper run`.
     pub command: Vec<String>,
@@ -497,16 +501,35 @@ pub struct AgentSpec {
     pub workdir: String,
     /// Environment; values may use `{{secret:NAME}}`.
     pub env: BTreeMap<String, String>,
-    /// Claude Code: `model` in settings.json.
+    // The agent's configuration, in terms every harness understands; each
+    // writes it in its own place and format (daemon::harness).
+    /// The model the agent uses.
     pub model: Option<String>,
-    /// Claude Code: `permissions.defaultMode` in settings.json.
+    /// How the agent approves its own actions (Claude Code:
+    /// `permissions.defaultMode` in its managed settings).
     pub permission_mode: Option<String>,
-    /// Claude Code: merged into `~/.claude/settings.json`.
-    pub settings: Option<Value>,
-    /// Claude Code: `mcpServers` in `~/.claude.json`.
+    /// Standing instructions: the harness's instructions file (Claude
+    /// Code: `~/.claude/CLAUDE.md`).
+    #[serde(alias = "claude_md")]
+    pub instructions: Option<String>,
+    /// A host directory of skills (`<name>/SKILL.md`), mounted read-only
+    /// where the harness reads skills.
+    pub skills: Option<String>,
+    /// MCP servers: `{name: {command, args, env}}`.
     pub mcp_servers: Option<Value>,
-    /// Claude Code: `~/.claude/CLAUDE.md`.
-    pub claude_md: Option<String>,
+    /// A command the harness runs when the agent is about to end a turn: if
+    /// it prints a reason, the agent goes on with it (Claude Code: a Stop
+    /// hook).
+    pub turn_end: Option<String>,
+    /// Harness-native settings merged into its main config file (Claude
+    /// Code: `~/.claude/settings.json`).
+    pub settings: Option<Value>,
+    /// Files in the harness's config directory (Claude Code: `~/.claude`),
+    /// by path relative to it.
+    pub config_files: BTreeMap<String, String>,
+    /// Host directories mounted in the harness's config directory, at
+    /// `guest` relative to it.
+    pub config_mounts: Vec<Mount>,
     /// Extra files, guest path (`~` is the user's home) to content.
     pub files: BTreeMap<String, String>,
 }
@@ -522,9 +545,13 @@ impl Default for AgentSpec {
             env: BTreeMap::new(),
             model: None,
             permission_mode: None,
-            settings: None,
+            instructions: None,
+            skills: None,
             mcp_servers: None,
-            claude_md: None,
+            turn_end: None,
+            settings: None,
+            config_files: BTreeMap::new(),
+            config_mounts: Vec::new(),
             files: BTreeMap::new(),
         }
     }
@@ -854,6 +881,13 @@ impl Config {
         }
         let engine: Engine = serde_json::from_value(engine).context("engine")?;
         let agent: AgentSpec = serde_json::from_value(agent).context("agent")?;
+        if !AGENT_KINDS.contains(&agent.kind.as_str()) {
+            bail!(
+                "agent.kind {:?}: one of {}",
+                agent.kind,
+                AGENT_KINDS.join(", ")
+            );
+        }
         let layers = chain
             .into_iter()
             .map(|(n, p)| (Scope::Profile(n), p.policy.clone()))

@@ -51,7 +51,7 @@ If the firm has a budget, you were hired with one, and your role may hire (your 
 - **Hire** when the work needs ongoing ownership you can't give it yourself: `hire(role, title, budget, subject, brief, reason)`, from your own balance. The brief is the new hire's first assignment and all they know: the outcome, the context, acceptance criteria, who they work with. Keep some of your budget in reserve.
 - A new hire starts once the security officers' background check clears them; pick the role whose access fits the job, or the officers will object.
 - **Fund** with `fund(worker, tokens, reason)`: give a report more when their work justifies it (you're told when someone runs out), or take unspent budget back from someone who doesn't need it.
-- **Let go** with `release(worker, reason)` when someone's work is done or isn't working out; their reports, open work and unspent budget come back to you.
+- **Letting go**: `release(worker, reason)` lets someone below you go; their reports, open work and unspent budget come back to their manager, and the reason is on record.
 - **Ask your manager** for more budget with what was achieved and what the extra buys. Don't run your team dry: people out of budget stop working.
 - Report your team's spending to your manager as a summary: used against given, what it bought, what is left.
 

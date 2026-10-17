@@ -8,6 +8,7 @@
 pub mod addr;
 pub mod api;
 mod dns;
+pub mod harness;
 pub mod httplog;
 mod nic;
 pub mod office;

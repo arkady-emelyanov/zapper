@@ -68,6 +68,7 @@ crates/zapper/           CLI, daemon, proxy, Firecracker launcher, REST API, web
   src/daemon/office.html   the office UI (org chart, messages, security, drive, statistics, replay)
   src/vmm.rs               `zapper __vmm`: runs Firecracker confined in its own namespaces and root
   src/netns.rs             the guest's network in the VMM's namespace, and traffic capture
+  src/daemon/harness.rs    agent harnesses: Claude Code behind `Harness`/`Driver`/`Conversation`; HARNESS.md for pi and opencode
   src/daemon/session.rs    session lifecycle, guest control channel, exec decisions, recordings
   src/daemon/proxy.rs      egress proxy: tunnels, TLS inspection, secret injection
   src/daemon/addr.rs       which destination addresses are reachable at all

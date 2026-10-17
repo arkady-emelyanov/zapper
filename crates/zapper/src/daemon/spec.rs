@@ -6,10 +6,9 @@
 use std::collections::BTreeMap;
 
 use anyhow::{anyhow, Context, Result};
-use serde_json::{json, Value};
 use zapper_policy::proto::{GuestDisk, GuestFile, GuestSpec};
 use zapper_policy::{
-    merge, placeholder, render, secret_refs, Config, FsRule, NetworkMode, ResolvedProfile, Scope,
+    placeholder, render, secret_refs, Config, FsRule, NetworkMode, ResolvedProfile, Scope,
     SecretMode,
 };
 
@@ -73,18 +72,22 @@ pub fn build(
             render_secrets(config, v).with_context(|| format!("agent.env.{k}"))?,
         );
     }
-    if agent.kind == "claude-code" {
-        env.insert("DISABLE_AUTOUPDATER".into(), "1".into());
-        env.insert(
-            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC".into(),
-            "1".into(),
-        );
-        files.extend(claude_files(profile, &home, env.get("ANTHROPIC_API_KEY")));
-    }
-    for (path, content) in &agent.files {
+    let harness = super::harness::get(&agent.kind)
+        .ok_or_else(|| anyhow!("agent.kind {:?} is not a harness zapper knows", agent.kind))?;
+    harness.guest(profile, &home, &mut env, &mut files);
+    // `files` by guest path, and `config_files` in the harness's config
+    // directory: both may hold secrets.
+    let config_dir = harness.config_dir(&home);
+    let all = agent.files.iter().map(|(p, c)| (p.clone(), c)).chain(
+        agent
+            .config_files
+            .iter()
+            .map(|(p, c)| (format!("{config_dir}/{}", p.trim_start_matches('/')), c)),
+    );
+    for (path, content) in all {
         let path = match path.strip_prefix("~/") {
             Some(rest) => format!("{home}/{rest}"),
-            None => path.clone(),
+            None => path,
         };
         let user_owned = path.starts_with(&home);
         // Files holding guest secrets are private to the user.
@@ -130,93 +133,6 @@ pub fn build(
     })
 }
 
-fn claude_files(profile: &ResolvedProfile, home: &str, api_key: Option<&String>) -> Vec<GuestFile> {
-    let agent = &profile.agent;
-    let mut settings = json!({});
-    if let Some(s) = &agent.settings {
-        merge(&mut settings, s);
-    }
-    if let Some(m) = &agent.model {
-        merge(&mut settings, &json!({ "model": m }));
-    }
-    // The permission mode goes in managed settings, not ~/.claude/settings.json:
-    // Claude Code asks whether to switch to auto mode when the user settings
-    // file sets another mode and no other file does, and each session starts
-    // with a fresh home, so it would ask every time. The managed file is also
-    // root-owned, so the workload can't change it.
-    // https://code.claude.com/docs/en/permission-modes#which-mode-a-session-starts-in
-    let managed = agent.permission_mode.as_ref().map(|mode| {
-        let mut m = json!({ "permissions": { "defaultMode": mode } });
-        if mode == "bypassPermissions" {
-            merge(
-                &mut m,
-                &json!({ "skipDangerousModePermissionPrompt": true }),
-            );
-        }
-        m
-    });
-    let mut state = json!({
-        "hasCompletedOnboarding": true,
-        "bypassPermissionsModeAccepted": true,
-        "projects": { agent.workdir.clone(): { "hasTrustDialogAccepted": true, "hasCompletedProjectOnboarding": true } },
-    });
-    if let Some(m) = &agent.mcp_servers {
-        merge(&mut state, &json!({ "mcpServers": m }));
-    }
-    // Pre-approve the API key (placeholder or value) so Claude Code does not
-    // ask about it.
-    if let Some(key) = api_key {
-        let tail: String = key
-            .chars()
-            .rev()
-            .take(20)
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect();
-        merge(
-            &mut state,
-            &json!({ "customApiKeyResponses": { "approved": [tail], "rejected": [] } }),
-        );
-    }
-    let pretty = |v: &Value| serde_json::to_string_pretty(v).unwrap();
-    let mut files = vec![
-        GuestFile {
-            path: format!("{home}/.claude/settings.json"),
-            content: pretty(&settings),
-            mode: 0o644,
-            user_owned: true,
-        },
-        GuestFile {
-            path: format!("{home}/.claude.json"),
-            content: pretty(&state),
-            mode: 0o600,
-            user_owned: true,
-        },
-    ];
-    if let Some(md) = &agent.claude_md {
-        files.push(GuestFile {
-            path: format!("{home}/.claude/CLAUDE.md"),
-            content: md.clone(),
-            mode: 0o644,
-            user_owned: true,
-        });
-    }
-    if let Some(m) = managed {
-        files.push(GuestFile {
-            path: MANAGED_SETTINGS.into(),
-            content: pretty(&m),
-            mode: 0o644,
-            user_owned: false,
-        });
-    }
-    files
-}
-
-/// Claude Code's managed settings file on Linux.
-/// https://code.claude.com/docs/en/managed-settings
-const MANAGED_SETTINGS: &str = "/etc/claude-code/managed-settings.json";
-
 /// Policy layers of a session in evaluation order.
 pub fn layers_of(
     layers: &[(Scope, zapper_policy::Policy)],
@@ -227,6 +143,8 @@ pub fn layers_of(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::daemon::harness::MANAGED_SETTINGS;
+    use serde_json::Value;
 
     #[test]
     fn permission_mode_goes_to_managed_settings() {

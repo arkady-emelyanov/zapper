@@ -72,18 +72,22 @@ profiles:
 
 | Key | Default | Meaning |
 |---|---|---|
-| `kind` | `claude-code` | `claude-code` also writes Claude Code's files (below); `generic` writes `env` and `files` |
+| `kind` | `claude-code` | The agent harness: `claude-code` sets Claude Code up from the keys below (and can run office workers); `generic` writes only `env` and `files`. See [agent harnesses](#agent-harnesses) |
 | `command` | `[claude]` | What `zapper run` and `zapper attach` start |
 | `user` | `agent` | The user the command runs as, created with uid 1000 |
 | `root` | `false` | Run as root; this gives up the in-guest guardrails ([security](security.md#what-is-enforced-where)) |
 | `workdir` | `/work` | Working directory |
 | `env` | | Environment. `{{secret:NAME}}` becomes a placeholder for `proxy` secrets and the value for `guest` secrets |
 | `files` | | Guest path (`~` is the home directory) → content, with `{{secret:NAME}}` as in `env`. Files with a `guest` secret are created 0600 |
-| `model` | | Claude Code: `model` in `~/.claude/settings.json` |
-| `permission_mode` | | Claude Code: `permissions.defaultMode` in the managed settings file, `/etc/claude-code/managed-settings.json`, which is root-owned. Set there, Claude Code doesn't ask at each start whether to switch to auto mode, and the workload can't change it. With `bypassPermissions`, the file also sets `skipDangerousModePermissionPrompt` |
-| `settings` | | Claude Code: merged into `~/.claude/settings.json` |
-| `mcp_servers` | | Claude Code: `mcpServers` in `~/.claude.json` |
-| `claude_md` | | Claude Code: `~/.claude/CLAUDE.md` |
+| `model` | | The model. Claude Code: `model` in `~/.claude/settings.json` |
+| `permission_mode` | | How the agent approves its own actions. Claude Code: `permissions.defaultMode` in the managed settings file, `/etc/claude-code/managed-settings.json`, which is root-owned. Set there, Claude Code doesn't ask at each start whether to switch to auto mode, and the workload can't change it. With `bypassPermissions`, the file also sets `skipDangerousModePermissionPrompt` |
+| `instructions` | | Standing instructions, written to the harness's instructions file. Claude Code: `~/.claude/CLAUDE.md` (`claude_md` is accepted too) |
+| `skills` | | A host directory of skills (`<name>/SKILL.md`), mounted read-only where the harness reads them. Claude Code: `~/.claude/skills` |
+| `mcp_servers` | | MCP servers, `{name: {command, args, env}}`. Claude Code: `mcpServers` in `~/.claude.json` |
+| `turn_end` | | A command run when the agent is about to end a turn; what it prints makes the agent go on. Claude Code: a `Stop` hook |
+| `settings` | | Harness-native settings merged into its main config file. Claude Code: `~/.claude/settings.json` |
+| `config_files` | | Files in the harness's config directory, by path relative to it (Claude Code: `~/.claude`), with `{{secret:NAME}}` as in `files` |
+| `config_mounts` | | Host directories mounted in the harness's config directory: `{host, guest, mode, extra}` with `guest` relative to it, read-only unless `mode: rw` (copied in at boot, like `mounts`) |
 
 Every session's environment also has:
 
@@ -92,6 +96,22 @@ Every session's environment also has:
 - in vsock mode, `HTTP_PROXY` and `HTTPS_PROXY` set to `http://127.0.0.1:3128`
 
 For `claude-code`, zapper also sets `DISABLE_AUTOUPDATER=1` and `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`, and marks onboarding, the folder trust dialog and the bypass-permissions prompt as accepted.
+
+### Agent harnesses
+
+The agent keys above are neutral: each harness (`crates/zapper/src/daemon/harness.rs`) writes them where and how its agent reads them, and the office gives its workers their preamble, skills, tools and turn-end hook through them, so it doesn't depend on one agent. A harness implements `Harness` (its config directory, its skills directory, files and environment from the neutral keys, mounts) and, to run office workers, `Driver`, which starts a `Conversation`: the command line, a handshake if the protocol has one, how a prompt goes in, what each output line means (the session id for resuming, the current tool, the end of a turn with its tokens, a rate limit or failure, a reply to write back), and handing over a message while the agent works if it can.
+
+Only `claude-code` is implemented. [HARNESS.md](../HARNESS.md) describes the interfaces in full and how pi and opencode would implement them; in short:
+
+| | Claude Code | pi | opencode (V2) |
+|---|---|---|---|
+| Config directory | `~/.claude` | `~/.pi/agent` (`PI_CODING_AGENT_DIR`) | `~/.config/opencode`; `/etc/opencode` for managed settings |
+| Instructions | `CLAUDE.md` | `AGENTS.md` | `AGENTS.md` |
+| Skills | `skills/` | `skills/` | `skills/` |
+| MCP servers | `mcpServers` in `~/.claude.json` | `mcp.json`, the same shape | `mcp.servers` in `opencode.json`, `command` as one array |
+| Turn end | a `Stop` hook | an extension (`agent_before_settle`), or the host's `follow_up` | none; the host's `queue` delivery |
+| Headless | `claude -p`, stream-json in and out | `pi --mode rpc`, JSON lines | `opencode acp` (JSON-RPC over stdio) or `opencode serve` |
+| Resume | `--resume ID` | `--session-id ID` | `--session ID` |
 
 ### firms
 

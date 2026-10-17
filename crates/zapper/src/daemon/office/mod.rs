@@ -30,7 +30,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use tokio::sync::{Notify, Semaphore};
 use zapper_policy::proto::GuestFile;
-use zapper_policy::{Config, Firm, Mount, MountMode, Policy, BOARD};
+use zapper_policy::{Config, Firm, Policy, BOARD};
 
 use super::session::{self, NewSession, Session};
 use super::{now, random_id, Daemon};
@@ -746,6 +746,9 @@ pub async fn up_with(d: &Arc<Daemon>, name: &str, opts: &StartOptions) -> Result
         articles,
     } = with_options(name, firm, &config, opts)?;
     check_resources(d, &config, &firm)?;
+    for r in firm.roles.values() {
+        harness_driver(&config.resolve(&r.profile)?)?;
+    }
     let id = run_id();
     let dir = firm_dir(d, name).join("runs").join(&id);
     for sub in ["transcripts", "drive", "skills", "empty"] {
@@ -915,26 +918,22 @@ pub(super) async fn boot_worker(
     role: &zapper_policy::Role,
 ) -> Result<()> {
     let profile = config.resolve(&role.profile)?;
+    harness_driver(&profile)?;
     let user = profile.agent.user.clone();
     let home = format!("/home/{user}");
     let services = facility::services_for(run, &w.role);
-    let mut files = vec![GuestFile {
-        path: format!("{home}/.claude/CLAUDE.md"),
-        content: prompts::preamble(
-            &run.firm,
-            &run.chart(),
-            &run.config,
-            &w.name,
-            &services,
-            run.prompts.get(&w.name).map(String::as_str),
-            &run.articles,
-        ) + &contracts::of(run, &w.name)
-            .map(|c| contracts::preamble(&c))
-            .unwrap_or_default(),
-        mode: 0o644,
-        user_owned: true,
-    }];
-    files.extend(facility::credentials_for(run, &w.name, &w.role, &home)?);
+    let preamble = prompts::preamble(
+        &run.firm,
+        &run.chart(),
+        &run.config,
+        &w.name,
+        &services,
+        run.prompts.get(&w.name).map(String::as_str),
+        &run.articles,
+    ) + &contracts::of(run, &w.name)
+        .map(|c| contracts::preamble(&c))
+        .unwrap_or_default();
+    let mut files = facility::credentials_for(run, &w.name, &w.role, &home)?;
     // A headless browser command, for the image's Playwright.
     files.push(GuestFile {
         path: "/usr/local/bin/browse".into(),
@@ -952,16 +951,20 @@ pub(super) async fn boot_worker(
             user_owned: true,
         });
     }
+    // The worker's setup in the harness's neutral terms: the preamble as
+    // its instructions, the role's skills, the office's tools, and mail that
+    // arrives while the agent works handed over before it ends the turn
+    // (foreman::stop_check). The harness puts each where it reads it.
+    let skills_dir = run.dir.join("skills").join(&w.role);
     let mut overlay = json!({
+        "instructions": preamble,
+        "skills": skills_dir.to_string_lossy(),
         "mcp_servers": { "office": { "command": ops::AGENT_PATH, "args": ["office", "mcp"] } },
-        // Mail that arrives while Claude works is handed over before it
-        // stops, in the same turn (foreman::stop_check).
-        "settings": { "hooks": { "Stop": [{ "hooks": [{ "type": "command", "command": format!("{} office stop-hook", ops::AGENT_PATH), "timeout": 30 }] }] } },
+        "turn_end": format!("{} office stop-hook", ops::AGENT_PATH),
     });
     if let Some(m) = &role.model {
         overlay["model"] = json!(m);
     }
-    let skills_dir = run.dir.join("skills").join(&w.role);
     let link = FirmLink {
         firm: run.firm.clone(),
         member: w.name.clone(),
@@ -975,12 +978,7 @@ pub(super) async fn boot_worker(
         policy: Policy::default(),
         firm: Some(link),
         files,
-        mounts: vec![Mount {
-            host: skills_dir.to_string_lossy().into_owned(),
-            guest: format!("{home}/.claude/skills"),
-            mode: MountMode::Ro,
-            extra: None,
-        }],
+        mounts: vec![],
         agent_overlay: Some(overlay),
         forwards: vec![],
     };
@@ -991,6 +989,16 @@ pub(super) async fn boot_worker(
     );
     *w.session.lock().unwrap() = Some(s);
     Ok(())
+}
+
+/// How the office drives a profile's agent: its harness's driver.
+fn harness_driver(
+    profile: &zapper_policy::ResolvedProfile,
+) -> Result<&'static dyn crate::daemon::harness::Driver> {
+    let kind = &profile.agent.kind;
+    crate::daemon::harness::get(kind)
+        .and_then(|h| h.driver())
+        .ok_or_else(|| anyhow!("profile {}: agent kind {kind} can't run an office worker (one that can: claude-code)", profile.name))
 }
 
 /// Follow-ups, digests and expiries.

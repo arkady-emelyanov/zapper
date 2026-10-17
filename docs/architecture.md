@@ -51,7 +51,7 @@ What happens when a session starts, for each worker at `zapper firm up` or for `
 5. The guest boots. Its first process is `zapper-agent`.
 6. The agent connects to the daemon and receives the setup: user, environment, files, disks.
 7. The agent sets up the guest and reports ready. This takes about a second.
-8. A terminal is opened to the workload: for a worker, by the foreman, which starts Claude Code headless in it ([the office](#the-office)); for `zapper run`, by the CLI.
+8. A terminal is opened to the workload: for a worker, by the foreman, which starts its agent headless through the agent's harness, Claude Code today ([the office](#the-office), [agent harnesses](configuration.md#agent-harnesses)); for `zapper run`, by the CLI.
 
 When the workload exits, the daemon stops the VM and deletes its disks. The audit log and the terminal recordings stay.
 

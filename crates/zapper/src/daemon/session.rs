@@ -273,6 +273,13 @@ pub async fn create(daemon: Arc<Daemon>, new: NewSession) -> Result<Arc<Session>
         resolved.agent = serde_json::from_value(agent).context("agent overlay")?;
     }
     resolved.mounts.extend(new.mounts.iter().cloned());
+    // The agent's skills and configuration directories, where its harness
+    // reads them.
+    if let Some(h) = super::harness::get(&resolved.agent.kind) {
+        let home = format!("/home/{}", resolved.agent.user);
+        let extra = h.mounts(&resolved.agent, &home);
+        resolved.mounts.extend(extra);
+    }
     let running = daemon
         .sessions
         .read()
