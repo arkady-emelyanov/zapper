@@ -129,11 +129,14 @@ fn subject_of(r: &Request) -> String {
 /// The officer who gets a new request: round robin, never the requester.
 fn pick_officer(run: &FirmRun, sec: &mut Security, requester: &str) -> Option<String> {
     let chart = run.chart();
+    // Officers out of budget can't take it: it goes to the others, or to
+    // the board.
+    let funded = |o: &String| run.ledger.lock().unwrap().can_work(o);
     let officers: Vec<&String> = chart
         .security
         .officers
         .iter()
-        .filter(|o| *o != requester)
+        .filter(|o| *o != requester && funded(o))
         .collect();
     if officers.is_empty() {
         return None;
@@ -402,6 +405,53 @@ pub fn decide_screening(
     Ok(json!({ "screening": id, "worker": s.worker, "state": s.state }))
 }
 
+/// The rule that a security officer is the first hire: a hirer who can hire
+/// one may not hire or contract anyone else while the firm has none (other
+/// than the CEO, who holds security meanwhile).
+pub fn officer_first(run: &FirmRun, hirer: &str, role: &str) -> Result<()> {
+    if !run.config.security.officer_first {
+        return Ok(());
+    }
+    let roles = &run.config.roles;
+    if roles.get(role).is_some_and(|r| r.officer) {
+        return Ok(());
+    }
+    let hirer_role = run.chart().worker(hirer).map(|w| w.role.clone());
+    let can_hire_officer = hirer_role.and_then(|r| roles.get(&r)).is_some_and(|r| {
+        r.hires
+            .iter()
+            .any(|h| roles.get(h).is_some_and(|x| x.officer))
+    });
+    if !can_hire_officer {
+        return Ok(());
+    }
+    let chart = run.chart();
+    let root = chart.root().map(str::to_string);
+    let has_officer = chart
+        .security
+        .officers
+        .iter()
+        .any(|o| Some(o) != root.as_ref())
+        || chart
+            .workers
+            .iter()
+            .any(|w| roles.get(&w.role).is_some_and(|r| r.officer));
+    if has_officer {
+        return Ok(());
+    }
+    bail!("hire a security officer first: nobody else can be hired or contracted until the firm has one. The officer has their own budget (security's share of the approved budget), so it costs your own balance little")
+}
+
+/// Whether `worker`, a hired officer, is the first the firm has: no one
+/// else in it has an officer's role.
+pub fn is_first_officer(run: &FirmRun, worker: &str) -> bool {
+    let chart = run.chart();
+    !chart
+        .workers
+        .iter()
+        .any(|w| w.name != worker && run.config.roles.get(&w.role).is_some_and(|r| r.officer))
+}
+
 /// Sets who the security officers are, in the chart and on the workers,
 /// and hands what the ones who stopped had waiting to the others.
 fn set_officers(run: &FirmRun, officers: Vec<String>, by: &str, reason: &str) {
@@ -553,6 +603,8 @@ pub fn appoint(
         by,
         &format!("{worker} cleared as a security officer"),
     );
+    // Security is funded by the board: its share of the budget goes to them.
+    super::workforce::settle_security(run);
     run.notice(worker, "You are a security officer", &format!("[Automatic notice] You are cleared and are now one of the firm's security officers: colleagues' access requests and background checks come to you, and you watch the firm's traffic, as the security-review skill describes.{}\n", if handover { " You take security over from the CEO." } else { "" }));
     if let (true, Some(r)) = (handover, root) {
         run.notice(&r, "Security is handed over", &format!("[Automatic notice] {worker} is cleared as a security officer and takes over security from you: access requests and background checks go to them now, and you no longer decide them. If the firm has no officer again, security comes back to you.\n"));

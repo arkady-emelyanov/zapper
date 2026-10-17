@@ -53,6 +53,7 @@ k3s with Traefik as ingress, and two namespaces: `dev`, where everyone builds an
 - A cluster grant puts a configured `~/.kube/config` on your machine (namespace `dev`); it goes when the grant ends.
 - In `dev`, name everything with your name first (`ada-api`) and leave others' things alone. Reach a service with `kubectl -n dev port-forward svc/ada-api 18080:80`. No Ingress in `dev`.
 - `prod` changes only in a release.
+- Anything the work needs inside the cluster, such as an internal container registry, you deploy yourself with the credentials you hold; a grant is the permission. Nobody approves tools. Ask security (`request_access`, `credentials_request`) only for access you lack.
 
 ## The shared drive
 

@@ -86,6 +86,8 @@ pub fn board_routes() -> Router<Arc<Daemon>> {
         .route("/firms/{f}/security/rules/{id}/promote", post(promote))
         .route("/firms/{f}/runs/{run}", delete(prune))
         .route("/firms/{f}/budget/{id}", post(budget_decide))
+        .route("/firms/{f}/release", post(board_release))
+        .route("/firms/{f}/fund", post(board_fund))
         .route(
             "/firms/{f}/security/screenings/{id}",
             post(screening_decide),
@@ -594,6 +596,29 @@ async fn budget_decide(
         .ok_or_else(|| bad("approve: true or false"))?;
     let note = v["note"].as_str().unwrap_or("");
     Ok(Json(super::workforce::decide(&run, &id, approve, note)?))
+}
+
+/// The board gives a worker tokens: `{worker, tokens, reason}`.
+async fn board_fund(State(d): D, Path(f): Path<String>, text: String) -> R<Json<Value>> {
+    let v = body(&text)?;
+    let run = d.office.active(&f)?;
+    let worker = v["worker"].as_str().ok_or_else(|| bad("worker: a name"))?;
+    let tokens = super::workforce::tokens_arg(&v["tokens"], "tokens")?;
+    let reason = v["reason"].as_str().unwrap_or("");
+    Ok(Json(super::workforce::fund(
+        &run, BOARD, worker, tokens, reason,
+    )?))
+}
+
+/// The board lets a worker go: `{worker, reason}`.
+async fn board_release(State(d): D, Path(f): Path<String>, text: String) -> R<Json<Value>> {
+    let v = body(&text)?;
+    let run = d.office.active(&f)?;
+    let worker = v["worker"].as_str().ok_or_else(|| bad("worker: a name"))?;
+    let reason = v["reason"].as_str().unwrap_or("");
+    Ok(Json(
+        super::workforce::release(&d, &run, BOARD, worker, reason).await?,
+    ))
 }
 
 async fn mark_read(State(d): D, Path(f): Path<String>, text: String) -> R<Json<Value>> {

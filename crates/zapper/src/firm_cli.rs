@@ -156,6 +156,24 @@ pub enum FirmCmd {
         #[arg(long, default_value = "")]
         note: String,
     },
+    /// The board gives a worker tokens, on top of the approved budget
+    /// (security officers who ran out, for one).
+    Fund {
+        firm: String,
+        worker: String,
+        /// Tokens, like 200k
+        tokens: String,
+        #[arg(long)]
+        reason: String,
+    },
+    /// The board lets a worker go (the only way to let a security officer
+    /// go).
+    Release {
+        firm: String,
+        worker: String,
+        #[arg(long)]
+        reason: String,
+    },
     /// The run's budget: what the board approved, balances, the CEO's
     /// requests; with approve or decline, the board's answer to a request.
     Budget {
@@ -733,8 +751,8 @@ pub async fn firm(c: &Client, cmd: FirmCmd, json_out: bool) -> Result<i32> {
             let f = &run["funds"];
             if f["enabled"] == json!(true) {
                 println!(
-                    "\nbudget: {} tokens (seed {}, approved {}), spent {}",
-                    f["total"], f["seed"], f["approved"], f["spent"]
+                    "\nbudget: {} tokens (approved {}; seed {} included), spent {}",
+                    f["total"], f["approved"], f["seed"], f["spent"]
                 );
             }
         }
@@ -892,6 +910,45 @@ pub async fn firm(c: &Client, cmd: FirmCmd, json_out: bool) -> Result<i32> {
                 );
             }
         }
+        FirmCmd::Fund {
+            firm,
+            worker,
+            tokens,
+            reason,
+        } => {
+            let v = c
+                .json(
+                    Method::POST,
+                    &format!("/v1/firms/{firm}/fund"),
+                    Some(
+                        json!({ "worker": worker, "tokens": tokens, "reason": reason }).to_string(),
+                    ),
+                )
+                .await?;
+            if json_out {
+                print_json(&v);
+            } else {
+                eprintln!("zapper: {worker} has {} tokens now", v["their_balance"]);
+            }
+        }
+        FirmCmd::Release {
+            firm,
+            worker,
+            reason,
+        } => {
+            let v = c
+                .json(
+                    Method::POST,
+                    &format!("/v1/firms/{firm}/release"),
+                    Some(json!({ "worker": worker, "reason": reason }).to_string()),
+                )
+                .await?;
+            if json_out {
+                print_json(&v);
+            } else {
+                eprintln!("zapper: {worker} left the firm");
+            }
+        }
         FirmCmd::Budget {
             firm,
             action,
@@ -930,8 +987,8 @@ pub async fn firm(c: &Client, cmd: FirmCmd, json_out: bool) -> Result<i32> {
                 return Ok(0);
             }
             println!(
-                "budget: {} tokens (seed {}, approved {}), spent {}",
-                f["total"], f["seed"], f["approved"], f["spent"]
+                "budget: {} tokens (approved {}; seed {} included), spent {}",
+                f["total"], f["approved"], f["seed"], f["spent"]
             );
             let rows = f["requests"]
                 .as_array()

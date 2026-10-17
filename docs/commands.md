@@ -47,6 +47,8 @@ The office ([office](office.md)), as the board:
 | `zapper firm decide FIRM REQUEST --allow\|--deny [--scope once\|worker\|role] [--reason TEXT]` / `zapper firm revoke FIRM RULE` | Decide a request as the board / remove a standing approval |
 | `zapper firm screen FIRM CHECK --clear\|--object [--note TEXT]` | Clear a new hire's background check as the board, or object |
 | `zapper record status` / `zapper record verify FIRM RUN` | Who keeps the record and whether it's being written / a run's record checked against the keeper's chains and signatures |
+| `zapper firm fund FIRM WORKER TOKENS --reason TEXT` | The board gives a worker tokens on top of the approved budget (which grows by that much): for an officer who ran out, say |
+| `zapper firm release FIRM WORKER --reason TEXT` | The board lets a worker go; the only way to let a security officer go |
 | `zapper firm budget FIRM [approve\|decline REQUEST [--note TEXT]]` | The run's budget, balances and the CEO's budget requests; or the board's answer to one |
 | `zapper mail send FIRM --to NAME[,NAME] [--cc …] [--subject S] [--kind K] [--due 2h] [--reply-to ID] [--body TEXT]` | Write as the board; the body is read from stdin if `--body` is missing |
 | `zapper mail ls FIRM [--for WORKER] [--unread]` / `zapper mail thread FIRM THREAD` | The board's (or a worker's) inbox / a thread |

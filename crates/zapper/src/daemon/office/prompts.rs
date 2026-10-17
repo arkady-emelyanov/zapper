@@ -82,12 +82,12 @@ pub const CHARTER: &[Article] = &[
     Article {
         id: "budget",
         title: "Money",
-        text: "The CEO starts with a seed to scope the task, then asks the board for one budget, with a plan and a reason; the board approves or declines it. Every turn spends tokens from the worker's own balance. Budgets flow down the chart, and whoever runs out stops until their manager funds them. The security officers get their share of every grant (see Security's money).",
+        text: "The CEO starts with a seed to scope the task, then asks the board for one budget, a total that includes the seed, with a plan and a reason; the board approves or declines it. Every turn spends tokens from the worker's own balance. Budgets flow down the chart, and whoever runs out stops until their manager funds them. The security officers get their share of every grant (see Security's money).",
     },
     Article {
         id: "hiring",
         title: "Hiring",
-        text: "Managers hire from their own budget, each hire with a brief and a reason. Before a hire takes a turn, a security officer other than the hirer does a background check (the board does when no other officer can); an objection cancels the hire and returns the budget. Managers may let their people go; only the board lets the CEO go.",
+        text: "Managers hire from their own budget, each hire with a brief and a reason. Before a hire takes a turn, a security officer other than the hirer does a background check (the board does when no other officer can); an objection cancels the hire and returns the budget. Managers may let their people go; only the board lets the CEO go. Security officers report to the board, not to whoever hired them, and only the board lets them go.",
     },
     Article {
         id: "security",
@@ -229,8 +229,9 @@ product, posts, outside sites or public repositories.\n",
             "\nYou hold security: the firm has no security officer, so you decide\n\
 colleagues' access requests and background checks and watch the firm's\n\
 traffic, as the security-review skill describes; your own requests go to the\n\
-board. Hire a security officer when the firm needs one (more people, more\n\
-access to decide): once cleared, security passes to them.\n",
+board. Hire a security officer first, before anyone else (the office refuses\n\
+other hires and contracts until you do): they have their own budget, and once\n\
+they are cleared, security passes to them.\n",
         );
     } else if firm.is_officer(worker) || officer_role {
         s.push_str("\nYou are a security officer: you decide colleagues' access requests and watch\nthe firm's traffic, as the security-review skill describes.\n");
@@ -248,7 +249,7 @@ people are hired and let go, so call directory() for the current chart.\n",
         if firm.root() == Some(worker) {
             s.push_str(
                 "\nYou start with a small seed budget to scope the board's task. The board\n\
-approves the run's budget: ask with budget_request (one total, a plan, a\n\
+approves the run's budget: ask with budget_request (one total, seed included, a plan, a\n\
 reason), revise if declined. Once approved, running the firm is up to you,\n\
 as the ceo skill describes. Report spending to the board as a summary with\n\
 key metrics (used against approved, burn rate, runway, headcount, spending\n\

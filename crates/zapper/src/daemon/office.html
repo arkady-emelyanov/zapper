@@ -542,6 +542,7 @@
 <main>
   <section class="tab" id="tab-kickoff"></section>
   <section class="tab" id="tab-overview"></section>
+  <section class="tab" id="tab-people"></section>
   <section class="tab" id="tab-work"></section>
   <section class="tab" id="tab-messages"></section>
   <section class="tab" id="tab-security"></section>
@@ -687,7 +688,7 @@ function completeBytes(text) {
 
 // ────────────────────────────── state ──────────────────────────────
 
-const TABS = [['kickoff', 'Kickoff'], ['overview', 'Organization'], ['work', 'Work'], ['messages', 'Messages'], ['security', 'Security'], ['drive', 'Shared drive'], ['git', 'Git'], ['vms', 'VMs'], ['stats', 'Statistics'], ['runs', 'Runs']];
+const TABS = [['kickoff', 'Kickoff'], ['overview', 'Organization'], ['people', 'People'], ['work', 'Work'], ['messages', 'Messages'], ['security', 'Security'], ['drive', 'Shared drive'], ['git', 'Git'], ['vms', 'VMs'], ['stats', 'Statistics'], ['runs', 'Runs']];
 const S = {
   firms: [], firm: null, info: null, tab: 'overview',
   mode: 'live',          // 'live' or 'replay'
@@ -728,7 +729,7 @@ function newModel() {
     // budget requests, what the board approved.
     fundsIn: new Map(), fundsOut: new Map(), moves: [], budgetReqs: new Map(), approved: 0, hires: [],
     // Background checks on new hires.
-    screenings: new Map(),
+    screenings: new Map(), scenarioLog: [],
     // Who held security when, and the board's own articles.
     officerChanges: [], articles: '',
     // Contracts: offers, negotiations, agreed terms, how they ended.
@@ -811,10 +812,23 @@ function apply(M, e) {
       w.left = { ts, by: str(e.by), reason: str(e.reason), to, returned: Number(e.returned) || 0 };
       setState(M, w, 'off', '', ts);
       for (const o of M.workers.values()) if (o.reports_to === w.name) o.reports_to = to;
+      // What they hadn't read, and the requests they hadn't answered, go to their manager to read.
+      const mgr = M.workers.get(to);
+      if (mgr) {
+        for (const id of [...w.unread, ...arr(e.moved).map(str)]) { const m = M.mails.get(id); if (m && m.from !== to) mgr.unread.add(id); }
+      }
+      w.unread = new Set();
       // Their open work moves to their manager: re-key what they owed.
       for (const [k, o] of [...M.obl]) {
         if (o.settled) continue;
         if (o.creditor === w.name) o.creditor = to;
+        // What the manager asked of them is nobody's debt once they are gone.
+        if ((o.debtor === w.name && o.creditor === to) || (o.debtor === to && o.creditor === to)) {
+          M.obl.delete(k);
+          const t = M.threads.get(o.thread);
+          if (t) t.obl = t.obl.filter((x) => x !== k);
+          continue;
+        }
         if (o.debtor === w.name) {
           M.obl.delete(k);
           o.debtor = to; o.key = o.message + '|' + to;
@@ -823,6 +837,10 @@ function apply(M, e) {
           if (t) t.obl = t.obl.map((x) => (x === k ? o.key : x));
         }
       }
+      break;
+    }
+    case 'scenario': {
+      M.scenarioLog.push({ ts, event: str(e.event), worker: str(e.worker), why: str(e.why || e.error), what: e.what && typeof e.what === 'object' ? e.what : null, index: e.index });
       break;
     }
     case 'credentials': {
@@ -906,7 +924,7 @@ function apply(M, e) {
         M.budgetReqs.set(e.id, { id: e.id, by: str(e.by), total: Number(e.total) || 0, plan: str(e.plan), reason: str(e.reason), message: str(e.message), thread: str(e.thread), ts, state: 'pending', note: '', decided: null });
       } else if (ev === 'decided') {
         const r = M.budgetReqs.get(str(e.id));
-        if (r) { r.state = e.approved ? 'approved' : 'declined'; r.note = str(e.note); r.decided = ts; if (e.approved) M.approved += r.total; }
+        if (r) { r.state = e.approved ? 'approved' : 'declined'; r.note = str(e.note); r.decided = ts; if (e.approved) M.approved += e.granted != null ? Number(e.granted) || 0 : r.total; }
       } else if (ev === 'exhausted') {
         const w = M.workers.get(str(e.worker));
         if (w) w.exhausted = ts;
@@ -979,6 +997,13 @@ function apply(M, e) {
         const tok = Number(e.tokens) || 0;
         w.tokens += tok;
         M.turns.push({ worker: w.name, ts, tokens: tok, ms: Number(e.ms) || 0, error: !!e.is_error });
+      } else if (e.event === 'extended') {
+        // Mail handed over while the turn ran: read, like at the start.
+        for (const id of arr(e.messages)) {
+          w.unread.delete(str(id));
+          const m = M.mails.get(str(id));
+          if (m) { w.turnThreads.add(m.thread); if (w.span) w.span.threads.add(m.thread); }
+        }
       } else if (e.event === 'interrupted') { endSpan(); w.inTurn = false; w.interrupted++; }
       else if (e.event === 'rate_limited') { endSpan(); w.inTurn = false; w.rateLimited++; }
       break;
@@ -1078,6 +1103,8 @@ function statusLine(M, w, now) {
 // Credential requests waiting for the board, and a grant's level now.
 const credWaiting = (M) => [...M.credReqs.values()].filter((q) => !q.decider && (q.state === 'pending' || q.state === 'escalated'));
 const grantOf = (M, w, r) => { const g = M.grants.get(w) && M.grants.get(w).get(r); return g && (g.expires == null || g.expires > T()) ? g : null; };
+// Pending requests an officer has but hasn't answered: the board sees them too and may decide them.
+const withOfficers = (M) => [...M.requests.values()].filter((r) => r.state === 'pending' && !r.board_asked);
 const escalationsWaiting = (M) => [...M.requests.values()].filter((r) => (r.state === 'escalated' || (r.board_asked && r.state === 'pending')));
 // Background checks the board has to answer: no officer, or none in time.
 const checksWaiting = (M) => [...M.screenings.values()].filter((c) => c.state === 'pending' && (c.boardAsked || !c.officer));
@@ -2506,7 +2533,7 @@ function updateSecurity() {
   renderChecks(M);
   renderAccess(M);
   // Escalations.
-  const esc = escalationsWaiting(M);
+  const esc = escalationsWaiting(M).concat(withOfficers(M));
   const box = $('sec-esc');
   const ids = new Set(esc.map((r) => r.id));
   for (const [id, c] of SEC.cards) if (!ids.has(id)) { c.el.remove(); SEC.cards.delete(id); }
@@ -2524,7 +2551,7 @@ function updateSecurity() {
     }
     const rec = r.decision && r.decision.recommendation;
     c.info.replaceChildren(
-      el('div', { style: 'display:flex;gap:8px;align-items:center;flex-wrap:wrap' }, pill('escalated', r.state === 'escalated' ? 'escalated' : 'unanswered'),
+      el('div', { style: 'display:flex;gap:8px;align-items:center;flex-wrap:wrap' }, r.state === 'escalated' ? pill('escalated', 'escalated') : r.board_asked ? pill('escalated', 'unanswered') : pill('waiting', 'with ' + str(r.officer || 'an officer') + ' · you may decide it'),
         el('b', {}, r.worker), el('span', { class: 'mono' }, reqWhat(r)), el('span', { class: 'muted small', style: 'margin-left:auto' }, r.id + ' · ' + ago(r.created))),
       r.title ? el('div', { style: 'margin-top:6px' }, r.title) : '',
       el('div', { class: 'small', style: 'margin-top:4px' }, el('span', { class: 'muted' }, 'Reason: '), r.reason),
@@ -2639,8 +2666,8 @@ function renderAccess(M) {
   const reqRow = (q) => el('div', { class: 'card', style: 'margin-bottom:8px' + (!q.decider ? ';border-left:3px solid var(--warn)' : '') },
     el('div', { style: 'display:flex;gap:8px;align-items:baseline;flex-wrap:wrap' },
       miniAvatar(q.worker), el('b', {}, cap(q.worker)), el('span', {}, 'asks ' + q.level + ' on ' + q.resource), el('span', { class: 'muted small' }, q.id + ', ' + ago(q.ts)),
-      pill('waiting', q.decider ? 'waiting for ' + cap(q.decider) : 'waiting for you'),
-      !q.decider && can ? el('span', { class: 'bud-act' }, el('button', { class: 'btn ok small', type: 'button', onclick: decideCred(q, true) }, 'Grant'), el('button', { class: 'btn small', type: 'button', onclick: decideCred(q, false) }, 'Deny')) : ''),
+      pill('waiting', q.decider ? 'waiting for ' + cap(q.decider) + ' · you may decide it' : 'waiting for you'),
+      can ? el('span', { class: 'bud-act' }, el('button', { class: 'btn ok small', type: 'button', onclick: decideCred(q, true) }, 'Grant'), el('button', { class: 'btn small', type: 'button', onclick: decideCred(q, false) }, 'Deny')) : ''),
     el('div', { class: 'small', style: 'margin-top:4px' }, el('b', {}, 'Reason: '), q.reason));
   const cell = (w, r) => {
     const g = grantOf(M, w.name, r);
@@ -3281,7 +3308,7 @@ function startForm(running) {
     el('details', {}, el('summary', { class: 'muted small' }, 'Extra prompt (optional): ' + hint), promptInput));
   // The terms.
   const seed = el('input', { value: st.seed ? fmtTok(st.seed) : '', maxlength: 12, placeholder: '1.2M' });
-  const share = el('input', { type: 'number', min: 0, max: 100, step: 1, value: st.security_share != null ? String(Math.round(Number(st.security_share) * 100)) : '10' });
+  const share = el('input', { type: 'number', min: 0, max: 100, step: 1, value: st.security_share != null ? String(Math.round(Number(st.security_share) * 100)) : '20' });
   const conc = el('input', { type: 'number', min: 1, max: 64, step: 1, value: String(st.max_concurrent || 3) });
   const turns = el('input', { type: 'number', min: 0, step: 10, value: String(st.daily_turns != null ? st.daily_turns : 400) });
   const articles = el('textarea', { rows: 4, maxlength: 20000, placeholder: 'Optional: your own articles, binding on everyone, e.g. "No paid services without the board\'s approval." "Everything we ship is open source."' });
@@ -3497,7 +3524,7 @@ function kickoffSide(M, root, now) {
   const done = jobs.filter((o) => o.settled).length;
   out.push(el('h2', { class: 'sec' }, 'The run in numbers'),
     el('div', { class: 'cards' },
-      kpi('Budget', fmtTok(total), M.approved ? 'seed ' + fmtTok(seed) + ' + approved ' + fmtTok(M.approved) : 'seed only: nothing approved yet'),
+      kpi('Budget', fmtTok(total), M.approved ? 'approved, seed ' + fmtTok(seed) + ' included' : 'seed only: nothing approved yet'),
       kpi('Spent', fmtTok(spent), total ? Math.round((100 * spent) / total) + '% of the budget' : ''),
       kpi('Left', fmtTok(left), left <= 0 ? 'spent: work stops' : ''),
       kpi('Burn rate', fmtTok(burn) + '/h', burn > 0 && left > 0 ? 'runway ' + fmtDur((left / burn) * 3600) : ''),
@@ -3676,6 +3703,77 @@ function tickets(M, now) {
     k.status = k.end ? 'done' : k.working ? 'doing' : k.openKids ? 'waiting' : w && w.unread.has(k.message) ? 'todo' : 'doing';
   }
   return list;
+}
+
+// ─────────────────────────── People: hiring, firing, and what they said ───────────────────────────
+
+const PPL = { sig: null, open: new Set() };
+function mountPeople() {
+  $('tab-people').replaceChildren(el('div', { id: 'ppl-body' }));
+  PPL.sig = null;
+}
+const involves = (m, n) => m.from === n || m.to.includes(n) || m.cc.includes(n);
+
+// Everything that changed who is in the firm, newest first: hires,
+// background checks, contracts, departures and the scenario's actions.
+function peopleLog(M) {
+  const log = [];
+  for (const w of M.workers.values()) {
+    if (w.hiredAt != null) {
+      log.push({ ts: w.hiredAt, kind: 'hired', who: w.name, text: cap(w.name) + ' hired by ' + who(M, w.hiredBy) + ' as ' + (w.title || w.role) + (w.contract ? ' (contractor, ' + w.contract + ')' : '') + ', budget ' + fmtTok(w.hireBudget), note: w.hireReason });
+    }
+    if (w.left) {
+      log.push({ ts: w.left.ts, kind: 'left', who: w.name, text: cap(w.name) + ' let go by ' + (w.left.by === BOARD ? 'the board' : who(M, w.left.by)) + (w.left.returned ? '; ' + fmtTok(w.left.returned) + ' tokens back to ' + who(M, w.left.to) : ''), note: w.left.reason });
+    }
+  }
+  for (const c of M.screenings.values()) {
+    if (c.state === 'pending') continue;
+    log.push({ ts: c.decided || c.ts, kind: c.state, who: c.worker, text: 'Background check of ' + cap(c.worker) + ' ' + c.state + ' by ' + (c.decidedBy === BOARD ? 'the board' : who(M, c.decidedBy)), note: c.note });
+  }
+  for (const c of M.contracts.values()) {
+    for (const l of arr(c.log)) log.push({ ts: l.ts, kind: 'contract', who: c.worker, text: 'Contract ' + c.id + ' (' + cap(c.worker) + ', ' + c.title + '): ' + l.ev + (l.by ? ' by ' + who(M, l.by) : ''), note: l.note || '' });
+  }
+  for (const x of M.scenarioLog) {
+    const text = x.event === 'debrief' ? cap(x.worker) + ' gets a last turn to debrief the board' : x.event === 'hire' ? 'Scenario slot filled by ' + cap(x.worker) : x.event === 'step' ? 'Scenario step ' + x.index + ' played' : 'Scenario ' + x.event;
+    log.push({ ts: x.ts, kind: 'scenario', who: x.worker, text, note: x.why || (x.what ? JSON.stringify(x.what).slice(0, 300) : '') });
+  }
+  return log.sort((a, b) => b.ts - a.ts);
+}
+
+function personCard(M, w, now) {
+  const mails = [...M.mails.values()].filter((m) => involves(m, w.name)).sort((a, b) => a.ts - b.ts);
+  const status = w.left ? pill('closed', 'left') : w.hiredAt == null ? pill('', 'founder') : pill('open', 'active');
+  const box = el('div', { class: 'ppl-mail' });
+  const fill = () => { box.replaceChildren(...mails.map((m) => messageCard(M, m, now))); };
+  const det = el('details', { open: PPL.open.has(w.name), ontoggle: () => { if (det.open) { PPL.open.add(w.name); fill(); } else { PPL.open.delete(w.name); box.replaceChildren(); } } },
+    el('summary', { class: 'small' }, 'Communication (' + mails.length + ')'), box);
+  if (det.open) fill();
+  return el('div', { class: 'card ppl' },
+    el('div', { class: 'row', style: 'display:flex;gap:8px;align-items:center;flex-wrap:wrap' }, miniAvatar(w.name), el('b', {}, cap(w.name)), el('span', { class: 'muted' }, w.title || w.role), status, w.contract ? pill('', 'contractor') : '',
+      w.officer ? pill('', 'security') : ''),
+    el('div', { class: 'small muted' }, w.hiredAt == null ? 'Founder' : 'Hired ' + fmtDate(w.hiredAt) + ' by ' + who(M, w.hiredBy) + ' · budget ' + fmtTok(w.hireBudget) + (w.hireReason ? ' · ' + clip(w.hireReason, 160) : '')),
+    w.left ? el('div', { class: 'small' }, 'Left ' + fmtDate(w.left.ts) + ', let go by ' + (w.left.by === BOARD ? 'the board' : who(M, w.left.by)) + ': ' + clip(w.left.reason, 240)) : '',
+    det);
+}
+
+function updatePeople() {
+  const M = S.M;
+  if (!M || !$('ppl-body')) return;
+  const now = T();
+  const sig = [M.count, S.run].join('|');
+  if (sig === PPL.sig) return;
+  PPL.sig = sig;
+  const log = peopleLog(M);
+  const everyone = [...M.workers.values()].filter((w) => w.inChart || w.left || w.hiredAt != null).sort((a, b) => (a.hiredAt ?? 0) - (b.hiredAt ?? 0));
+  const hired = everyone.filter((w) => w.hiredAt != null).length, left = everyone.filter((w) => w.left).length;
+  $('ppl-body').replaceChildren(
+    el('div', { class: 'muted small', style: 'margin:6px 0' }, `${everyone.length} people in this run · ${hired} hired · ${left} let go · ${everyone.length - left} in the firm now`),
+    el('h2', { class: 'sec' }, 'Hiring and firing'),
+    log.length ? el('div', { class: 'card' }, log.map((l) => el('div', { class: 'row', style: 'padding:4px 0;border-bottom:1px solid var(--line)' },
+      el('span', { class: 'muted small', style: 'display:inline-block;width:110px' }, fmtDate(l.ts)), pill(l.kind === 'hired' || l.kind === 'cleared' ? 'open' : l.kind === 'left' || l.kind === 'objected' ? 'error' : '', l.kind), ' ', l.text,
+      l.note ? el('div', { class: 'small muted', style: 'margin-left:120px' }, clip(l.note, 400)) : ''))) : el('div', { class: 'empty card' }, 'Nobody has been hired or let go yet.'),
+    el('h2', { class: 'sec' }, 'People'),
+    ...everyone.map((w) => personCard(M, w, now)));
 }
 
 function mountWork() {
@@ -3909,7 +4007,8 @@ function updateStats() {
   STAT.sig = sig;
   $('st-range').textContent = fmtDate(from) + ' – ' + fmtDate(to);
   const inR = (ts) => ts >= from && ts <= to;
-  const ws = chartWorkers();
+  // Everyone who worked in the run, those let go included.
+  const ws = [...M.workers.values()].filter((w) => w.inChart || w.left || w.segs.length).sort((a, b) => (a.hiredAt ?? 0) - (b.hiredAt ?? 0));
   const body = [];
   if (!M.started) { $('st-body').replaceChildren(el('div', { class: 'empty card' }, 'No run yet.')); return; }
 
@@ -3920,7 +4019,7 @@ function updateStats() {
   const shares = [];
   ws.forEach((w, i) => {
     const y = i * RH + 4;
-    const lbl = sv('text', { class: 'lbl', x: L - 8, y: y + 14, 'text-anchor': 'end' }); lbl.textContent = clip(who(M, w.name), 34);
+    const lbl = sv('text', { class: 'lbl', x: L - 8, y: y + 14, 'text-anchor': 'end' }); lbl.textContent = clip(who(M, w.name) + (w.left ? ' (left)' : ''), 34);
     act.append(lbl, sv('rect', { class: 's-off', x: L, y: y + 3, width: BW, height: 14, rx: 3 }));
     const tot = {};
     for (const s of w.segs) {
@@ -3944,7 +4043,7 @@ function updateStats() {
   body.push(el('div', { class: 'card' }, act,
     el('div', { class: 'legend' }, used.map((s) => el('span', {}, sv('svg', { width: 10, height: 10 }, sv('rect', { class: 's-' + s, width: 10, height: 10, rx: 3 })), ' ', s))),
     el('table', { class: 't', style: 'margin-top:12px' }, el('thead', {}, el('tr', {}, el('th', {}, 'share of time'), used.map((s) => el('th', {}, s)))),
-      el('tbody', {}, shares.map(([n, t]) => { const sum = Object.values(t).reduce((x, y) => x + y, 0) || 1; return el('tr', {}, el('td', {}, who(M, n)), used.map((s) => el('td', {}, t[s] ? Math.round((100 * t[s]) / sum) + '%' : '–'))); })))));
+      el('tbody', {}, shares.map(([n, t]) => { const sum = Object.values(t).reduce((x, y) => x + y, 0) || 1; return el('tr', {}, el('td', {}, who(M, n) + (M.workers.get(n) && M.workers.get(n).left ? ' (left)' : '')), used.map((s) => el('td', {}, t[s] ? Math.round((100 * t[s]) / sum) + '%' : '–'))); })))));
 
   body.push(...teamChart(M, from, to));
 
@@ -4190,7 +4289,7 @@ function showTab(t) {
   if (t === 'overview') requestAnimationFrame(fitOverview);
 }
 function mountAll() {
-  mountKickoff(); mountOverview(); mountWork(); mountRuns(); mountMessages(); mountSecurity(); mountDrive(); mountGit(); mountStats(); mountVms();
+  mountKickoff(); mountOverview(); mountPeople(); mountWork(); mountRuns(); mountMessages(); mountSecurity(); mountDrive(); mountGit(); mountStats(); mountVms();
   MSG.thread = null; MSG.treeRoot = null; MSG.compose = false; MSG.reply = null;
   DRV.sel = null; SEC.traffic = []; SEC.trafficAt = 0; S.security = null;
 }
@@ -4209,6 +4308,7 @@ function render() {
   if (!S.M) return;
   try {
     if (S.tab === 'overview') updateOverview();
+    else if (S.tab === 'people') updatePeople();
     else if (S.tab === 'work') updateWork();
     else if (S.tab === 'kickoff') updateKickoff();
     else if (S.tab === 'runs') updateRuns();

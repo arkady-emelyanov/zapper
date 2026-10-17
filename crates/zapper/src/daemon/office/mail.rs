@@ -23,6 +23,9 @@ const MAX_ATTACHMENTS: usize = 16;
 /// Shortest follow-up interval a message may ask for.
 const MIN_FOLLOW_UP_SECS: f64 = 5.0;
 const DEFAULT_FOLLOW_UPS: u32 = 2;
+/// When the board gives no date, the time it allows for an answer before the
+/// post office follows up for it.
+const BOARD_ANSWER_SECS: f64 = 1200.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -180,6 +183,9 @@ pub struct Sent {
     pub id: String,
     pub thread: String,
     pub recipients: Vec<String>,
+    /// This message answered the board's first assignment: the objective is
+    /// done.
+    pub objective_done: bool,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -196,6 +202,8 @@ pub struct PostOffice {
     firm: Arc<RwLock<Firm>>,
     /// Workers who left, and who gets their mail: their manager.
     departed: BTreeMap<String, String>,
+    /// The board's first assignment of the run: the objective.
+    kickoff: Option<String>,
     max_thread: usize,
     mail_per_hour: usize,
     fanout_per_hour: usize,
@@ -256,6 +264,7 @@ impl PostOffice {
         PostOffice {
             firm: chart,
             departed: BTreeMap::new(),
+            kickoff: None,
             max_thread: firm.limits.thread_messages as usize,
             mail_per_hour: firm.limits.mail_per_hour as usize,
             fanout_per_hour: firm.limits.fanout_per_hour as usize,
@@ -296,10 +305,12 @@ impl PostOffice {
     }
 
     /// `worker` left; `to`, their manager, takes over what they owed and
-    /// what they waited for, and gets their mail from now on.
-    pub fn leave(&mut self, worker: &str, to: &str) -> Vec<Obligation> {
+    /// what they waited for, and gets their mail from now on. Returns what
+    /// they owed, and the messages `to` has to read now: the ones the worker
+    /// hadn't read and the ones behind what they owed (not `to`'s own).
+    pub fn leave(&mut self, worker: &str, to: &str) -> (Vec<Obligation>, Vec<String>) {
         self.departed.insert(worker.to_string(), to.to_string());
-        let mut moved = Vec::new();
+        let mut moved: Vec<Obligation> = Vec::new();
         let keys: Vec<(String, String)> = self.obligations.keys().cloned().collect();
         for k in keys {
             let Some(mut o) = self.obligations.remove(&k) else {
@@ -307,6 +318,11 @@ impl PostOffice {
             };
             if o.debtor == worker {
                 o.debtor = to.to_string();
+                // What the manager asked of them is nobody's debt now: the
+                // manager can't owe themselves, or wait for themselves.
+                if o.creditor == o.debtor {
+                    continue;
+                }
                 moved.push(o.clone());
                 self.obligations
                     .insert((o.message.clone(), o.debtor.clone()), o);
@@ -314,10 +330,32 @@ impl PostOffice {
                 if o.creditor == worker {
                     o.creditor = to.to_string();
                 }
+                if o.creditor == o.debtor {
+                    continue;
+                }
                 self.obligations.insert(k, o);
             }
         }
-        moved
+        // The mail they hadn't read, and the requests they hadn't answered,
+        // go to their manager to read.
+        let mut ids: Vec<String> = self
+            .unread
+            .remove(worker)
+            .map(|u| u.into_iter().collect())
+            .unwrap_or_default();
+        ids.extend(moved.iter().map(|o| o.message.clone()));
+        ids.sort_by_key(|id| {
+            id.trim_start_matches("m-")
+                .parse::<u64>()
+                .unwrap_or(u64::MAX)
+        });
+        ids.dedup();
+        ids.retain(|id| self.messages.get(id).is_some_and(|m| m.from != to));
+        let u = self.unread.entry(to.to_string()).or_default();
+        for id in &ids {
+            u.insert(id.clone());
+        }
+        (moved, ids)
     }
 
     fn is_address(&self, a: &str) -> bool {
@@ -576,6 +614,7 @@ impl PostOffice {
         }
 
         // The sender's answers settle what it owed in this thread.
+        let mut objective_done = false;
         if d.kind != Kind::FollowUp {
             let settled: Vec<(String, String)> = self
                 .obligations
@@ -590,6 +629,9 @@ impl PostOffice {
                 .collect();
             for k in settled {
                 if let Some(o) = self.obligations.remove(&k) {
+                    objective_done |= o.creditor == BOARD
+                        && self.kickoff.as_deref() == Some(o.message.as_str())
+                        && (d.close || d.kind == Kind::Report);
                     journal.append("settled", json!({ "message": o.message, "thread": o.thread, "debtor": o.debtor, "creditor": o.creditor, "by": id }));
                 }
             }
@@ -599,7 +641,12 @@ impl PostOffice {
                 if r == BOARD {
                     continue;
                 }
-                let every = match (d.follow_up.every, d.due) {
+                // The board's requests are answered in time even when it
+                // gives no date: it is followed up like any due request.
+                let due = d
+                    .due
+                    .or_else(|| (d.from == BOARD).then_some(now + BOARD_ANSWER_SECS));
+                let every = match (d.follow_up.every, due) {
                     (Some(e), _) => e.max(MIN_FOLLOW_UP_SECS),
                     (None, Some(due)) => (due - now).max(900.0),
                     (None, None) => 0.0,
@@ -620,11 +667,11 @@ impl PostOffice {
                         expects,
                         kind: d.kind,
                         created: now,
-                        due: d.due,
+                        due,
                         follow_ups: 0,
                         max_follow_ups: max,
                         every,
-                        next: d.due,
+                        next: due,
                         escalated: false,
                     },
                 );
@@ -642,11 +689,15 @@ impl PostOffice {
                 self.pair_log.entry(key).or_default().push_back(now);
             }
         }
+        if d.from == BOARD && d.kind == Kind::Assignment && self.kickoff.is_none() {
+            self.kickoff = Some(id.clone());
+        }
         self.messages.insert(id.clone(), meta);
         Ok(Sent {
             id,
             thread,
             recipients,
+            objective_done,
         })
     }
 
@@ -906,6 +957,82 @@ mod tests {
 
     fn draft(from: &str, to: &str, kind: Kind) -> Draft {
         Draft::new(from, vec![to.into()], "Subject", "Body line\nmore", kind)
+    }
+
+    #[test]
+    fn the_boards_requests_are_followed_up_without_a_date() {
+        let (mut po, j, dir) = office();
+        po.send(&j, draft(BOARD, "ceo", Kind::Assignment), 100.0)
+            .unwrap();
+        let due = po.obligations.values().next().unwrap().due;
+        assert_eq!(due, Some(100.0 + BOARD_ANSWER_SECS));
+        // The ceo's own assignment without a date is left alone.
+        po.send(&j, draft("ceo", "cto", Kind::Assignment), 100.0)
+            .unwrap();
+        assert!(po
+            .obligations
+            .values()
+            .any(|o| o.debtor == "cto" && o.due.is_none()));
+        // Unanswered, the post office follows up for the board.
+        let sent = po.tick(&j, 100.0 + BOARD_ANSWER_SECS + 1.0);
+        assert!(sent
+            .iter()
+            .any(|s| s.recipients.contains(&"ceo".to_string())));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_first_board_assignment_is_the_objective() {
+        let (mut po, j, dir) = office();
+        let a = po
+            .send(&j, draft(BOARD, "ceo", Kind::Assignment), 1.0)
+            .unwrap();
+        let b = po
+            .send(&j, draft(BOARD, "ceo", Kind::Assignment), 2.0)
+            .unwrap();
+        let mut r = draft("ceo", BOARD, Kind::Report);
+        r.in_reply_to = Some(b.id.clone());
+        r.close = true;
+        assert!(
+            !po.send(&j, r, 3.0).unwrap().objective_done,
+            "a later assignment is not the objective"
+        );
+        let mut r = draft("ceo", BOARD, Kind::Report);
+        r.in_reply_to = Some(a.id.clone());
+        r.close = true;
+        assert!(po.send(&j, r, 4.0).unwrap().objective_done);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn leaving_drops_what_the_manager_asked() {
+        let (mut po, j, dir) = office();
+        // ceo asks cto; cto asks ada.
+        po.send(&j, draft("ceo", "cto", Kind::Assignment), 1.0)
+            .unwrap();
+        po.send(&j, draft("cto", "ada", Kind::Assignment), 2.0)
+            .unwrap();
+        assert_eq!(po.obligations.len(), 2);
+        // ada also asks cto, who never read it.
+        let q = po
+            .send(&j, draft("ada", "cto", Kind::Question), 3.0)
+            .unwrap();
+        // cto leaves: what ceo asked them is nobody's debt (ceo can't owe or
+        // wait for themselves); what they asked ada is ceo's to wait for;
+        // ada's question is ceo's to answer, and ceo reads it now.
+        let (moved, read) = po.leave("cto", "ceo");
+        assert_eq!(moved.len(), 1);
+        assert_eq!(read, vec![q.id.clone()]);
+        assert!(po.unread("ceo").contains(&q.id));
+        assert!(po.unread("cto").is_empty());
+        let mut left: Vec<_> = po
+            .obligations
+            .values()
+            .map(|o| (o.creditor.as_str(), o.debtor.as_str()))
+            .collect();
+        left.sort();
+        assert_eq!(left, vec![("ada", "ceo"), ("ceo", "ada")]);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

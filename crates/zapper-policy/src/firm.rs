@@ -329,7 +329,7 @@ impl Default for Budget {
             daily_tokens: 0,
             max_concurrent: 3,
             seed: 0,
-            security_share: 0.1,
+            security_share: 0.2,
             quote_fee: 30_000,
         }
     }
@@ -464,6 +464,9 @@ pub struct Security {
     pub digest_every: Digest,
     /// After this long without an officer's answer, the board is asked too.
     pub answer_within: String,
+    /// The first hire (or contract) of a firm that can hire a security
+    /// officer is one: nobody else is hired before.
+    pub officer_first: bool,
 }
 
 impl Default for Security {
@@ -472,6 +475,7 @@ impl Default for Security {
             officers: Vec::new(),
             digest_every: Digest::default(),
             answer_within: "15m".into(),
+            officer_first: true,
         }
     }
 }
@@ -1075,7 +1079,7 @@ firms:
         let ok = with(", hires: [eng]").replace("    security: { officers: [] }", "    security: { officers: [] }\n    budget: { seed: 2000000 }\n    names: [grace, ken]");
         let c = firm(&ok).unwrap();
         assert_eq!(c.firms["acme"].roles["eng"].hires, vec!["eng"]);
-        assert_eq!(c.firms["acme"].budget.security_share, 0.1);
+        assert_eq!(c.firms["acme"].budget.security_share, 0.2);
         let taken = ok.replace("names: [grace, ken]", "names: [grace, ada]");
         assert!(firm(&taken)
             .unwrap_err()

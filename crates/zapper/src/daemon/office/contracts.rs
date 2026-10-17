@@ -185,6 +185,7 @@ pub async fn offer(d: &Arc<Daemon>, run: &Arc<FirmRun>, by: &str, a: OfferArgs) 
     {
         bail!("only those who hire can contract");
     }
+    super::security::officer_first(run, by, &a.role)?;
     let role = run.config.roles.get(&a.role).cloned().ok_or_else(|| {
         anyhow!(
             "no role {} (the catalog: {})",
@@ -500,6 +501,10 @@ pub fn complete(
     if report.trim().is_empty() {
         bail!("give your report: what you delivered, where it is, what is left");
     }
+    // The board is owed its report before the machine stops.
+    if super::scenario::owes_report(run, me) {
+        bail!("you haven't reported to the board yet: mail it (to: board) your report or debrief first, as the board's instructions to you say, then complete the contract");
+    }
     let mut draft = Draft::new(
         me,
         vec![c.by.clone()],
@@ -632,6 +637,7 @@ pub fn may_mail(run: &FirmRun, from: &str, recipients: &[String]) -> Result<()> 
     };
     for r in recipients {
         if r == BOARD && super::scenario::board_line(run, from) {
+            super::scenario::note_report(run, from);
             continue;
         }
         if *r != c.by && !c.added.contains(r) {

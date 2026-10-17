@@ -194,7 +194,7 @@ pub fn tools(p: Powers) -> Vec<Value> {
     if p.budget && p.root {
         v.push(tool(
             "budget_request",
-            "Ask the board for the run's budget (or more of it): one total in tokens, a short plan and a reason. It goes to the board as mail; the board approves or declines in its thread. One request at a time.",
+            "Ask the board for the run's budget (or more of it): one total in tokens (the run's whole budget, the seed included), a short plan and a reason. It goes to the board as mail; the board approves or declines in its thread. One request at a time.",
             json!({ "total": s("Tokens, like 40M"), "plan": s("Markdown: who you will hire and with what budgets, what you will contract, the order, a reserve"), "reason": s("Why this much: the task, what you learned scoping it") }),
             &["total", "plan", "reason"],
         ));

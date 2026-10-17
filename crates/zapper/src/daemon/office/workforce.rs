@@ -45,10 +45,15 @@ pub struct Ledger {
     pub enabled: bool,
     seed: u64,
     share: f64,
-    /// Tokens the board approved, beyond the seed.
+    /// The run's budget as the board approved it, seed included; 0 until it
+    /// approves one.
     pub approved: u64,
+    /// Tokens already paid to the security officers as their share.
+    security_paid: u64,
     balance: BTreeMap<String, i64>,
     spent: BTreeMap<String, u64>,
+    /// Turns each worker took against their budget.
+    turns: BTreeMap<String, u32>,
     received: BTreeMap<String, u64>,
     requests: Vec<BudgetRequest>,
     /// Workers whose manager was told they ran out, until they are funded.
@@ -62,8 +67,10 @@ impl Ledger {
             seed: firm.budget.seed,
             share: firm.budget.security_share,
             approved: 0,
+            security_paid: 0,
             balance: BTreeMap::new(),
             spent: BTreeMap::new(),
+            turns: BTreeMap::new(),
             received: BTreeMap::new(),
             requests: Vec::new(),
             told: BTreeSet::new(),
@@ -72,6 +79,18 @@ impl Ledger {
 
     pub fn balance(&self, w: &str) -> i64 {
         self.balance.get(w).copied().unwrap_or(0)
+    }
+
+    /// Whether the worker can take a turn: they have tokens, or the run
+    /// counts none.
+    pub fn can_work(&self, w: &str) -> bool {
+        !self.enabled || self.balance(w) > 0
+    }
+
+    /// What the run may spend in all: the approved budget, or the seed
+    /// before there is one.
+    pub fn total(&self) -> u64 {
+        self.seed.max(self.approved)
     }
 
     /// Tokens the worker has spent in turns.
@@ -106,6 +125,28 @@ impl Ledger {
         }
         *self.balance.entry(w.to_string()).or_default() -= tokens as i64;
         *self.spent.entry(w.to_string()).or_default() += tokens;
+        *self.turns.entry(w.to_string()).or_default() += 1;
+    }
+
+    /// What turns have cost so far, by role: workers, turns, tokens, and
+    /// tokens per turn on average. Prices differ by model, so the CEO sizes
+    /// the budget from this, not from fixed numbers.
+    pub fn observed(&self, chart: &Firm, models: &BTreeMap<String, Option<String>>) -> Vec<Value> {
+        let mut by: BTreeMap<&str, (u32, u32, u64)> = BTreeMap::new();
+        for w in &chart.workers {
+            let turns = self.turns.get(&w.name).copied().unwrap_or(0);
+            let tokens = self.spent.get(&w.name).copied().unwrap_or(0);
+            let e = by.entry(w.role.as_str()).or_default();
+            e.0 += 1;
+            e.1 += turns;
+            e.2 += tokens;
+        }
+        by.into_iter()
+            .filter(|(_, (_, turns, _))| *turns > 0)
+            .map(|(role, (workers, turns, tokens))| {
+                json!({ "role": role, "model": models.get(role).cloned().flatten(), "workers": workers, "turns": turns, "tokens": tokens, "tokens_per_turn": tokens / turns as u64 })
+            })
+            .collect()
     }
 
     fn pending(&self) -> Option<&BudgetRequest> {
@@ -122,7 +163,7 @@ impl Ledger {
         let spent: u64 = self.spent.values().sum();
         json!({
             "enabled": self.enabled, "seed": self.seed, "approved": self.approved, "security_share": self.share,
-            "total": self.seed + self.approved, "spent": spent, "workers": workers, "requests": self.requests,
+            "total": self.total(), "spent": spent, "workers": workers, "requests": self.requests,
         })
     }
 }
@@ -186,6 +227,7 @@ fn grant(run: &FirmRun, tokens: u64, reason: &str) {
         l.transfer(None, o, each);
         moves.push((o.clone(), each));
     }
+    l.security_paid += each * officers.len() as u64;
     let rest = tokens - each * officers.len() as u64;
     l.transfer(None, &root, rest);
     moves.push((root, rest));
@@ -195,6 +237,50 @@ fn grant(run: &FirmRun, tokens: u64, reason: &str) {
             "funds",
             json!({ "event": "move", "from": BOARD, "to": to, "tokens": t, "reason": reason }),
         );
+    }
+}
+
+/// Security is funded by the board: when officers take security over from
+/// the CEO, the share of the budget the CEO kept for them goes to them
+/// (what the CEO has of it).
+pub fn settle_security(run: &FirmRun) {
+    let chart = run.chart();
+    let Some(root) = chart.root().map(str::to_string) else {
+        return;
+    };
+    let officers: Vec<String> = chart
+        .security
+        .officers
+        .iter()
+        .filter(|o| **o != root && chart.worker(o).is_some())
+        .cloned()
+        .collect();
+    if officers.is_empty() {
+        return;
+    }
+    let mut l = run.ledger.lock().unwrap();
+    if !l.enabled {
+        return;
+    }
+    let owed = ((l.total() as f64 * l.share).round() as u64).saturating_sub(l.security_paid);
+    let give = owed.min(l.balance(&root).max(0) as u64);
+    let each = give / officers.len() as u64;
+    if each == 0 {
+        return;
+    }
+    for o in &officers {
+        l.transfer(Some(&root), o, each);
+    }
+    l.security_paid += each * officers.len() as u64;
+    drop(l);
+    for o in &officers {
+        run.journal.append(
+            "funds",
+            json!({ "event": "move", "from": root, "to": o, "tokens": each, "reason": "security's share of the approved budget, handed over with security" }),
+        );
+        if let Some(w) = run.rt(o) {
+            w.wake.notify_one();
+        }
     }
 }
 
@@ -252,7 +338,7 @@ pub fn summary(run: &FirmRun, w: &str) -> Value {
         .collect();
     let mine = json!({ "balance": l.balance(w), "spent": l.spent.get(w).copied().unwrap_or(0), "received": l.received.get(w).copied().unwrap_or(0) });
     let firm = (chart.root() == Some(w))
-        .then(|| json!({ "approved": l.approved, "seed": l.seed, "requests": l.requests }));
+        .then(|| json!({ "approved": l.approved, "seed": l.seed, "requests": l.requests, "observed_cost": l.observed(&chart, &run.models) }));
     json!({ "enabled": l.enabled, "you": mine, "team": team, "firm": firm })
 }
 
@@ -277,7 +363,17 @@ pub fn allows(run: &FirmRun, w: &str) -> bool {
         .map(str::to_string);
     run.journal
         .append("funds", json!({ "event": "exhausted", "worker": w }));
+    // An officer who can't work no longer takes requests: they go to the
+    // others, or to the board.
+    if chart.is_officer(w) && chart.root() != Some(w) {
+        super::security::requeue(run, w);
+    }
     match manager {
+        Some(m) if m == BOARD => run.notice(
+            BOARD,
+            &format!("{w} ran out of budget"),
+            &format!("[Automatic notice] {w}, {}, has spent their budget ({} tokens) and stopped taking turns{}. Fund them with `zapper firm fund {} {w} TOKENS --reason …`.\n", chart.title_of(w), fmt_tokens(spent), if chart.is_officer(w) { "; their pending access requests and background checks went to the other officers or to you in the Security tab" } else { "" }, run.firm),
+        ),
         Some(m) => run.notice(
             &m,
             &format!("{w} ran out of budget"),
@@ -311,6 +407,15 @@ pub fn request(run: &FirmRun, by: &str, total: i64, plan: &str, reason: &str) ->
     if plan.trim().is_empty() || plan.len() > MAX_PLAN || reason.len() > MAX_PLAN {
         bail!("give a plan (who you will hire, what you will contract, a reserve) of up to {MAX_PLAN} bytes");
     }
+    {
+        let l = run.ledger.lock().unwrap();
+        if total as u64 <= l.total() {
+            bail!(
+                "the budget is the run's total, seed included: you have {} already, so ask for more than that",
+                fmt_tokens(l.total() as i64)
+            );
+        }
+    }
     if let Some(p) = run.ledger.lock().unwrap().pending() {
         bail!(
             "request {} ({} tokens) is waiting for the board; wait for its answer",
@@ -319,7 +424,7 @@ pub fn request(run: &FirmRun, by: &str, total: i64, plan: &str, reason: &str) ->
         );
     }
     let id = format!("b-{}", run.ledger.lock().unwrap().requests.len() + 1);
-    let body = format!("**Budget request {id}: {} tokens.**\n\n{}\n\n**Why:** {}\n\nApprove or decline it in the Kickoff tab; a decline with a note sends it back.\n", fmt_tokens(total), plan.trim(), reason.trim());
+    let body = format!("**Budget request {id}: {} tokens in all, seed included.**\n\n{}\n\n**Why:** {}\n\nApprove or decline it in the Kickoff tab; a decline with a note sends it back.\n", fmt_tokens(total), plan.trim(), reason.trim());
     let mut d = Draft::new(
         by,
         vec![BOARD.into()],
@@ -350,7 +455,7 @@ pub fn request(run: &FirmRun, by: &str, total: i64, plan: &str, reason: &str) ->
 
 /// The board approves or declines a budget request, answering in its thread.
 pub fn decide(run: &FirmRun, id: &str, approve: bool, note: &str) -> Result<Value> {
-    let r = {
+    let (r, granted) = {
         let mut l = run.ledger.lock().unwrap();
         let r = l
             .requests
@@ -364,23 +469,29 @@ pub fn decide(run: &FirmRun, id: &str, approve: bool, note: &str) -> Result<Valu
         r.note = note.trim().chars().take(4000).collect();
         r.decided = Some(now());
         let r = r.clone();
-        if approve {
-            l.approved += r.total;
-        }
-        r
+        // The approved budget includes what the seed already gave.
+        let new = if approve {
+            let new = r.total.saturating_sub(l.total());
+            l.approved = l.approved.max(r.total);
+            new
+        } else {
+            0
+        };
+        (r, new)
     };
     run.journal.append(
         "funds",
-        json!({ "event": "decided", "id": id, "approved": approve, "note": r.note }),
+        json!({ "event": "decided", "id": id, "approved": approve, "note": r.note, "granted": granted }),
     );
-    if approve {
-        grant(run, r.total, &format!("budget {id}, approved by the board"));
+    if granted > 0 {
+        grant(run, granted, &format!("budget {id}, approved by the board"));
     }
     let balance = run.ledger.lock().unwrap().balance(&r.by);
     let body = if approve {
         format!(
-            "**Approved: {} tokens** (budget {id}).{}\n\nYour balance is now {} tokens; the security officers have their share. Hire and contract from it: running the firm is up to you.\n",
+            "**Approved: {} tokens in all** (budget {id}), the seed included: {} new.{}\n\nYour balance is now {} tokens; the security officers have their share. Hire and contract from it: running the firm is up to you.\n",
             fmt_tokens(r.total as i64),
+            fmt_tokens(granted as i64),
             if r.note.is_empty() { String::new() } else { format!("\n\n{}", r.note) },
             fmt_tokens(balance)
         )
@@ -393,8 +504,41 @@ pub fn decide(run: &FirmRun, id: &str, approve: bool, note: &str) -> Result<Valu
     Ok(json!({ "request": r, "message": sent.id }))
 }
 
+/// The board gives a worker tokens from nothing, on top of the budget it
+/// approved (which grows by that much).
+fn board_fund(run: &FirmRun, worker: &str, tokens: u64, reason: &str) -> Result<Value> {
+    if run.chart().worker(worker).is_none() {
+        bail!("no worker {worker}");
+    }
+    if reason.trim().is_empty() {
+        bail!("give a reason");
+    }
+    {
+        let mut l = run.ledger.lock().unwrap();
+        if !l.enabled {
+            bail!("this firm has no run budget");
+        }
+        if l.approved == 0 {
+            l.approved = l.seed;
+        }
+        l.approved += tokens;
+        l.transfer(None, worker, tokens);
+    }
+    run.journal.append(
+        "funds",
+        json!({ "event": "move", "from": BOARD, "to": worker, "tokens": tokens, "reason": reason.trim(), "granted": tokens }),
+    );
+    if let Some(w) = run.rt(worker) {
+        w.wake.notify_one();
+    }
+    Ok(json!({ "worker": worker, "their_balance": run.ledger.lock().unwrap().balance(worker) }))
+}
+
 /// A manager moves tokens to a report (or back, with a negative amount).
 pub fn fund(run: &FirmRun, by: &str, worker: &str, tokens: i64, reason: &str) -> Result<Value> {
+    if by == BOARD && tokens > 0 {
+        return board_fund(run, worker, tokens as u64, reason);
+    }
     let chart = run.chart();
     if chart.worker(worker).is_none() {
         bail!("no worker {worker}");
@@ -595,6 +739,7 @@ pub async fn hire(d: &Arc<Daemon>, run: &Arc<FirmRun>, by: &str, a: HireArgs) ->
         .get(&hirer.role)
         .map(|r| r.hires.clone())
         .unwrap_or_default();
+    super::security::officer_first(run, by, &a.role)?;
     if !can.contains(&a.role) {
         if can.is_empty() {
             bail!("your role ({}) doesn't hire; ask your manager", hirer.role);
@@ -646,12 +791,18 @@ pub async fn hire(d: &Arc<Daemon>, run: &Arc<FirmRun>, by: &str, a: HireArgs) ->
     // Training first: how mail and credentials work, before the brief.
     super::prompts::onboard(run, &name);
     // The brief: their first assignment, waiting for them when they boot.
+    // An officer's brief is a standing role, from someone who isn't their
+    // manager: not an assignment.
     let mut draft = Draft::new(
         by,
         vec![name.clone()],
         &a.subject,
         &a.brief,
-        Kind::Assignment,
+        if role.officer {
+            Kind::Fyi
+        } else {
+            Kind::Assignment
+        },
     );
     draft.due = a.due;
     draft.attachments = a.attachments.clone();
@@ -679,6 +830,18 @@ pub async fn hire(d: &Arc<Daemon>, run: &Arc<FirmRun>, by: &str, a: HireArgs) ->
     // Their VM, then their foreman: the run's booter does both.
     run.set_state(&rt, WorkerState::Booting, None);
     let _ = run.boots.send(rt);
+    // The board has no reason to hold back the firm's first security
+    // officer: its own check clears them at once.
+    if role.officer && super::security::is_first_officer(run, &name) {
+        let _ = super::security::decide_screening(
+            d,
+            run,
+            BOARD,
+            &check,
+            true,
+            "The board clears the firm's first security officer without being asked.",
+        );
+    }
     let left = run.ledger.lock().unwrap().balance(by);
     Ok(json!({
         "worker": name, "title": firm.title_of(&name), "reports_to": by, "budget": a.budget, "your_balance": left,
@@ -723,10 +886,12 @@ pub(super) fn join(
 ) -> Result<(String, Firm, Arc<WorkerRt>)> {
     let chart = run.chart();
     let name = pick_name(run, &chart, role, wanted)?;
+    // Security officers answer to the board, not to whoever hired them.
+    let officer = run.config.roles.get(role).is_some_and(|r| r.officer);
     let w = Worker {
         name: name.clone(),
         role: role.to_string(),
-        reports_to: Some(by.to_string()),
+        reports_to: Some(if officer { BOARD } else { by }.to_string()),
         title: title
             .map(|t| t.trim().chars().take(80).collect())
             .filter(|t: &String| !t.is_empty()),
@@ -787,6 +952,11 @@ pub async fn release(
     if chart.worker(worker).is_none() {
         bail!("no worker {worker}");
     }
+    if by != BOARD && chart.manager_of(worker) == Some(BOARD) {
+        bail!(
+            "{worker} is a security officer and answers to the board; only the board lets them go"
+        );
+    }
     if by != BOARD && !chart.is_above(by, worker) {
         bail!("only {worker}'s managers can let them go");
     }
@@ -840,7 +1010,16 @@ pub fn let_go(
         .lock()
         .unwrap()
         .insert(worker.to_string(), manager.clone());
-    let moved = run.post.lock().unwrap().leave(worker, &manager);
+    let (moved, to_read) = run.post.lock().unwrap().leave(worker, &manager);
+    // What they hadn't read or answered reaches their manager's desk.
+    for id in to_read {
+        run.deliver(&super::mail::Sent {
+            id,
+            thread: String::new(),
+            recipients: vec![manager.clone()],
+            objective_done: false,
+        });
+    }
     let returned = {
         let mut l = run.ledger.lock().unwrap();
         let left = l.balance(worker).max(0) as u64;
@@ -874,7 +1053,7 @@ pub fn let_go(
         run.notice(
             &manager,
             &format!("{worker} left; their work is yours"),
-            &format!("[Automatic notice] {by} let {worker} go: {}\nTheir reports now report to you, their mail comes to you, and you have their unspent budget ({} tokens).\n{}", reason.trim(), fmt_tokens(returned as i64), if list.is_empty() { String::new() } else { format!("What they owed is now yours:\n{list}") }),
+            &format!("[Automatic notice] {by} let {worker} go: {}\nTheir reports now report to you, their mail comes to you (what they hadn't read, and the requests they hadn't answered, are in your inbox now), and you have their unspent budget ({} tokens).\n{}", reason.trim(), fmt_tokens(returned as i64), if list.is_empty() { String::new() } else { format!("What they owed is now yours:\n{list}") }),
         );
     }
     json!({ "worker": worker, "returned": returned, "to": manager, "moved": moved.len() })
@@ -903,5 +1082,35 @@ mod tests {
         assert_eq!(tokens_arg(&json!(1200), "t").unwrap(), 1200);
         assert_eq!(fmt_tokens(40_000_000), "40.0M");
         assert_eq!(fmt_tokens(-1500), "-2k");
+    }
+
+    #[test]
+    fn observed_cost_by_role() {
+        let c = zapper_policy::Config::from_yaml(
+            "profiles: { w: {} }\nfirms:\n  acme:\n    budget: { seed: 1000 }\n    roles: { boss: { profile: w, skills: { work: ceo } }, eng: { profile: w, skills: { work: x } } }\n    workers:\n      - { name: ceo, role: boss }\n      - { name: ada, role: eng, reports_to: ceo }\n      - { name: bo, role: eng, reports_to: ceo }\n",
+        )
+        .unwrap();
+        let f = &c.firms["acme"];
+        let mut l = Ledger::new(f);
+        l.spend("ceo", 800);
+        l.spend("ada", 3000);
+        l.spend("ada", 1000);
+        l.spend("bo", 2000);
+        let models = BTreeMap::from([("eng".to_string(), Some("m-big".to_string()))]);
+        let o = l.observed(f, &models);
+        let eng = o.iter().find(|x| x["role"] == "eng").unwrap();
+        assert_eq!(
+            (
+                eng["workers"].clone(),
+                eng["turns"].clone(),
+                eng["tokens_per_turn"].clone()
+            ),
+            (json!(2), json!(3), json!(2000))
+        );
+        assert_eq!(eng["model"], "m-big");
+        assert_eq!(
+            o.iter().find(|x| x["role"] == "boss").unwrap()["tokens_per_turn"],
+            800
+        );
     }
 }

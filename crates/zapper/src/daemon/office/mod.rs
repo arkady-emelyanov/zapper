@@ -301,6 +301,12 @@ impl FirmRun {
         )?;
         let sent = self.post.lock().unwrap().send(&self.journal, d, now())?;
         self.deliver(&sent);
+        if sent.objective_done {
+            // The board's task is delivered: the simulation holds until the
+            // board decides what comes next.
+            let _ = pause_for(self, true, Some("the CEO completed the board's objective"));
+            self.notice(BOARD, "Objective complete: the firm is paused", "[Automatic notice] The CEO delivered what you asked for, so the firm is paused: no worker starts a turn until you resume it (`zapper firm resume`, or the UI), and workers finish the turn they are in. Read the report, then resume or stop the firm.\n");
+        }
         Ok(sent)
     }
 
@@ -1066,6 +1072,11 @@ pub async fn down(d: &Arc<Daemon>, run: &Arc<FirmRun>, reason: &str) {
 }
 
 pub fn pause(run: &FirmRun, paused: bool) -> Result<()> {
+    pause_for(run, paused, None)
+}
+
+/// Pauses or resumes the run, with the reason in the record.
+fn pause_for(run: &FirmRun, paused: bool, reason: Option<&str>) -> Result<()> {
     let mut st = run.state.lock().unwrap();
     match (&*st, paused) {
         (RunState::Running, true) => *st = RunState::Paused,
@@ -1076,7 +1087,7 @@ pub fn pause(run: &FirmRun, paused: bool) -> Result<()> {
     drop(st);
     run.journal.append(
         "run",
-        json!({ "state": if paused { "paused" } else { "running" } }),
+        json!({ "state": if paused { "paused" } else { "running" }, "reason": reason }),
     );
     for w in run.rts() {
         w.wake.notify_one();

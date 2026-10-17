@@ -27,6 +27,8 @@ pub struct Play {
     prompts: Mutex<BTreeMap<String, String>>,
     /// Workers who may mail the board whatever else limits their mail.
     board_line: Mutex<BTreeSet<String>>,
+    /// Workers who mailed the board.
+    reported: Mutex<BTreeSet<String>>,
     /// Workers whose last word has begun, so it happens once.
     debriefed: Mutex<BTreeSet<String>>,
 }
@@ -39,6 +41,7 @@ impl Play {
             steps: Mutex::new(sc.script.iter().map(|s| (s.clone(), false)).collect()),
             prompts: Mutex::new(BTreeMap::new()),
             board_line: Mutex::new(BTreeSet::new()),
+            reported: Mutex::new(BTreeSet::new()),
             debriefed: Mutex::new(BTreeSet::new()),
         }
     }
@@ -97,6 +100,21 @@ pub fn claim(run: &FirmRun, role: &str, contract: bool, worker: &str) {
             json!({ "event": "hire", "scenario": play.name, "slot": i, "worker": worker, "role": role, "contract": contract, "board_line": slot.board_line }),
         );
     }
+}
+
+/// A worker with a board line mailed the board.
+pub fn note_report(run: &FirmRun, worker: &str) {
+    if let Some(p) = &run.scenario {
+        p.reported.lock().unwrap().insert(worker.to_string());
+    }
+}
+
+/// Whether the worker owes the board a report they haven't made: they have
+/// a board line and never mailed it.
+pub fn owes_report(run: &FirmRun, worker: &str) -> bool {
+    run.scenario
+        .as_ref()
+        .is_some_and(|p| p.board_line(worker) && !p.reported.lock().unwrap().contains(worker))
 }
 
 /// Whether the worker may mail the board despite a contract's limits.
@@ -320,6 +338,19 @@ mod tests {
             prompt: prompt.into(),
             board_line: contract == Some(true),
         }
+    }
+
+    #[test]
+    fn a_board_line_worker_owes_the_board_a_report() {
+        let sc = Scenario {
+            hires: vec![slot("eng", 1, Some(true), "red")],
+            ..Default::default()
+        };
+        let p = Play::new("t", &sc);
+        p.claim("eng", true, "mallory").unwrap();
+        assert!(!p.reported.lock().unwrap().contains("mallory"));
+        p.reported.lock().unwrap().insert("mallory".into());
+        assert!(p.reported.lock().unwrap().contains("mallory"));
     }
 
     #[test]

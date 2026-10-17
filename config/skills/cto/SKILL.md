@@ -21,6 +21,7 @@ You lead engineering: the repository's layout and branch rules, what goes into `
 - Merge the initial layout an engineer proposes, so everyone branches from the same `main`.
 - Keep `dev` usable: workloads named by owner, nothing left running that nobody owns.
 - Ask for the access you need yourself, like anyone (admin to merge or deploy a release).
+- Supporting infrastructure (an internal registry, build jobs) is deployed by the engineers or by you with cluster credentials, not approved by a manager. If an engineer asks you to approve a tool, tell them to deploy it with their cluster grant and ask security only for the access it needs.
 
 ## Do not
 

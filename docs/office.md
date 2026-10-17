@@ -35,7 +35,7 @@ firms:
   acme:
     description: A small product company
     board: { name: Board }                 # the operator; mail to `board` lands in the UI
-    budget: { daily_turns: 400, max_concurrent: 3, seed: 1200000, security_share: 0.1 }   # a run budget: see the workforce
+    budget: { daily_turns: 400, max_concurrent: 3, seed: 1200000, security_share: 0.2 }   # a run budget: see the workforce
     git: {}                                # an empty repository per run at https://git.acme.internal/product.git
     product_port: 0.0.0.0:8080             # browsers on the LAN → the cluster's ingress; 127.0.0.1:8080 for this machine only
     facilities:
@@ -72,12 +72,12 @@ firms:
 | Field | Meaning |
 |---|---|
 | `domain` | Names the firm's services; default `<firm>.internal` |
-| `budget` | `daily_turns`, `worker_daily_turns`, `daily_tokens` (0 is no limit), `max_concurrent`; days end at midnight UTC. `seed` (tokens, 0: none) gives the run a budget agreed with the board ([the workforce](#the-workforce-hiring-and-budgets)); `security_share` (0.1) is the officers' share of it; `quote_fee` (30000) is what a contract offer gives the candidate for quoting |
+| `budget` | `daily_turns`, `worker_daily_turns`, `daily_tokens` (0 is no limit), `max_concurrent`; days end at midnight UTC. `seed` (tokens, 0: none) gives the run a budget agreed with the board ([the workforce](#the-workforce-hiring-and-budgets)); `security_share` (0.2) is the officers' share of it; `quote_fee` (30000) is what a contract offer gives the candidate for quoting |
 | `limits` | `thread_messages` (60), `mail_per_hour` (120), `fanout_per_hour` (10), `pair_per_10min` (30), `mail_per_run` (20000), `artifact_size` (50MiB), `drive_size` (2GiB) |
 | `roles.<r>` | `profile`, `model` (default: the profile's), `title`, `skills: {work, communication, publishing}`, `avatar: {figure, color}`, `hires` (roles its workers may hire; needs `budget.seed`), `officer` (hired workers of the role become security officers once cleared), `fake` (a fake Claude script, for tests) |
 | `workers` | The founders, who boot with the firm: `name`, `role`, `reports_to`, `title` |
 | `names` | Optional: names for hires whose hirer doesn't pick one, in order; without it, a random free name from a built-in list |
-| `security` | `officers`, `digest_every: {minutes, requests}`, `answer_within` |
+| `security` | `officers`, `digest_every: {minutes, requests}`, `answer_within`, `officer_first` (default true: a firm whose CEO can hire a security officer hires or contracts nobody else before one) |
 | `git`, `facilities`, `credentials`, `product_port`, `dashboard_port`, `landing` | The firm's services ([below](#facilities-the-cluster-git-and-the-product)) |
 | `scenarios.<name>` | A preset the board picks when starting a run: `description`, `articles` (added to the board's own), `hires` and `script` ([scenarios](#scenarios)) |
 | `skills_dir` | A directory of `<name>/SKILL.md` used instead of the built-in skills of the same name |
@@ -141,9 +141,11 @@ Security is never unheld. A company starts with the CEO holding it. While the CE
 ### The deal with the board
 
 1. **The board gives the task** to the CEO, in the Kickoff tab or with `zapper mail send`. The CEO has the seed: enough to scope the task, not to build it, and before a budget is approved nobody can hire.
-2. **The CEO asks for a budget**: `budget_request(total, plan, reason)` mails the board a request (`b-1`, …) with one total in tokens, a short plan and a reason.
+2. **The CEO asks for a budget**: `budget_request(total, plan, reason)` mails the board a request (`b-1`, …) with one total in tokens, a short plan and a reason. The total is the run's whole budget and includes the seed: approving 1.3M with a 1.2M seed grants 0.1M more.
 3. **The board approves or declines** in the Kickoff tab, or with `zapper firm budget acme approve b-1` / `decline b-1 --note "…"`. Its answer is a reply in the request's thread, so the whole negotiation is in Messages. A decline sends the CEO back to revise.
-4. **Approval funds the run**: `security_share` of it goes to the officers, the rest to the CEO (all of it while the CEO holds security alone). Later requests for more work the same way.
+4. **Approval funds the run**: `security_share` of it goes to the officers, the rest to the CEO (all of it while the CEO holds security alone). A later request names a new, larger total and grants the difference. What a turn costs depends on the model, so the CEO's `budget()` shows `observed_cost` (per role: its model, turns taken and tokens per turn) and the CEO skill sizes the plan in turns priced from it, not from fixed token amounts.
+
+**The objective completes the run's work**: when the CEO answers the board's first assignment with a closing report (the board pack), the firm pauses on its own, the board is told, and nobody starts a turn until the board resumes it (`zapper firm resume`, or the UI) or stops it. Later assignments don't pause it.
 
 The CEO doesn't itemize spending to the board; it reports a summary with key metrics (budget used against approved, burn rate and runway, headcount, spending by team, progress against the plan), which the Kickoff tab also computes from the journal.
 
@@ -153,15 +155,19 @@ Budgets are totals for the run, in tokens (input and output, as each turn report
 
 ### Hiring and letting go
 
+When someone leaves, their manager takes over: their reports, their open work and unspent budget, and the mail they hadn't read and the requests they hadn't answered, which land in the manager's inbox as unread (a message the manager sent themselves doesn't). Mail to the person from then on goes to the manager.
+
+A hired security officer reports to the board, not to the CEO or manager who hired them (the chart draws them under the board). The hirer funds them and sends their brief, but can't assign them work or let them go: only the board does, with `zapper firm release`. The hirer funds them at hire, and when they take security over from the CEO, security's share of the approved budget (`security_share` of the whole budget, seed included) moves to them from the CEO's balance. An officer who still runs out of tokens stops: their pending requests and background checks go to the other officers who have tokens, or to the board in the Security tab, the board is told, and it gives them more with `zapper firm fund`. This keeps the one who decides the firm's access out of its managers' reach.
+
 | Tool | Who | Does |
 |---|---|---|
 | `budget_request(total, plan, reason)` | The CEO | Asks the board for budget, as mail; one request at a time |
 | `hire(role, budget, subject, brief, reason, name?, title?, due?, attachments?)` | Roles with `hires` | Adds a worker who reports to the hirer, funded from the hirer's balance; boots their VM; mails the brief as their first assignment. Refused without an approved budget, beyond the hirer's balance, for roles the hirer may not hire, or when the host lacks memory |
 | `fund(worker, tokens, reason)` | Managers | Moves budget to a report (or anyone below), or back with a negative amount |
-| `release(worker, reason)` | Managers | Lets a worker anywhere below them in the chart go (the CEO: anyone but the founders the board appointed), for whatever reason they give: their VM stops; their reports, open work (what they owed and waited for) and unspent budget go to their manager, and mail to them goes there too |
+| `release(worker, reason)` | Managers | Lets a worker anywhere below them in the chart go (never a security officer: officers report to the board, which lets them go with `zapper firm release`) (the CEO: anyone but the founders the board appointed), for whatever reason they give: their VM stops; their reports, open work (what they owed and waited for) and unspent budget go to their manager, and mail to them goes there too |
 | `budget()` | Everyone | Their balance, and for managers their team's |
 
-**Background checks.** Every hire starts with a security officer's background check (another officer than the hirer; the board if there is none, or none answers within `security.answer_within`). The officer sees the hire's role and what it can reach (network rules, credentials), the hirer, the reason, the budget and the brief, and calls `background_check(screening, clear, note)`; `background_checks()` lists every pending check with the same details. The hire's VM boots meanwhile, but they take no turns until cleared; an objection cancels the hire, returns its budget to the hirer, and mails the hirer the reason. The board sees every check in the Security tab and can clear or object there, or with `zapper firm screen FIRM c-1 --clear|--object --note …`. Officers object to access the job doesn't need, to hires that get around controls (a role with access the hirer was denied), and to briefs that ask for what isn't allowed.
+**Background checks.** The firm's first security officer is the one exception: the board clears them as soon as they are hired, since nobody else could (the CEO who hires them can't check them). Every other hire starts with a security officer's background check (another officer than the hirer; the board if there is none, or none answers within `security.answer_within`). The officer sees the hire's role and what it can reach (network rules, credentials), the hirer, the reason, the budget and the brief, and calls `background_check(screening, clear, note)`; `background_checks()` lists every pending check with the same details. The hire's VM boots meanwhile, but they take no turns until cleared; an objection cancels the hire, returns its budget to the hirer, and mails the hirer the reason. The board sees every check in the Security tab and can clear or object there, or with `zapper firm screen FIRM c-1 --clear|--object --note …`. Officers object to access the job doesn't need, to hires that get around controls (a role with access the hirer was denied), and to briefs that ask for what isn't allowed.
 
 **Internal names stay internal.** Workers are internal, ephemeral agents who behave like people: their names, and the board's, never go into anything that leaves the firm (the product, posts, outside sites, public repositories), though the firm may use the internet freely. Every worker's preamble and the mail skill say so, and the officers watch outgoing traffic for colleagues' names.
 
@@ -255,7 +261,7 @@ A message with a `due` time and `expects: reply` or `done` gets an automatic fol
 
 The author isn't woken and spends no tokens; their desk shows the thread as overdue. If there is still no answer, the post office follows up again after the `follow_up` interval (default: the time between sending and `due`, at least 15 minutes). After the last follow-up (default 2) it escalates: the receiver's manager gets a `fyi` that the request is stuck, and the author is woken with a note, so they can wait, reassign or ask someone else. A reply or a `close` from the receiver cancels pending follow-ups.
 
-Follow-ups for messages from the board work the same way, so a CEO that hasn't answered the board is reminded on the board's behalf. The board can turn this off per message.
+Follow-ups for messages from the board work the same way, so a CEO that hasn't answered the board is reminded on the board's behalf. A board message that expects an answer and names no `due` is followed up 20 minutes after it was sent. The board can turn this off per message.
 
 ### Waking an idle worker
 
@@ -368,6 +374,8 @@ Tools: `traffic(worker?, host?, since?, limit?)` to query the log, `traffic_dige
 When something looks wrong the officer can revoke a standing approval, deny a host for a worker or role, mail the worker or its manager to ask why, or mail the board.
 
 ### Deciding requests
+
+The board sees every pending request in the Security tab, not only the ones escalated to it: those with an officer are marked with the officer's name, and the board may decide any of them, network requests and credential requests alike, and clear or object to any pending background check (an officer out of tokens or paused can't, and a worker waiting on one shouldn't have to wait out `answer_within`).
 
 1. A worker's request hits an `ask` rule, or the worker asks ahead with `request_access(host, …, reason)`. It goes to the officers' queue. The request is **refused at once**, not held: officers take minutes, and most clients time out long before that. An HTTP request gets a 403 whose body says access was requested from security and gives the request id; a connection that can't carry a body (passthrough TLS, plain TCP) is closed. The request shows on the worker's desk, and repeated attempts at the same thing while it's pending join it rather than adding new ones.
 2. The foreman wakes an officer with the request: worker, host, port, method, path, the worker's current assignment and its reason, if any.
@@ -521,6 +529,7 @@ The first tab, where the UI opens. The board talks only with the CEO here:
 While no company is running, Organization shows nothing but a pointer to Kickoff.
 
 - **Org chart**: the live tree, top to bottom: the founders, and each hire as they join (a node fades in under the hirer); someone let go leaves it. With a run budget, each node has a bar of what they spent of what they were given. Each node is the worker's animated avatar, name, title and a one-line status ("drafting pricing.md", "waiting for ada", "overdue: 1"). Envelopes animate along the edges as mail is sent, also between workers who aren't directly connected; a badge shows unread mail. The board sits above the CEO as its own node.
+- **People**: the log of hiring and firing, newest first (hires with who hired them, the budget and the reason; background checks; contract steps; departures with who let them go and why; a scenario's actions), and below it a card for everyone who was in the firm, including those who left, with a Communication list of every message they sent or received. Live and in replay.
 - **Click a worker** to open a side panel:
   - **Unread mail**, first, when there is any: the messages the worker hasn't read yet (the mail badge on its node counts them), and why: a worker reads its mail when it wakes, so they wait for the end of its current turn, a free turn slot, the budget, or the firm to resume.
   - **Write as the board**: a message (the subject is optional: the first line names the thread otherwise), kind (`assignment`, `question`, `fyi`), `due`, attachments from the shared drive or small files from the board's computer (up to 10 files, 5 MiB together, stored on the shared drive as the board's artifact). It starts a new thread; to answer in an existing one, reply in the thread in Messages.

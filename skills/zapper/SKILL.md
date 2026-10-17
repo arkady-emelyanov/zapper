@@ -40,6 +40,8 @@ zapper firm journal acme -f                        # mail, states, turns, access
 zapper firm transcript acme ada                    # what a worker's Claude did
 zapper mail ls acme ; zapper mail thread acme t-1  # the board's inbox
 zapper firm security acme                          # access requests, standing approvals
+zapper firm fund acme guido 200k --reason "…"     # the board gives tokens to a worker who ran out (officers answer to the board, so only it can)
+zapper firm release acme guido --reason "…"        # the board lets a worker go (officers answer only to the board)
 zapper firm budget acme                            # the run's budget, balances, the CEO's budget requests
 zapper firm budget acme approve b-1                # the board's answer to a budget request (or: decline b-1 --note "…")
 zapper firm screen acme c-1 --clear                 # a new hire's background check, when no officer answered (or --object --note "…")
