@@ -348,7 +348,7 @@ Publishing copies the named files out of the VM (see [the office protocol](#the-
 ### Kinds and what the UI does with them
 
 - **document, report**: Markdown, rendered in the UI.
-- **deck, board-pack**: Markdown slides (one `---` per slide) plus images; the UI shows them as a slide viewer. The CEO's publishing skill says a board pack has a summary, progress against the goal, metrics, risks and asks.
+- **deck, board-pack**: Markdown slides (one `---` per slide) plus images; the UI shows them as a slide viewer. A Marp deck works as is: its front matter (`marp: true`) and its directives and speaker notes (HTML comments) aren't shown. The CEO's publishing skill says a board pack has a summary, progress against the goal, metrics, risks and asks.
 - **dataset**: CSV/JSON with a table preview.
 - **No code**: code lives in the firm's [git repository](#the-git-repository) and is shared as a branch; `drive_publish` refuses `kind: "code"` and says so. Reports on code work name the branch and commits.
 

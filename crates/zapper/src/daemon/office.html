@@ -1917,9 +1917,15 @@ const RE_LIST = /^( {0,12})([-*+]|\d{1,9}[.)])[ \t]+(\S.*)$/;
 const RE_TSEP = /^ {0,3}\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$/;
 const RE_DRIVE = /^drive:([A-Za-z0-9_-]+)(?:@v?(\d+))?(?:\/(.+))?$/;
 
+// A leading YAML front matter block (Marp's `marp: true`, a document's
+// title) is metadata, not content.
+function stripFrontMatter(src) {
+  const m = /^\uFEFF?---[ \t]*\r?\n[\s\S]*?\r?\n(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/.exec(src);
+  return m ? src.slice(m[0].length) : src;
+}
 function renderMarkdown(text, ctx) {
   ctx = Object.assign({}, ctx || {});
-  let src = str(text);
+  let src = stripFrontMatter(str(text));
   let truncated = false;
   if (src.length > MD_MAX) { src = src.slice(0, MD_MAX); truncated = true; }
   src = src.replace(/\r\n?/g, '\n').replace(/\t/g, '    ');
@@ -2188,13 +2194,21 @@ function mdImage(alt, src, ctx) {
 
 // ─────────────────────────── slide viewer ───────────────────────────
 
+// Slides are separated by `---` lines, as in Marp; its front matter and
+// its directives and speaker notes (HTML comments) aren't shown.
 function splitSlides(text) {
-  const lines = str(text).slice(0, MD_MAX).replace(/\r\n?/g, '\n').split('\n');
+  const lines = stripFrontMatter(str(text).slice(0, MD_MAX).replace(/\r\n?/g, '\n')).split('\n');
   const slides = [[]];
-  let fence = null;
+  let fence = null, comment = false;
   for (const l of lines) {
+    if (comment) { if (l.includes('-->')) comment = false; continue; }
     if (fence) { const t = l.trim(); if (t.length >= fence.len && t[0] === fence.ch && /^(`+|~+)$/.test(t)) fence = null; }
-    else { const m = RE_FENCE.exec(l); if (m) fence = { ch: m[1][0], len: m[1].length }; else if (/^---\s*$/.test(l)) { slides.push([]); continue; } }
+    else {
+      const m = RE_FENCE.exec(l);
+      if (m) fence = { ch: m[1][0], len: m[1].length };
+      else if (/^---\s*$/.test(l)) { slides.push([]); continue; }
+      else if (/^\s*<!--/.test(l)) { if (!/-->\s*$/.test(l)) comment = true; continue; }
+    }
     slides[slides.length - 1].push(l);
   }
   return slides.map((s) => s.join('\n')).filter((s) => s.trim()).slice(0, 500);
