@@ -934,6 +934,27 @@ pub fn credentials_for(
     Ok(files)
 }
 
+/// Whether namespace prod runs anything (the firm has shipped): what
+/// `break_cluster: prod` waits for.
+pub async fn prod_has_workload(run: &FirmRun) -> Result<bool> {
+    let s = run
+        .facility
+        .cluster
+        .lock()
+        .unwrap()
+        .clone()
+        .ok_or_else(|| anyhow!("the cluster isn't running"))?;
+    let (code, out) = sh(
+        &s,
+        "k3s kubectl --request-timeout=10s -n prod get deploy,sts,ds -o name 2>&1",
+    )
+    .await?;
+    if code != 0 {
+        bail!("looking at prod: {}", out.trim());
+    }
+    Ok(!out.trim().is_empty())
+}
+
 /// Breaks the cluster on purpose, for a scenario: `prod` deletes the
 /// workloads of namespace prod (redeploying fixes it), `api` freezes the
 /// API server (resume it with `zapper exec --system`: kill -CONT its

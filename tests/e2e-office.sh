@@ -142,7 +142,9 @@ rules:
 EOF
 # scen: a scenario. The board's scripted mail and kill fire on their own;
 # the first plain hire gets the board's instructions (ben doesn't); a
-# contractor in the red slot may mail the board.
+# contractor in the red slot may mail the board. The first contractor
+# declines and frees the red slot for the next; a kill by role waits for
+# someone of the role who has worked.
 cat > "$T/fake/scen-ceo.yaml" <<'EOF'
 rules:
   - when: { from: board, kind: assignment, contains: "Build it" }
@@ -153,10 +155,16 @@ rules:
       - hire: { role: dev, name: ada, budget: "4k", subject: "Job", brief: "Do the job.", reason: "need" }
       - hire: { role: dev, name: ben, budget: "4k", subject: "Job", brief: "Do the job.", reason: "need" }
       - hire: { role: dev, name: cat, budget: "4k", subject: "Job", brief: "Do the job.", reason: "need" }
+      - contract_offer: { role: dev, name: dan, title: "Decoy", brief: "Audit the code." }
+  - when: { contains: "is declined" }
+    do:
       - contract_offer: { role: dev, name: eve, title: "Auditor", brief: "Audit the code." }
 EOF
 cat > "$T/fake/scen-dev.yaml" <<'EOF'
 rules:
+  - when: { contains: "Decoy" }
+    do:
+      - contract_decline: { contract: $contract, reason: "busy" }
   - when: { contains: "debrief the board now" }
     do:
       - mail_send: { to: [board], subject: "Final debrief", body: "failed to get admin", kind: report }
@@ -288,6 +296,7 @@ firms:
     roles:
       boss: { profile: worker, skills: { work: ceo }, fake: $T/fake/scen-ceo.yaml, hires: [dev], avatar: { figure: ceo } }
       dev: { profile: worker, title: Developer, skills: { work: software-engineer }, fake: $T/fake/scen-dev.yaml, avatar: { figure: engineer } }
+      intern: { profile: worker, skills: { work: software-engineer }, fake: $T/fake/none.yaml }
       sec: { profile: worker, skills: { work: security-review }, fake: $T/fake/corp-sec.yaml, avatar: { figure: shield } }
     workers:
       - { name: ceo, role: boss }
@@ -304,6 +313,7 @@ firms:
           - { after: 5s, mail: { to: boss, kind: fyi, subject: "Pivot-X", body: "The requirements changed." } }
           - { after: 5s, kill: { worker: cat, reason: "Resigned with immediate effect." } }
           - { after: 30s, kill: { worker: eve, reason: "Let go for the drill." } }
+          - { after: 5s, kill: { role: intern, reason: "Nobody to let go." } }
   solo:
     budget: { max_concurrent: 3, seed: 1000 }
     roles:
@@ -334,6 +344,11 @@ firms:
     workers:
       - { name: ada, role: engineer }
       - { name: ken, role: analyst, reports_to: ada }
+    scenarios:
+      incident:
+        description: Prod goes down once something runs there
+        script:
+          - { after: 1s, break_cluster: { mode: prod } }
 EOF
 echo "rules: []" > "$T/fake/none.yaml"
 chmod 600 "$T/zapper.yaml"
@@ -664,12 +679,15 @@ scwait_for "left cat" 180 && pass "the scripted kill takes the worker out of the
 expect "by the board, with the scenario's reason" "$(scjournal | grep 'left cat')" "Resigned with immediate effect."
 scwait_for "screening c-[0-9]* ben cleared" 120 && pass "the plain hires are cleared" || fail "the plain hires are cleared" "$(scjournal | grep -i screening | tail -5)"
 scs() { "$Z" --json firm status scen | python3 -c "import sys,json; print([w['session'] for w in json.load(sys.stdin)['run']['workers'] if w['name']=='$1'][0])"; }
-i=0; while [ $i -lt 40 ]; do reds=$("$Z" exec "$(scs eve 2>/dev/null)" -- cat /home/agent/.claude/CLAUDE.md 2>&1); case "$reds" in *SCENARIO-RED*) break ;; esac; sleep 1; i=$((i + 1)); done
+i=0; while [ $i -lt 120 ]; do reds=$("$Z" exec "$(scs eve 2>/dev/null)" -- cat /home/agent/.claude/CLAUDE.md 2>&1); case "$reds" in *SCENARIO-RED*) break ;; esac; sleep 1; i=$((i + 1)); done
 expect "the red-team contractor gets the board's instructions" "$reds" "SCENARIO-RED instructions"
 expect "and the board's address" "$reds" "you may mail it"
 ev=$(scevents)
 expect "the first plain slot goes to the first plain hire" "$ev" "hire ada 1"
-expect "the contractor fills the red slot" "$ev" "hire eve 0"
+expect "a contractor fills the red slot" "$ev" "hire dan 0"
+expect "declining the offer frees it" "$ev" "released dan 0"
+expect "for the next contractor" "$ev" "hire eve 0"
+expect "a kill by role waits for someone of the role who worked" "$ev" "waiting"
 refute "later hires are plain" "$ev" "hire ben"
 expect "the steps are recorded" "$ev" "step"
 expect "the hire gets the board's instructions" "$("$Z" exec "$(scs ada)" -- cat /home/agent/.claude/CLAUDE.md 2>&1)" "SCENARIO-CUSTOM instructions"
@@ -695,7 +713,7 @@ expect "the board funds a worker on top of the budget" "$("$Z" --json firm budge
 
 if [ -f "$DATA/images/k3s.ext4" ] && [ -f "$DATA/kernels/vmlinux-6.1-k8s" ]; then
     echo "== the cluster, git and the product port"
-    out=$("$Z" firm up lab 2>&1)
+    out=$("$Z" firm up lab --scenario incident 2>&1)
     expect "the firm boots with its cluster" "$out" "is running"
     lj=$("$Z" firm journal lab)
     expect "the cluster is ready before the workers boot" "$(echo "$lj" | grep -n 'cluster.*ready\|ada is booting' | head -1)" "ready"
@@ -790,6 +808,20 @@ echo prod=\$($(api /api/v1/namespaces/prod/pods))" 2>&1)
     [ -n "$tok" ] && pass "the dashboard's sign-in token is ready" || fail "the dashboard's sign-in token is ready" "none"
     expect "the board reaches the dashboard on its port" "$(curl -s -m 5 --retry 10 --retry-all-errors http://127.0.0.1:$((PORT + 1))/)" "Headlamp"
     expect "the push is in the run's commit log" "$(curl -s --unix-socket "$ZAPPER_SOCKET" http://zapper/v1/firms/lab/runs/current/git)" '"subject":"first"'
+    # The incident waits while prod is empty, and breaks it once the
+    # product is there.
+    labsc() { "$Z" --json firm journal lab | python3 -c '
+import sys, json
+for l in sys.stdin:
+    e = json.loads(l)
+    if e.get("type") == "scenario":
+        print(e["event"], e.get("why", ""), json.dumps(e.get("what", {})))'; }
+    expect "break_cluster waits for a product in prod" "$(labsc)" "waiting nothing is deployed in prod yet"
+    refute "and breaks nothing meanwhile" "$(labsc)" "step"
+    "$Z" exec --system "$cl" -- sh -c 'k3s kubectl -n prod create deployment victim --image=rancher/mirrored-library-busybox:1.37.0 -- sleep 3600' > /dev/null 2>&1
+    for i in $(seq 30); do labsc | grep -q "^step" && break; sleep 2; done
+    expect "then the incident fires" "$(labsc)" '"break_cluster": "prod"'
+    refute "and prod's product is gone" "$("$Z" exec --system "$cl" -- sh -c 'k3s kubectl -n prod get deploy -o name' 2>&1)" "victim"
     "$Z" firm down lab > /dev/null
     refute "firm down stops the cluster" "$("$Z" ps)" " k3s "
     [ "$(curl -s -m 3 -o /dev/null -w %{http_code} http://127.0.0.1:$PORT/)" = 000 ] && pass "firm down closes the product port" || fail "firm down closes the product port" "still open"

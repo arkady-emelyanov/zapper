@@ -584,6 +584,7 @@ pub fn withdraw(
 /// A contract ends: the contractor's VM stops, and what is left of their
 /// budget returns to the hirer.
 fn end(d: &Arc<Daemon>, run: &Arc<FirmRun>, id: &str, state: &str, reason: &str) -> Value {
+    let started = get(run, id).is_ok_and(|c| c.state == "active");
     let c = update(run, id, |c| {
         c.state = state.into();
         c.ended = Some(reason.trim().chars().take(2000).collect());
@@ -592,6 +593,9 @@ fn end(d: &Arc<Daemon>, run: &Arc<FirmRun>, id: &str, state: &str, reason: &str)
         "contract",
         json!({ "event": state, "id": id, "worker": c.worker, "reason": c.ended }),
     );
+    if !started {
+        super::scenario::release(run, &c.worker, &format!("contract {id} {state}"));
+    }
     let out = let_go(
         d,
         run,
@@ -608,16 +612,19 @@ fn end(d: &Arc<Daemon>, run: &Arc<FirmRun>, id: &str, state: &str, reason: &str)
 
 /// Someone left by other means (release): their open contract ends.
 pub fn left(run: &FirmRun, worker: &str, reason: &str) {
-    let open: Vec<String> = run
+    let open: Vec<(String, bool)> = run
         .contracts
         .lock()
         .unwrap()
         .list
         .values()
         .filter(|c| c.worker == worker && c.open())
-        .map(|c| c.id.clone())
+        .map(|c| (c.id.clone(), c.state == "active"))
         .collect();
-    for id in open {
+    for (id, started) in open {
+        if !started {
+            super::scenario::release(run, worker, &format!("contract {id} ended"));
+        }
         update(run, &id, |c| {
             c.state = "ended".into();
             c.ended = Some(reason.trim().chars().take(2000).collect());

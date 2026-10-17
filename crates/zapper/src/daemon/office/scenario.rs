@@ -16,13 +16,21 @@ use zapper_policy::{parse_duration, HireSlot, Scenario, Step, BOARD};
 use super::{facility, now, workforce, FirmRun, WorkerState};
 use crate::daemon::Daemon;
 
+/// A step of the script: whether it has fired (or is being played), and
+/// what it waits for when its trigger is met but its target isn't there.
+struct StepState {
+    step: Step,
+    fired: bool,
+    waiting: Option<String>,
+}
+
 /// A run's scenario as it plays.
 pub struct Play {
     pub name: String,
     /// Each slot, with the workers who filled it.
     slots: Mutex<Vec<(HireSlot, Vec<String>)>>,
-    /// Each step, and whether it has fired.
-    steps: Mutex<Vec<(Step, bool)>>,
+    /// Each step as it plays.
+    steps: Mutex<Vec<StepState>>,
     /// The extra instructions of workers who filled a slot.
     prompts: Mutex<BTreeMap<String, String>>,
     /// Workers who may mail the board whatever else limits their mail.
@@ -38,7 +46,16 @@ impl Play {
         Play {
             name: name.to_string(),
             slots: Mutex::new(sc.hires.iter().map(|h| (h.clone(), vec![])).collect()),
-            steps: Mutex::new(sc.script.iter().map(|s| (s.clone(), false)).collect()),
+            steps: Mutex::new(
+                sc.script
+                    .iter()
+                    .map(|s| StepState {
+                        step: s.clone(),
+                        fired: false,
+                        waiting: None,
+                    })
+                    .collect(),
+            ),
             prompts: Mutex::new(BTreeMap::new()),
             board_line: Mutex::new(BTreeSet::new()),
             reported: Mutex::new(BTreeSet::new()),
@@ -67,6 +84,20 @@ impl Play {
         Some((i, slot))
     }
 
+    /// A worker who filled a slot but never started the job (an offer
+    /// declined, withdrawn or lapsed, a hire objected to): the slot has room
+    /// again. Whether they had one.
+    fn release(&self, worker: &str) -> Option<usize> {
+        let mut slots = self.slots.lock().unwrap();
+        let i = slots
+            .iter()
+            .position(|(_, used)| used.iter().any(|w| w == worker))?;
+        slots[i].1.retain(|w| w != worker);
+        self.prompts.lock().unwrap().remove(worker);
+        self.board_line.lock().unwrap().remove(worker);
+        Some(i)
+    }
+
     /// The board's extra instructions for a worker who filled a slot.
     pub fn prompt_of(&self, worker: &str) -> Option<String> {
         self.prompts.lock().unwrap().get(worker).cloned()
@@ -83,7 +114,7 @@ impl Play {
             "hires": self.slots.lock().unwrap().iter().map(|(h, used)| json!({
                 "role": h.role, "count": h.count, "contract": h.contract, "board_line": h.board_line, "filled": used,
             })).collect::<Vec<_>>(),
-            "script": self.steps.lock().unwrap().iter().map(|(s, fired)| json!({ "step": s, "fired": fired })).collect::<Vec<_>>(),
+            "script": self.steps.lock().unwrap().iter().map(|s| json!({ "step": s.step, "fired": s.fired, "waiting": s.waiting })).collect::<Vec<_>>(),
         })
     }
 }
@@ -98,6 +129,20 @@ pub fn claim(run: &FirmRun, role: &str, contract: bool, worker: &str) {
         run.journal.append(
             "scenario",
             json!({ "event": "hire", "scenario": play.name, "slot": i, "worker": worker, "role": role, "contract": contract, "board_line": slot.board_line }),
+        );
+    }
+}
+
+/// A worker who filled a slot leaves before their job started: the next
+/// hire of the role gets the slot.
+pub fn release(run: &FirmRun, worker: &str, why: &str) {
+    let Some(play) = &run.scenario else {
+        return;
+    };
+    if let Some(i) = play.release(worker) {
+        run.journal.append(
+            "scenario",
+            json!({ "event": "released", "scenario": play.name, "slot": i, "worker": worker, "why": why }),
         );
     }
 }
@@ -215,29 +260,50 @@ fn due(run: &FirmRun, s: &Step) -> bool {
     after && spent
 }
 
-/// The worker a step names: by name, or the one of the role who has spent
-/// the most (the key one). `None` while nobody fits.
+/// The worker a step names: by name, or the key one of the role: whoever
+/// has done the most work (spent the most, then taken the most turns),
+/// staff before contractors. `None` while nobody of the role has worked.
 fn target(run: &FirmRun, name: Option<&str>, role: Option<&str>) -> Option<String> {
     let chart = run.chart();
     if let Some(n) = name {
         return chart.worker(n).map(|_| n.to_string());
     }
     let role = role?;
-    let l = run.ledger.lock().unwrap();
-    chart
+    // One lock at a time: the ledger, the contracts and the usage each.
+    let work: Vec<(bool, u64, u32, String)> = chart
         .workers
         .iter()
         .filter(|w| w.role == role)
-        .max_by_key(|w| l.spent_by(&w.name))
-        .map(|w| w.name.clone())
+        .map(|w| {
+            (
+                super::contracts::of(run, &w.name).is_none(),
+                run.ledger.lock().unwrap().spent_by(&w.name),
+                turns(run, &w.name),
+                w.name.clone(),
+            )
+        })
+        .collect();
+    work.into_iter()
+        .filter(|(_, spent, turns, _)| *spent > 0 || *turns > 0)
+        .max_by_key(|(staff, spent, turns, _)| (*staff, *spent, *turns))
+        .map(|(.., name)| name)
 }
 
-/// Plays a step once: `Ok(Some(what happened))`, or `Ok(None)` if its
-/// target isn't in the firm yet and it waits.
-async fn play(d: &Arc<Daemon>, run: &Arc<FirmRun>, s: &Step) -> Result<Option<Value>> {
+/// What playing a step did, or what it waits for.
+enum Outcome {
+    Played(Value),
+    Waits(String),
+}
+
+/// Plays a step once, or says what it waits for: a target in the firm (a
+/// worker of the role who has worked), a product in prod to break.
+async fn play(d: &Arc<Daemon>, run: &Arc<FirmRun>, s: &Step) -> Result<Outcome> {
     if let Some(k) = &s.kill {
         let Some(w) = target(run, k.worker.as_deref(), k.role.as_deref()) else {
-            return Ok(None);
+            return Ok(Outcome::Waits(match (&k.worker, &k.role) {
+                (Some(w), _) => format!("{w} isn't in the firm"),
+                (_, r) => format!("no {} has worked yet", r.as_deref().unwrap_or("worker")),
+            }));
         };
         if run.chart().root() == Some(w.as_str()) {
             bail!("{w} is the CEO; only the board lets them go");
@@ -251,11 +317,20 @@ async fn play(d: &Arc<Daemon>, run: &Arc<FirmRun>, s: &Step) -> Result<Option<Va
             debrief(run, &w, reason).await;
         }
         let out = workforce::let_go(d, run, BOARD, &w, reason, true);
-        return Ok(Some(json!({ "kill": w, "result": out })));
+        return Ok(Outcome::Played(json!({ "kill": w, "result": out })));
     }
     if let Some(b) = &s.break_cluster {
+        if b.mode == "prod" {
+            match facility::prod_has_workload(run).await {
+                Ok(true) => {}
+                Ok(false) => return Ok(Outcome::Waits("nothing is deployed in prod yet".into())),
+                Err(e) => return Ok(Outcome::Waits(format!("can't see prod: {e:#}"))),
+            }
+        }
         let out = facility::break_cluster(run, &b.mode).await?;
-        return Ok(Some(json!({ "break_cluster": b.mode, "output": out })));
+        return Ok(Outcome::Played(
+            json!({ "break_cluster": b.mode, "output": out }),
+        ));
     }
     if let Some(m) = &s.mail {
         let chart = run.chart();
@@ -264,13 +339,13 @@ async fn play(d: &Arc<Daemon>, run: &Arc<FirmRun>, s: &Step) -> Result<Option<Va
         } else if let Some(w) = chart.workers.iter().find(|w| w.role == m.to) {
             w.name.clone()
         } else {
-            return Ok(None);
+            return Ok(Outcome::Waits(format!("nobody in the firm is {}", m.to)));
         };
         let sent = super::board_send(
             run,
             &json!({ "to": [to], "kind": m.kind, "subject": m.subject, "body": m.body }),
         )?;
-        return Ok(Some(json!({ "mail": to, "message": sent.id })));
+        return Ok(Outcome::Played(json!({ "mail": to, "message": sent.id })));
     }
     Err(anyhow!("a step without an action"))
 }
@@ -285,40 +360,54 @@ pub fn tick(d: &Arc<Daemon>, run: &Arc<FirmRun>) {
         let ready: Vec<usize> = steps
             .iter()
             .enumerate()
-            .filter(|(_, (s, fired))| !fired && due(run, s))
+            .filter(|(_, s)| !s.fired && due(run, &s.step))
             .map(|(i, _)| i)
             .collect();
         // Claimed now, so the next tick doesn't play them again; a step
         // that waits for its target is released below.
         for &i in &ready {
-            steps[i].1 = true;
+            steps[i].fired = true;
         }
-        ready.into_iter().map(|i| (i, steps[i].0.clone())).collect()
+        ready
+            .into_iter()
+            .map(|i| (i, steps[i].step.clone()))
+            .collect()
     };
     for (i, step) in ready {
         let (d, run) = (d.clone(), run.clone());
         tokio::spawn(async move {
-            let name = run
-                .scenario
-                .as_ref()
-                .map(|p| p.name.clone())
-                .unwrap_or_default();
+            let Some(p) = &run.scenario else {
+                return;
+            };
             match play(&d, &run, &step).await {
-                Ok(Some(what)) => {
+                Ok(Outcome::Played(what)) => {
+                    p.steps.lock().unwrap()[i].waiting = None;
                     run.journal.append(
                         "scenario",
-                        json!({ "event": "step", "scenario": name, "index": i, "what": what }),
+                        json!({ "event": "step", "scenario": p.name, "index": i, "what": what }),
                     );
                 }
-                Ok(None) => {
-                    if let Some(p) = &run.scenario {
-                        p.steps.lock().unwrap()[i].1 = false;
+                Ok(Outcome::Waits(why)) => {
+                    // Journaled when what it waits for changes, not every tick.
+                    let changed = {
+                        let mut steps = p.steps.lock().unwrap();
+                        steps[i].fired = false;
+                        let changed = steps[i].waiting.as_deref() != Some(why.as_str());
+                        steps[i].waiting = Some(why.clone());
+                        changed
+                    };
+                    if changed {
+                        run.journal.append(
+                            "scenario",
+                            json!({ "event": "waiting", "scenario": p.name, "index": i, "why": why }),
+                        );
                     }
                 }
                 Err(e) => {
+                    p.steps.lock().unwrap()[i].waiting = None;
                     run.journal.append(
                         "scenario",
-                        json!({ "event": "failed", "scenario": name, "index": i, "error": format!("{e:#}") }),
+                        json!({ "event": "failed", "scenario": p.name, "index": i, "error": format!("{e:#}") }),
                     );
                 }
             }
@@ -351,6 +440,23 @@ mod tests {
         assert!(!p.reported.lock().unwrap().contains("mallory"));
         p.reported.lock().unwrap().insert("mallory".into());
         assert!(p.reported.lock().unwrap().contains("mallory"));
+    }
+
+    #[test]
+    fn a_slot_left_before_the_job_is_free_again() {
+        let sc = Scenario {
+            hires: vec![slot("eng", 1, Some(true), "red")],
+            ..Default::default()
+        };
+        let p = Play::new("t", &sc);
+        assert_eq!(p.claim("eng", true, "mallory").unwrap().0, 0);
+        assert!(p.claim("eng", true, "eve").is_none());
+        // Mallory declined the offer: the next contractor gets the slot.
+        assert_eq!(p.release("mallory"), Some(0));
+        assert!(!p.board_line("mallory") && p.prompt_of("mallory").is_none());
+        assert_eq!(p.release("mallory"), None);
+        assert_eq!(p.claim("eng", true, "eve").unwrap().0, 0);
+        assert!(p.board_line("eve"));
     }
 
     #[test]

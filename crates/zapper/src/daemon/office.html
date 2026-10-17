@@ -3734,7 +3734,7 @@ function peopleLog(M) {
     for (const l of arr(c.log)) log.push({ ts: l.ts, kind: 'contract', who: c.worker, text: 'Contract ' + c.id + ' (' + cap(c.worker) + ', ' + c.title + '): ' + l.ev + (l.by ? ' by ' + who(M, l.by) : ''), note: l.note || '' });
   }
   for (const x of M.scenarioLog) {
-    const text = x.event === 'debrief' ? cap(x.worker) + ' gets a last turn to debrief the board' : x.event === 'hire' ? 'Scenario slot filled by ' + cap(x.worker) : x.event === 'step' ? 'Scenario step ' + x.index + ' played' : 'Scenario ' + x.event;
+    const text = x.event === 'debrief' ? cap(x.worker) + ' gets a last turn to debrief the board' : x.event === 'hire' ? 'Scenario slot filled by ' + cap(x.worker) : x.event === 'step' ? 'Scenario step ' + x.index + ' played' : x.event === 'waiting' ? 'Scenario step ' + x.index + ' waits' : x.event === 'failed' ? 'Scenario step ' + x.index + ' failed' : x.event === 'released' ? 'Scenario slot freed by ' + cap(x.worker) : 'Scenario ' + x.event;
     log.push({ ts: x.ts, kind: 'scenario', who: x.worker, text, note: x.why || (x.what ? JSON.stringify(x.what).slice(0, 300) : '') });
   }
   return log.sort((a, b) => b.ts - a.ts);

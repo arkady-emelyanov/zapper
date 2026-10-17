@@ -388,6 +388,7 @@ pub fn decide_screening(
             w.wake.notify_one();
         }
     } else if run.rt(&s.worker).is_some() {
+        super::scenario::release(run, &s.worker, "objected to at the background check");
         super::workforce::let_go(
             d,
             run,
