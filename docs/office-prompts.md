@@ -198,6 +198,32 @@ Note: your previous turn was interrupted (the Claude process restarted at
 thread you were on before continuing.
 ```
 
+## Timeout note
+
+Prepended to the next wake prompt after a turn ran past `budget.turn_timeout` and was stopped.
+
+```
+Note: your previous turn ran past the {{turn_timeout}} a turn may take and was stopped. It was handling:
+  - {{subject}} from {{sender}}
+
+That mail is not shown again. Check your desk, the drive and git for what
+you finished, and do the rest in smaller steps: end a turn when a piece is
+done and sent.
+```
+
+## Officer: credential request
+
+Mail from the post office to whoever decides it (an officer, the CEO, or the board).
+
+```
+[Automatic notice] Credential request {{id}} — {{worker}} asks for {{level}} on {{resource}}{{" (a renewal: the grant they hold expires at …)"}}.
+Their open assignments (from the post office):
+  - {{subject}} (from {{manager}})
+Reason (the requester's words):
+> {{reason}}
+Decide with credentials_decide(request: "{{id}}", grant, level?, expires_in?, note), or hand it up with credentials_escalate.
+```
+
 ## Budget notice
 
 Not a wake prompt; mail from the post office to the board, once a day, when the firm's budget runs out. A worker over its own `worker_daily_turns` sleeps without a notice; its avatar shows it.

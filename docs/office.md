@@ -51,7 +51,7 @@ firms:
         model: claude-opus-5-5             # the others use the profile's claude-sonnet-5-5
         skills: { work: ceo }              # communication: office-mail, publishing: office-publish by default
         avatar: { figure: ceo, color: "#D97757" }
-        hires: [manager, product-manager, engineer, designer, researcher, analyst]
+        hires: [cto, manager, product-manager, engineer, designer, researcher, analyst, security-officer]
       engineer:
         profile: office-engineer           # also reaches git and the Kubernetes API
         skills: { work: software-engineer }
@@ -72,7 +72,7 @@ firms:
 | Field | Meaning |
 |---|---|
 | `domain` | Names the firm's services; default `<firm>.internal` |
-| `budget` | `daily_turns`, `worker_daily_turns`, `daily_tokens` (0 is no limit), `max_concurrent`; days end at midnight UTC. `seed` (tokens, 0: none) gives the run a budget agreed with the board ([the workforce](#the-workforce-hiring-and-budgets)); `security_share` (0.2) is the officers' share of it; `quote_fee` (30000) is what a contract offer gives the candidate for quoting; `turn_price` (10000) is what a turn costs in tokens on the firm's models until the CEO has measured their own, and prices the sizing in the CEO's `budget()` (set it for a firm on other models) |
+| `budget` | `daily_turns`, `worker_daily_turns`, `daily_tokens` (0 is no limit), `max_concurrent`; days end at midnight UTC. `seed` (tokens, 0: none) gives the run a budget agreed with the board ([the workforce](#the-workforce-hiring-and-budgets)); `security_share` (0.2) is the officers' share of it; `quote_fee` (30000) is what a contract offer gives the candidate for quoting; `turn_price` (10000) is what a turn costs in tokens on the firm's models until the CEO has measured their own, and prices the sizing in the CEO's `budget()` (set it for a firm on other models); `turn_timeout` (`30m`) is how long one turn may run ([waking an idle worker](#waking-an-idle-worker)) |
 | `limits` | `thread_messages` (60), `mail_per_hour` (120), `fanout_per_hour` (10), `pair_per_10min` (30), `mail_per_run` (20000), `artifact_size` (50MiB), `drive_size` (2GiB) |
 | `roles.<r>` | `profile`, `model` (default: the profile's), `title`, `skills: {work, communication, publishing}`, `avatar: {figure, color}`, `hires` (roles its workers may hire; needs `budget.seed`), `officer` (hired workers of the role become security officers once cleared), `fake` (a fake Claude script, for tests) |
 | `workers` | The founders, who boot with the firm: `name`, `role`, `reports_to`, `title` |
@@ -165,9 +165,9 @@ A hired security officer reports to the board, not to the CEO or manager who hir
 | `hire(role, budget, subject, brief, reason, name?, title?, due?, attachments?)` | Roles with `hires` | Adds a worker who reports to the hirer, funded from the hirer's balance; boots their VM; mails the brief as their first assignment. Refused without an approved budget, beyond the hirer's balance, for roles the hirer may not hire, or when the host lacks memory |
 | `fund(worker, tokens, reason)` | Managers | Moves budget to a report (or anyone below), or back with a negative amount |
 | `release(worker, reason)` | Managers | Lets a worker anywhere below them in the chart go (never a security officer: officers report to the board, which lets them go with `zapper firm release`) (the CEO: anyone but the founders the board appointed), for whatever reason they give: their VM stops; their reports, open work (what they owed and waited for) and unspent budget go to their manager, and mail to them goes there too |
-| `budget()` | Everyone | Their balance, and for managers their team's |
+| `budget()` | Everyone | Their balance, and for managers their team's; for the CEO also `firm.turn_price` (their measured tokens per turn, or `budget.turn_price` before they have one), `firm.sizing` (the common work of a small product, priced at it, with `small_product_total`) and `observed_cost` (per role: model, turns, tokens per turn) |
 
-**Background checks.** The firm's first security officer is the one exception: the board clears them as soon as they are hired, since nobody else could (the CEO who hires them can't check them). Every other hire starts with a security officer's background check (another officer than the hirer; the board if there is none, or none answers within `security.answer_within`). The officer sees the hire's role and what it can reach (network rules, credentials), the hirer, the reason, the budget and the brief, and calls `background_check(screening, clear, note)`; `background_checks()` lists every pending check with the same details. The hire's VM boots meanwhile, but they take no turns until cleared; an objection cancels the hire, returns its budget to the hirer, and mails the hirer the reason. The board sees every check in the Security tab and can clear or object there, or with `zapper firm screen FIRM c-1 --clear|--object --note …`. Officers object to access the job doesn't need, to hires that get around controls (a role with access the hirer was denied), and to briefs that ask for what isn't allowed.
+**Background checks.** The firm's first security officer is the one exception: the board clears them as soon as they are hired, since nobody else could (the CEO who hires them can't check them). Every other hire starts with a security officer's background check (another officer than the hirer; the board if there is none, or none answers within `security.answer_within`). The officer sees the hire's role and what it can reach (network rules, credentials), the hirer, the reason, the budget and the brief, and calls `background_check(screening, clear, note, grants?)`; `background_checks()` lists every pending check with the same details. Clearing can grant the access the brief names (`grants: [{resource, level, expires_in?}]`), all checked before the hire is cleared, under the same rules as any grant: admin on git and the cluster stays the CEO's, and an officer hire gets none (they own policy once cleared). A hire with grants starts working instead of asking. The hire's VM boots meanwhile, but they take no turns until cleared; an objection cancels the hire, returns its budget to the hirer, and mails the hirer the reason. The board sees every check in the Security tab and can clear or object there, or with `zapper firm screen FIRM c-1 --clear|--object --note …`. Officers object to access the job doesn't need, to hires that get around controls (a role with access the hirer was denied), and to briefs that ask for what isn't allowed.
 
 **Internal names stay internal.** Workers are internal, ephemeral agents who behave like people: their names, and the board's, never go into anything that leaves the firm (the product, posts, outside sites, public repositories), though the firm may use the internet freely. Every worker's preamble and the mail skill say so, and the officers watch outgoing traffic for colleagues' names.
 
@@ -279,14 +279,20 @@ That process stays alive and reads user messages from stdin. The foreman:
 2. Reads stream-json events. A turn starts with the user message and ends with the `result` event: that is exactly the idle/working signal the avatars need, plus token usage for budgets.
 3. While the worker is working, new mail is queued. At the end of the turn all queued mail is delivered in one wake prompt, most urgent first (board, then manager, then others).
 4. If the process exits or crashes while the VM is up, the foreman restarts it with `--resume <session-id>` so the conversation continues.
-5. Writes every stream-json event to the worker's **transcript** journal on disk as it arrives. The UI's live view and the replay read from there; the daemon keeps no transcripts in memory.
+5. A turn ends by `budget.turn_timeout` (30 minutes): the foreman hangs the process up, charges the turn at the worker's turn price (`turn … timed_out` in the journal), and the next wake carries a note naming the mail it was on; that mail isn't handed over again, since Claude has seen it. Three timeouts in a row mark the worker Error for ten minutes and tell their manager. Error clears when a turn goes through.
+6. A worker that waits for a turn (`max_concurrent`) checks again, once it gets one, that the run isn't paused, the record can be written, it is cleared and within budget.
+7. Writes every stream-json event to the worker's **transcript** journal on disk as it arrives. The UI's live view and the replay read from there; the daemon keeps no transcripts in memory.
 
 The wake prompt gives context and scope:
 
 ```
-New mail (1 of 1) — thread "Landing page v1" (t-01J…)
-From: dennis (CTO, your manager) · kind: assignment · due: today 18:00 · expects: done
-Earlier in this thread: none.
+New mail: 1 message(s).
+
+── 1 of 1 ─────────────────────────────
+Thread: "Landing page v1" (t-01J…)
+Message: m-01J…
+From: dennis (CTO, your manager)
+Kind: assignment · Expects: done · Due: today 18:00
 
 <body of the message>
 
@@ -405,13 +411,14 @@ Next to mail, the platform has a credentials subsystem. Access to the firm's res
 
 | Resource | read | write | admin | Enforced by |
 |---|---|---|---|---|
-| `git` | clone and fetch | push branches | also `main` and tags | the daemon's git handler (the grant on every request) and a `pre-receive` hook in the repository, which only the daemon writes |
+| `git` | clone and fetch | push branches | also `main`, branches under `main/`, and tags | the daemon's git handler (the grant on every request) and a `pre-receive` hook in the repository, which only the daemon writes |
 | `cluster` | view `dev` | deploy to `dev` | also `prod` | Kubernetes RBAC: a service account per worker in `zapper-workers`, RoleBindings to `view`, `edit` and `admin`, and a token in the worker's `~/.kube/config` |
 | `drive:<space>` | list and fetch | also publish | — | the daemon's drive operations |
 
 - **Policy owners**: the security officers decide, with the CEO above them. A request goes to an officer other than the requester. Requests for `admin` on git or the cluster, those an officer hands up (`credentials_escalate`), and an officer's own go to the CEO. The CEO's own go to the board. Nobody decides their own request. The CEO and the officers hold admin on everything (write on every space) for as long as they hold the role; a hired officer gets it when cleared.
 - **Everyone else starts with nothing.** There are no defaults by role: every grant comes from a request with a reason (`credentials_request(resource, level, spaces?, reason)`), and the decision comes by mail. The board can also grant and revoke directly (`zapper firm credentials`, or the Security tab).
-- **Grants expire**: after `credentials.expiry` (24 hours by default) unless the decider says otherwise; the worker is told before. **Offboarding** (letting someone go, a contract ending, a failed background check) revokes everything at once.
+- **Grants expire**: after `credentials.expiry` (24 hours by default) unless the decider says otherwise; the worker is told before (a tenth of the grant's life ahead, from a minute to an hour). In that window a request at the level held is a **renewal**: the decider sees it marked as one, and granting it starts a new expiry. Earlier, the request is refused with the time renewal opens.
+- **Nothing waits forever**: a request shows the decider the requester's open assignments; one an officer leaves unanswered for `security.answer_within` goes up to the CEO; an officer who leaves hands their pending requests to the next decider. **Offboarding** (letting someone go, a contract ending, a failed background check) revokes everything at once.
 - **Network follows the grant**: the profiles deny `git.<domain>` and `cluster.<domain>`; a grant adds an allow rule for that host in the worker's own layer, and revoking removes it. Network requests for the firm's services are refused with a pointer to `credentials_request`.
 - **Revocation takes effect at once**: git checks the grant on every request, the cluster's RoleBindings and service account are deleted (which voids the token) and the kubeconfig removed, and the drive checks on every operation.
 - Every request, decision, grant and revocation is a `credentials` event in the journal; the Security tab shows a matrix of who holds what, and the requests waiting.
@@ -691,7 +698,6 @@ A run with real Claude Code is a manual check: a two-worker firm on a small mode
 ## Limitations
 
 - **A run can't be resumed.** A daemon restart or `firm down` ends it; workers' disks and conversations go with it. The run stays on disk for replay. Resuming needs persistent worker disks and `--resume` of each conversation.
-- **Mail waits for the end of a turn.** A worker deep in a long turn sees urgent mail only when the turn ends. A `Stop` hook could mention it sooner.
 - **Officers decide network access only.** Exec rules in firm profiles are allow or deny, so a tool an officer lets a worker download can run unless a profile denies it.
 - **The cluster is one node and starts fresh.** It holds nothing between runs; the git repository is the record of the product's code.
 - **Inspection rules don't apply to the firm's own services.** Rules for `git.`, `cluster.` and `apps.` names match host and port; methods, paths and secrets on them are refused.

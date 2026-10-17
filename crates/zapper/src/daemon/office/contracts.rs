@@ -151,15 +151,20 @@ colleagues {by} adds to the job.\n\n\
 First, the negotiation: read the offer, then answer with contract_quote (the\n\
 scope you will deliver and what is out of it, a budget in tokens, a due date,\n\
 and what you need) or contract_decline. {by} may accept, counter or walk away;\n\
-quote again on a counter. Your quoting turns are paid from a small fee, so\n\
-keep them short. Once accepted, the job arrives as an assignment.\n\n\
+quote again on a counter (a few rounds at most). Your quoting turns are paid\n\
+from a small fee, so quote in one turn. An offer nobody answers for an hour\n\
+lapses. Once accepted, the budget is yours and the job arrives as an\n\
+assignment; ask for the access it needs (credentials_request) at once.\n\n\
 The contract ends when you call contract_complete with your report (it goes\n\
-to {by} and your machine stops), when its budget is spent, or shortly after\n\
-the due date. Publish or push what you deliver before you complete: your\n\
-machine and its files are gone afterwards.\n",
+to {by} and your machine stops), when its budget is spent, or {grace} minutes\n\
+after the due date (you are told when it passes). Publish or push what you\n\
+deliver before you complete: your machine and its files are gone afterwards.\n\
+Don't spend turns waiting: if you are blocked, say so to {by} and end your\n\
+turn.\n",
         by = c.by,
         id = c.id,
         title = c.title,
+        grace = (GRACE / 60.0) as u64,
     )
 }
 

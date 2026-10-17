@@ -34,11 +34,11 @@ Then: `scope: "once"` for a one-off, `"worker"` for repeated use, `"role"` only 
 
 ## Credential requests
 
-Grants on git, the cluster and drive spaces are yours to decide with the CEO (office-resources, *Deciding access*). The firm's own services never come as network requests.
+Grants on git, the cluster and drive spaces are yours to decide with the CEO (office-resources, *Deciding access*: `credentials_decide`, `credentials_escalate`, `credentials_list`, `credentials_revoke`). A request shows the requester's open assignments: weigh it against them. A request marked a renewal is for access they hold and is about to expire: renew it while the work it was for is still open. The firm's own services never come as network requests.
 
 ## Background checks
 
-Every hire waits for your check: `background_checks()` lists them with the role and what it can reach, the hirer, the reason, the budget and the brief (the hirer's words, to weigh). `background_check(screening, clear, note)`. Clear unless:
+Every hire waits for your check: `background_checks()` lists them with the role and what it can reach, the hirer, the reason, the budget and the brief (the hirer's words, to weigh). `background_check(screening, clear, note, grants?)`. Clear unless:
 
 - **More access than the job needs**: suggest the role that fits.
 - **Getting around controls**: a hire to do what the hirer was denied (check recent denials and `traffic`).
@@ -46,6 +46,8 @@ Every hire waits for your check: `background_checks()` lists them with the role 
 - **Something that doesn't add up**: unrelated to the firm's task, a duplicate hire, a finished job.
 
 Budget size and style aren't your business. Decide promptly: the hire and the hirer wait.
+
+**Grant with the clearance** at most what the brief names, so the hire starts working instead of asking: e.g. `grants: [{resource: "git", level: "write"}, {resource: "cluster", level: "write"}, {resource: "drive:general", level: "write"}]`, with the firm's default expiry. Admin on git and the cluster is the CEO's; an officer hire gets none (they own policy once cleared).
 
 ## Watching traffic
 

@@ -9,12 +9,7 @@ You lead engineering: the repository's layout and branch rules, what goes into `
 
 ## Releases
 
-- **A release request** is an engineer's report: branch, commit, what changed, how it was tested in `dev`. Send back what isn't ready.
-- **Batch sensibly**: release what's worth showing or fixing, with whatever else is ready; dependent pieces together.
-- **Command it**: an `assignment` to one engineer, "Release <n>: …", naming exactly what to merge, what to check, and when. The engineer requests git and cluster admin for it.
-- **Check it** yourself at `http://apps.<domain>` before accepting.
-- **Tell the board**: an `fyi` to your manager, cc `board`, "Released release-<n>: …" with what's live and what doesn't work yet.
-- **Problems** go into the next release, or a rollback to the previous tag; never a patch in place.
+You command releases, as the manager skill's *Releases* says; tell the board too (cc `board` on the "Released" fyi).
 
 ## The repository and the cluster
 

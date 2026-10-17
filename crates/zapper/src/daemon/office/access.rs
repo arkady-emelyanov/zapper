@@ -114,6 +114,10 @@ pub struct Request {
     /// A renewal: when the grant it renews expires.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub renews: Option<f64>,
+    /// What the requester is working on: their open assignments, with who
+    /// gave them.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub assignments: Vec<String>,
     /// `pending`, `escalated` (to the CEO or the board), `granted`, `denied`.
     pub state: String,
     /// Who decides it now; None is the board.
@@ -380,7 +384,7 @@ fn next_decider(run: &FirmRun, from: Option<&str>, worker: &str) -> Option<Strin
 
 fn request_text(q: &Request) -> String {
     format!(
-        "Credential request {} — {} asks for {} on {}{}.\nReason (the requester's words):\n{}\nDecide with credentials_decide(request: \"{}\", grant, level?, expires_in?, note), or hand it up with credentials_escalate.\n",
+        "Credential request {} — {} asks for {} on {}{}.\n{}Reason (the requester's words):\n{}\nDecide with credentials_decide(request: \"{}\", grant, level?, expires_in?, note), or hand it up with credentials_escalate.\n",
         q.id,
         q.worker,
         q.level.name(),
@@ -391,6 +395,17 @@ fn request_text(q: &Request) -> String {
                 super::prompts::when(e)
             ))
             .unwrap_or_default(),
+        if q.assignments.is_empty() {
+            "Their open assignments: none.\n".to_string()
+        } else {
+            format!(
+                "Their open assignments (from the post office):\n{}",
+                q.assignments
+                    .iter()
+                    .map(|a| format!("  - {a}\n"))
+                    .collect::<String>()
+            )
+        },
         q.reason.lines().map(|l| format!("> {l}\n")).collect::<String>(),
         q.id
     )
@@ -455,6 +470,17 @@ pub fn request(
         None
     };
     let decider = first_decider(run, worker, &resource, level);
+    let assignments: Vec<String> = run
+        .post
+        .lock()
+        .unwrap()
+        .desk(worker)
+        .owed
+        .iter()
+        .filter(|o| o.kind == super::mail::Kind::Assignment)
+        .take(5)
+        .map(|o| format!("{} (from {})", o.subject, o.creditor))
+        .collect();
     let q = {
         let mut a = run.access.lock().unwrap();
         if let Some(q) = a.requests.values().find(|q| {
@@ -473,6 +499,7 @@ pub fn request(
             reason: reason.trim().chars().take(2000).collect(),
             created: now(),
             renews,
+            assignments,
             state: if decider.is_some() {
                 "pending"
             } else {
