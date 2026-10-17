@@ -509,14 +509,16 @@ pub async fn run(_d: Arc<Daemon>, run: Arc<FirmRun>, w: Arc<WorkerRt>) {
                 if timeouts >= MAX_TIMEOUTS {
                     timeouts = 0;
                     let why = format!("{MAX_TIMEOUTS} turns in a row ran past {limit}");
+                    // As long as a turn, up to ten minutes.
+                    let rest = turn_timeout.as_secs_f64().min(600.0);
                     run.set_state(&w, WorkerState::Error, Some(why.clone()));
                     let manager = run
                         .chart()
                         .manager_of(&w.name)
                         .unwrap_or(zapper_policy::BOARD)
                         .to_string();
-                    run.notice(&manager, &format!("{} is stuck", w.name), &format!("[Automatic notice] {}: {why}, each stopped and charged. They rest for ten minutes. Narrow what you ask of them (smaller assignments, one deliverable each), or take the work back.\n", w.name));
-                    backoff_until = now() + 600.0;
+                    run.notice(&manager, &format!("{} is stuck", w.name), &format!("[Automatic notice] {}: {why}, each stopped and charged. They rest for {} minutes. Narrow what you ask of them (smaller assignments, one deliverable each), or take the work back.\n", w.name, (rest / 60.0).ceil()));
+                    backoff_until = now() + rest;
                 }
             }
             // Written while waiting for the turn's end.

@@ -131,12 +131,12 @@ EOF
 # contracted before. A turn that runs past budget.turn_timeout is stopped.
 cat > "$T/fake/first-ceo.yaml" <<'EOF'
 rules:
-  - when: { contains: "ran past" }
-    do:
-      - shell: "echo timeout note > /work/timeout.txt"
   - when: { subject: "Stuck" }
     do:
       - sleep: 60
+  - when: { contains: "ran past" }
+    do:
+      - shell: "echo timeout note > /work/timeout.txt"
   - when: { from: board, kind: assignment }
     do:
       - budget_request: { total: "20k", plan: "An officer, then an engineer.", reason: "to build it" }
@@ -208,10 +208,13 @@ rules:
       - hire: { role: officer, name: otto, budget: "2k", subject: "Security", brief: "Take over security.", reason: "the team grows" }
       - hire: { role: dev, name: bo, budget: "2k", subject: "Docs", brief: "Write the docs.", reason: "docs" }
 EOF
+# The officer's Claude dies on its first background check; the check comes
+# back on the restart.
 cat > "$T/fake/solo-sec.yaml" <<'EOF'
 rules:
   - when: { contains: "Background check" }
     do:
+      - shell: "test -f /work/died || { touch /work/died; kill -9 $PPID; }"
       - background_check: { screening: $screening, clear: true, note: "fits" }
 EOF
 cat > "$T/fake/solo-dev.yaml" <<'EOF'
@@ -331,14 +334,14 @@ firms:
       - { name: ceo, role: boss }
     security: { officer_first: false, digest_every: { minutes: 60, requests: 0 } }
   first:
-    budget: { max_concurrent: 3, seed: 1000, turn_timeout: 8s }
+    budget: { max_concurrent: 1, seed: 1000, turn_timeout: 8s }
     roles:
       boss: { profile: worker, skills: { work: ceo }, fake: $T/fake/first-ceo.yaml, hires: [dev, officer], avatar: { figure: ceo } }
       dev: { profile: worker, skills: { work: software-engineer }, fake: $T/fake/none.yaml }
       officer: { profile: worker, skills: { work: security-review }, fake: $T/fake/none.yaml, officer: true }
     workers:
       - { name: ceo, role: boss }
-    security: { digest_every: { minutes: 60, requests: 0 } }
+    security: { answer_within: 10s, digest_every: { minutes: 60, requests: 0 } }
   lab:
     git: {}
     product_port: 127.0.0.1:$PORT
@@ -617,6 +620,15 @@ expect "security's share of the budget goes to the officer with security" "$("$Z
 expect "the CEO is told" "$(sjournal)" 'office → ceo [fyi] "Security is handed over'
 expect "the next hire's check goes straight to the new officer" "$(sjournal)" "screening c-3 of bo by otto"
 swait_for "screening c-3 bo cleared by otto" 90 && pass "who does it" || fail "who does it" "$(sjournal | grep -i screening | tail -5)"
+expect "the officer's Claude died mid-check" "$(sjournal)" "turn otto interrupted"
+expect "and the check came back after the restart" "$("$Z" --json firm journal solo | python3 -c '
+import sys, json
+died = cleared = None
+for l in sys.stdin:
+    e = json.loads(l)
+    if e.get("type") == "turn" and e.get("worker") == "otto" and e.get("event") == "interrupted" and died is None: died = e["seq"]
+    if e.get("type") == "screening" and e.get("event") == "decided" and e.get("worker") == "bo": cleared = e["seq"]
+print("requeued" if died and cleared and cleared > died else "died %s cleared %s" % (died, cleared))')" "requeued"
 expect "a cleared officer holds admin as a policy owner" "$(sjournal)" "credentials grant otto drive:board write by board"
 expect "an officer answers to the board, not to the CEO who hired them" "$("$Z" --json firm status solo | python3 -c 'import sys,json; print([w["reports_to"] for w in json.load(sys.stdin)["run"]["chart"]["workers"] if w["name"]=="otto"][0])')" "board"
 i=0; while [ $i -lt 90 ] && ! "$Z" exec "$sceo" -- cat /work/release.txt 2>/dev/null | grep -q "answers to the board"; do sleep 1; i=$((i + 1)); done
@@ -672,19 +684,70 @@ expect "the officer was hired before the engineer" "$("$Z" --json firm journal f
 import sys, json
 names = [json.loads(l)["worker"]["name"] for l in sys.stdin if json.loads(l).get("type") == "hired"]
 print(names)')" "['otto', 'ada']"
-# A turn past budget.turn_timeout is stopped and charged; the next wake
-# says what it was on.
+fev() { "$Z" --json firm journal first | python3 -c "$1"; }
+fstate() { "$Z" --json firm status first | python3 -c "import sys,json; print([w['state'] for w in json.load(sys.stdin)['run']['workers'] if w['name']=='$1'][0])"; }
+ftimeouts() { fjournal | grep -c "turn ceo timed_out"; }
+# One turn at a time (max_concurrent 1): otto queues behind the CEO's long
+# turn, and a pause while he waits holds him once the slot is free.
+i=0; while [ $i -lt 60 ] && [ "$(fstate ceo)" != idle ] && [ "$(fstate ceo)" != waiting ]; do sleep 1; i=$((i + 1)); done
 "$Z" mail send first --to ceo --kind fyi --subject "Stuck" --body "This takes forever." > /dev/null
-fwait_for "turn ceo timed_out" 60 && pass "a turn past its time is stopped" || fail "a turn past its time is stopped" "$(fjournal | grep 'turn ceo' | tail -4)"
+i=0; while [ $i -lt 30 ] && [ "$(fstate ceo)" != working ]; do sleep 1; i=$((i + 1)); done
+"$Z" mail send first --to otto --kind fyi --subject "Hold" --body "Nothing to do." > /dev/null
+i=0; while [ $i -lt 20 ] && [ "$(fstate otto)" != queued ]; do sleep 1; i=$((i + 1)); done
+expect "a worker waits for a free slot" "$(fstate otto)" "queued"
+"$Z" firm pause first > /dev/null
+i=0; while [ $i -lt 30 ] && [ "$(ftimeouts)" -lt 1 ]; do sleep 1; i=$((i + 1)); done
+pass_if() { [ "$2" = "$3" ] && pass "$1" || fail "$1" "got $2"; }
+pass_if "a turn past its time is stopped" "$(ftimeouts)" 1
+sleep 4
+expect "a paused run holds a worker who was queued" "$(fev '
+import sys, json
+paused = None; started = False
+for l in sys.stdin:
+    e = json.loads(l)
+    if e.get("type") == "run" and e.get("state") == "paused": paused = e["seq"]
+    if paused and e.get("type") == "turn" and e.get("worker") == "otto" and e.get("event") == "start" and e["seq"] > paused: started = True
+print("started" if started else "held")')" "held"
+"$Z" firm resume first > /dev/null
+fwait_for "turn otto start" 30 && pass "and lets him go on resuming" || fail "and lets him go on resuming" "$(fjournal | grep otto | tail -3)"
+# Three timeouts in a row: Error, a rest, the manager (here the board) told.
+for n in 2 3; do
+    i=0; while [ $i -lt 60 ] && [ "$(fstate ceo)" != idle ] && [ "$(fstate ceo)" != waiting ]; do sleep 1; i=$((i + 1)); done
+    "$Z" mail send first --to ceo --kind fyi --subject "Stuck" --body "Again." > /dev/null
+    i=0; while [ $i -lt 40 ] && [ "$(ftimeouts)" -lt $n ]; do sleep 1; i=$((i + 1)); done
+done
+pass_if "each stuck turn times out" "$(ftimeouts)" 3
+expect "three in a row mark the worker broken" "$(fstate ceo)" "error"
+fwait_for 'office → board \[fyi\] "ceo is stuck"' 10 && pass "and tell their manager" || fail "and tell their manager" "$(fjournal | tail -4)"
+# After the rest, a turn that goes through clears the error, and its wake
+# says what the stopped turn was on.
 "$Z" mail send first --to ceo --kind fyi --subject "Next" --body "Carry on." > /dev/null
 i=0; while [ $i -lt 60 ] && ! "$Z" exec "$fceo" -- cat /work/timeout.txt 2>/dev/null | grep -q "timeout note"; do sleep 1; i=$((i + 1)); done
 expect "the next wake says what the stopped turn was on" "$("$Z" exec "$fceo" -- cat /work/timeout.txt 2>&1)" "timeout note"
-expect "the timed-out turn is charged" "$("$Z" --json firm journal first | python3 -c '
+i=0; while [ $i -lt 20 ] && [ "$(fstate ceo)" = error ]; do sleep 1; i=$((i + 1)); done
+refute "a turn that goes through clears the error" "$(fstate ceo)" "error"
+expect "a timed-out turn is charged" "$(fev '
 import sys, json
 for l in sys.stdin:
     e = json.loads(l)
     if e.get("type") == "turn" and e.get("event") == "timed_out":
         print("charged" if e.get("tokens", 0) > 0 else "free")')" "charged"
+# Credential requests don't wait forever: otto never decides, so after
+# answer_within one goes up to the CEO, and when the board lets otto go
+# the next one moves to the CEO, who holds security again.
+fada=$("$Z" --json firm status first | python3 -c 'import sys,json; print([w["session"] for w in json.load(sys.stdin)["run"]["workers"] if w["name"]=="ada"][0])')
+"$Z" exec "$fada" -- office credentials_request '{"resource": "drive:general", "level": "read", "reason": "read the notes"}' > /dev/null 2>&1
+fwait_for "credentials p-1 escalated by office to ceo" 40 && pass "an unanswered credential request goes up to the CEO" || fail "an unanswered credential request goes up to the CEO" "$(fjournal | grep credentials | tail -3)"
+"$Z" exec "$fada" -- office credentials_request '{"resource": "drive:product", "level": "read", "reason": "read the brief"}' > /dev/null 2>&1
+fwait_for "credentials p-2 ada asks drive:product" 20
+"$Z" firm release first otto --reason "drill" > /dev/null 2>&1
+fwait_for "left otto" 30
+expect "an officer's open request moves on when they leave" "$(fev '
+import sys, json
+for l in sys.stdin:
+    e = json.loads(l)
+    if e.get("type") == "credentials" and e.get("event") == "reassigned" and e.get("id") == "p-2":
+        print("to", e.get("to"))')" "to ceo"
 "$Z" firm down first > /dev/null
 
 echo "== scenarios"
