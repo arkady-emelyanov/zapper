@@ -21,7 +21,7 @@ The office runs on zapper, which provides the sandbox: each worker is a zapper s
 | Board | The operator. Not a VM; an address (`board`) that can mail anyone and receives reports. |
 | Mail | A message from one address to others, in a thread, with optional attachments from the shared drive. |
 | Desk | A worker's open work: threads assigned to it, threads where it waits for a reply, pending access requests. |
-| Shared drive | The firm's published work: versioned artifacts with a title, kind, author and audience. Every worker can publish to it. |
+| Shared drive | The firm's published work: versioned artifacts with a title, kind, author and space. Reading and publishing in a space take a grant on it. |
 | Foreman | The part of the daemon that drives one worker's Claude Code: delivers mail, starts turns, tracks idle/working. |
 | Facility | A VM in the firm with no Claude in it that provides a service to workers, such as the Kubernetes cluster. |
 | Product | What the firm builds and deploys to its cluster; the board reaches it on `product_port`. |
@@ -40,10 +40,10 @@ firms:
     product_port: 0.0.0.0:8080             # browsers on the LAN → the cluster's ingress; 127.0.0.1:8080 for this machine only
     facilities:
       cluster: { kind: k3s, profile: office-k3s }   # image k3s, kernel vmlinux-6.1-k8s
-    landing: { name: "Acme Inc.", motto: "Building digital worlds!" }   # served until the product is
-    credentials:                           # handed to these roles' VMs at boot
-      kubeconfig: [engineer]
-      git: [engineer]
+    landing: { motto: "Building digital worlds!" }   # served until the product is
+    credentials:                           # grants come by request during the run
+      expiry: 24h
+      spaces: [general, product, engineering, design, research, security, board]
     roles:
       ceo:
         profile: office                    # a zapper profile: image, network, secrets
@@ -64,7 +64,6 @@ firms:
       # product-manager (hires designers, researchers, analysts), manager (hires engineers …), researcher, analyst …
     workers:                               # the founder; everyone else is hired during the run
       - { name: barbara,  role: ceo }
-    names: [dennis, margaret, ada, grace, iris, ken]   # for hires whose hirer doesn't name them
     security:
       digest_every: { minutes: 10, requests: 200 }
       answer_within: 15m                   # then the board is asked too
@@ -77,7 +76,7 @@ firms:
 | `limits` | `thread_messages` (60), `mail_per_hour` (120), `fanout_per_hour` (10), `pair_per_10min` (30), `mail_per_run` (20000), `artifact_size` (50MiB), `drive_size` (2GiB) |
 | `roles.<r>` | `profile`, `model` (default: the profile's), `title`, `skills: {work, communication, publishing}`, `avatar: {figure, color}`, `hires` (roles its workers may hire; needs `budget.seed`), `officer` (hired workers of the role become security officers once cleared), `fake` (a fake Claude script, for tests) |
 | `workers` | The founders, who boot with the firm: `name`, `role`, `reports_to`, `title` |
-| `names` | Names for hires whose hirer doesn't pick one, in order |
+| `names` | Optional: names for hires whose hirer doesn't pick one, in order; without it, a random free name from a built-in list |
 | `security` | `officers`, `digest_every: {minutes, requests}`, `answer_within` |
 | `git`, `facilities`, `credentials`, `product_port`, `dashboard_port`, `landing` | The firm's services ([below](#facilities-the-cluster-git-and-the-product)) |
 | `skills_dir` | A directory of `<name>/SKILL.md` used instead of the built-in skills of the same name |
@@ -90,7 +89,7 @@ Only its skills and who it is. A worker boots with its three skills and a short 
 
 ### Validation
 
-Rules: names are unique in the firm and can't be `board`, `all`, `team`, `security` or `office`; `reports_to` forms a tree with one root; every role names a profile that exists; each worker gets the three skills. Profiles used by firm roles can't have `exec` rules with `ask`: officers decide network access only, and a paused exec can't wait minutes for them. The config is validated as a whole like the rest of zapper's config.
+Rules: names are unique in the firm and can't be `board`, `all`, `team`, `security` or `office`; `reports_to` forms a tree with one root; every role names a profile that exists; skills follow from the role ([skills](#skills)). Profiles used by firm roles can't have `exec` rules with `ask`: officers decide network access, not execs, and a paused exec can't wait minutes for them. The config is validated as a whole like the rest of zapper's config.
 
 The founders, roles and skills are read at `firm up`; changing them in the running config is allowed and applies at the next `firm up`. A firm with a budget changes its own chart while it runs, by hiring and letting go. Network and exec rules still apply to running workers at once, as for any session.
 
@@ -149,7 +148,7 @@ Budgets are totals for the run, in tokens (input and output, as each turn report
 
 **Internal names stay internal.** Workers are internal, ephemeral agents who behave like people: their names, and the board's, never go into anything that leaves the firm (the product, posts, outside sites, public repositories), though the firm may use the internet freely. Every worker's preamble and the mail skill say so, and the officers watch outgoing traffic for colleagues' names.
 
-A hire's name is the hirer's choice or the next free one from `names`; a name is never reused within a run. The founders can't be let go by workers: the board appointed them. Every hire, departure and movement of money is in the journal (`hired`, `left`, `funds`), so the UI, statistics and replay follow the chart as it changes.
+A hire's name is the hirer's choice, the next free one from `names` if the config has a pool, or a random free one; a name is never reused within a run. Only the board lets the CEO go. Every hire, departure and movement of money is in the journal (`hired`, `left`, `funds`), so the UI, statistics and replay follow the chart as it changes.
 
 ## Messaging
 
@@ -225,7 +224,9 @@ An `assignment` from someone without authority over the receiver is rejected wit
 | `mail_thread(thread)` | Full thread, oldest first |
 | `desk()` | My open assignments, threads waiting on others, pending access requests |
 | `directory()` | The org chart: names, titles, roles, who reports to whom, who is busy |
-| `request_access(host, port?, methods?, path?, reason)` | Ask the security officers ahead of time, with a reason |
+| `request_access(host, port?, methods?, path?, reason)` | Ask the security officers ahead of time, with a reason (outside hosts; the firm's own services are grants) |
+| `credentials_request(resource, level, spaces?, reason)`, `credentials()` | Ask for a grant on git, the cluster or drive spaces; see your grants and requests |
+| `credentials_decide`, `credentials_escalate`, `credentials_revoke`, `credentials_list` | The CEO and security officers: decide, hand up, revoke, list |
 
 **Mail during a turn.** Mail that arrives while a worker is in a turn waits for its next wake, except at the turn's end: each worker's Claude Code has a `Stop` hook (`office stop-hook`) that asks the daemon, as Claude is about to stop, whether mail came in meanwhile. If so, the stop is blocked and the mail is handed over, shown as a wake would show it, so Claude can handle it before finishing (a cancellation, a change of scope); it counts as delivered and doesn't wake the worker again. A turn is extended at most three times; if the hook fails, Claude stops as usual. The journal records it as `turn … extended`.
 
@@ -301,7 +302,7 @@ author    ken
 summary   one paragraph, shown in lists and in mail
 changes   what this version changed from the previous one; required from version 2
 files     [{path: pricing.md, sha256, size, type}]
-audience  firm | board | [names]
+space     general          one of credentials.spaces; reading and publishing need a grant on it
 thread    t-01J…             the assignment it answers, if any
 ```
 
@@ -309,7 +310,7 @@ thread    t-01J…             the assignment it answers, if any
 
 | Tool | Does |
 |---|---|
-| `drive_publish(paths, title, kind, summary, audience?, artifact?, thread?, changes?)` | Copy files from the VM into the shared drive; with `artifact`, add a new version, which needs `changes`: what changed from the previous one |
+| `drive_publish(paths, title, kind, summary, space?, artifact?, thread?, changes?)` | Copy files from the VM into a drive space (default `general`; needs write on it); with `artifact`, add a new version, which needs `changes`: what changed from the previous one |
 | `drive_list(kind?, author?, query?)` | Find artifacts |
 | `drive_fetch(artifact[@version], dest)` | Copy an artifact into the VM |
 
@@ -373,27 +374,39 @@ When something looks wrong the officer can revoke a standing approval, deny a ho
 
 A firm builds and runs a product; which product is up to the board's kickoff and the CEO's and product manager's decisions. For that it has a git repository and a Kubernetes cluster, both new and empty in every run.
 
+### The credentials subsystem
+
+Next to mail, the platform has a credentials subsystem. Access to the firm's resources is a **grant**, decided by the policy owners and enforced by the platform:
+
+| Resource | read | write | admin | Enforced by |
+|---|---|---|---|---|
+| `git` | clone and fetch | push branches | also `main` and tags | the daemon's git handler (the grant on every request) and a `pre-receive` hook in the repository, which only the daemon writes |
+| `cluster` | view `dev` | deploy to `dev` | also `prod` | Kubernetes RBAC: a service account per worker in `zapper-workers`, RoleBindings to `view`, `edit` and `admin`, and a token in the worker's `~/.kube/config` |
+| `drive:<space>` | list and fetch | also publish | — | the daemon's drive operations |
+
+- **Policy owners**: the security officers decide, with the CEO above them. A request goes to an officer other than the requester. Requests for `admin` on git or the cluster, those an officer hands up (`credentials_escalate`), and an officer's own go to the CEO. The CEO's own go to the board. Nobody decides their own request. The CEO and the officers hold admin on everything (write on every space) for as long as they hold the role; a hired officer gets it when cleared.
+- **Everyone else starts with nothing.** There are no defaults by role: every grant comes from a request with a reason (`credentials_request(resource, level, spaces?, reason)`), and the decision comes by mail. The board can also grant and revoke directly (`zapper firm credentials`, or the Security tab).
+- **Grants expire**: after `credentials.expiry` (24 hours by default) unless the decider says otherwise; the worker is told before. **Offboarding** (letting someone go, a contract ending, a failed background check) revokes everything at once.
+- **Network follows the grant**: the profiles deny `git.<domain>` and `cluster.<domain>`; a grant adds an allow rule for that host in the worker's own layer, and revoking removes it. Network requests for the firm's services are refused with a pointer to `credentials_request`.
+- **Revocation takes effect at once**: git checks the grant on every request, the cluster's RoleBindings and service account are deleted (which voids the token) and the kubeconfig removed, and the drive checks on every operation.
+- Every request, decision, grant and revocation is a `credentials` event in the journal; the Security tab shows a matrix of who holds what, and the requests waiting.
+- **Training**: every worker has the `office-resources` skill (the resources, the levels, how to ask, how to work with git, the cluster and the drive), and a new hire's first mail, before the brief, is an onboarding notice from the office.
+
 ### Environments and releases
 
-The firm works like a small engineering team, by the skills rather than by enforcement (every engineer's kubeconfig is cluster-admin, and anyone who may push can push to `main`):
-
-- Each engineer builds and tests in their own environment: their VM, their own namespace `dev-<name>` reached with `kubectl port-forward`, and their own branches `<name>/<topic>`. Load and abuse tests stay there.
-- The **release** is namespace `release` on the ingress's default route, at `apps.<domain>`: what the board and the other workers see. Only the CTO (the engineers' manager) decides what goes in. An engineer's finished work is a release request; the CTO assigns one engineer a release, who merges exactly that into `main`, tags it `release-<n>`, deploys it and verifies it through the ingress. Problems are rolled back or fixed in the next release, never patched in place.
-- The CTO announces each release to the board (cc) with what is live, so the board knows what it can try; releases show as tickets in the Work tab and as tags in the Git tab.
+- The cluster has two namespaces: **`dev`**, where everyone with a cluster grant builds and tests (each worker names what they create with their own name first), and **`prod`**, the release, on the ingress's default route at `apps.<domain>`: what the board and the other workers see. Changing `prod` needs cluster admin.
+- Only the CTO (the engineers' manager) decides what goes into a release. An engineer's finished work is a release request; the CTO assigns one engineer a release, who asks for git and cluster admin citing it, merges exactly that into `main`, tags it `release-<n>`, deploys it to `prod` and verifies it through the ingress. Problems are rolled back or fixed in the next release, never patched in place.
+- The CTO announces each release to the board (cc) with what is live; releases show as tickets in the Work tab and as tags in the Git tab.
 
 ### Names and who reaches what
 
 Facilities are reached by name under the firm's `domain`, through the same proxy and policy as everything else. The guest's resolver answers these names only when a rule could allow them, as for any host; they are never looked up on the host's DNS. The daemon routes connections to them itself, so no VM ever reaches another VM or a host address directly.
 
-| Name | Port | What | CTO and engineers | Other workers | Security officers |
-|---|---|---|---|---|---|
-| `git.acme.internal` | 443 | The firm's git repository, served by the daemon | ✓ | designers | ✓ (read) |
-| `cluster.acme.internal` | 6443 | The Kubernetes API | ✓ | | ✓ |
-| `apps.acme.internal`, `*.apps.acme.internal` | 80, 443 | The cluster's ingress load balancer: the product | ✓ | ✓ | ✓ |
-
-The CTO (role `cto` in the example firm) owns all three: an engineer's profile and credentials (git push, the cluster's kubeconfig), the manager skill with its CTO section, and the hiring of engineers and designers. A role with `owns_services: true` also decides colleagues' access requests to the firm's services (`access_requests`, `access_decide`), while the security officers decide outside access: who gets push or cluster-admin is an engineering call about need, and the officers' job is the firm's boundary with the world. The owner never decides their own requests (those go to the board), without an owner the board decides, and officers still see the resulting traffic in their digests and can raise it. When the owner leaves, what they had waiting goes to the next owner or the board.
-
-The table is written as `net` rules in the role profiles of the example firm (engineers and officers are allowed those hosts, others only the ingress), so it can be changed like any rule. Officers can't widen it for a worker: requests for facility names go to the owner of the firm's services (the CTO), or to the board.
+| Name | Port | What | Who reaches it |
+|---|---|---|---|
+| `git.acme.internal` | 443 | The firm's git repository, served by the daemon | workers with a git grant |
+| `cluster.acme.internal` | 6443 | The Kubernetes API | workers with a cluster grant |
+| `apps.acme.internal`, `*.apps.acme.internal` | 80, 443 | The cluster's ingress load balancer: the product | everyone |
 
 ### The cluster
 
@@ -407,12 +420,10 @@ A facility VM running k3s on one node, booted first by `firm up`. Workers boot o
 - **A dashboard for the board**: with `dashboard_port: 127.0.0.1:8081`, Headlamp (pinned in the k3s image, no pull) runs in namespace `dashboard` on a NodePort that only that local port reaches; workers can't. The UI's Organization tab and the cluster's card in the VMs tab show a **Kubernetes dashboard** button and **Copy token**, a cluster-admin service-account token of this run to sign in with.
 - **A landing page from the start**: with `landing: { name: "Acme Inc.", motto: "Building digital worlds!" }`, the cluster serves a static page about the firm as soon as Traefik is up, so the product port shows something before anyone has built anything. It runs in namespace `landing` from the air-gap images (no pull), behind an Ingress on `/` at Traefik's lowest priority: any Ingress the engineers add on `/` takes over without removing it. The name defaults to the firm's name with "Inc.".
 
-### Credentials
+### Credentials in the VMs
 
-Members of technical staff wear several hats (engineering, devops), so engineers get real credentials in their VMs:
-
-- **kubeconfig**: after k3s is up, the daemon reads `/etc/rancher/k3s/k3s.yaml` from the cluster VM, sets the server to `https://cluster.acme.internal:6443` (in the certificate's names through `--tls-san`) and writes it to `~/.kube/config` (0600) in each VM of a role listed under `credentials.kubeconfig`. It is cluster-admin. The proxy passes connections to the API through without inspection, so k3s's own CA works.
-- **git**: a username and password per worker, made at `firm up`, written to `~/.git-credentials` with `credential.helper store` and `user.name`/`user.email` set to the worker's name. The git server checks the password and that the connection comes from that worker's VM. Engineers can push; officers can read.
+- **kubeconfig**: after k3s is up, the daemon creates the namespaces `dev`, `prod` and `zapper-workers`. With a cluster grant, it creates the worker's service account and RoleBindings from inside the cluster VM, makes a token as long as the grant, and writes `~/.kube/config` (0600) into the worker's VM with the server `https://cluster.acme.internal:6443` (in the certificate's names through `--tls-san`) and the cluster's CA. The proxy passes connections to the API through without inspection, so k3s's own CA works. The daemon keeps the admin kubeconfig to itself.
+- **git**: a username and password per worker, made at `firm up` or on hiring, written to `~/.git-credentials` with `credential.helper store` and `user.name`/`user.email` set to the worker's name. The password is who they are; their grant is what they may do. The git server checks the password, that the connection comes from that worker's VM, and the grant.
 
 How the product is built and deployed (images built in the VMs, a registry in the cluster, in-cluster builds, plain manifests) is up to the engineers. Their skill describes the environment they have (the repository, the cluster, the ingress, the product port's default route), not what to build or how.
 
@@ -434,13 +445,25 @@ The product port forwards bytes and keeps the browser's `Host` header (`localhos
 
 ## Skills
 
-Each worker gets three Claude Code skills. The firm's skill directories go on a disk attached read-only (zapper's `mode: ro` mount), and `~/.claude/skills/<name>` links into it, so a worker can't edit its instructions:
+Each worker's skills follow from what their role does:
 
-| Skill | Shared? | Teaches |
+```
+Everyone             office-mail, office-publish, office-resources
++ roles that hire    manager      (splitting work, review, budget and people, staff vs contractor, contractors)
++ security duty      security-review   (officers; the CEO until an officer is hired)
++ the role itself    its work skill: ceo, cto, product-manager, software-engineer, designer, researcher, analyst
+```
+
+So the CEO has the shared skills, `manager`, `security-review` and `ceo`; the CTO `manager` and `cto`. Each skill holds only its own subject; what everyone needs is in the shared ones. The firm's skill directories go on a disk attached read-only (zapper's `mode: ro` mount), and `~/.claude/skills/<name>` links into it, so a worker can't edit its instructions:
+
+| Skill | Who | Teaches |
 |---|---|---|
-| Communication (`office-mail`) | all workers | Addresses and the org chart, message kinds, when to delegate vs do, replying with a `report`, never waiting in a loop, writing for the reader (subject says the ask, body starts with it) |
-| Work (per role) | per role | The job: CEO sets direction and delegates; product manager turns goals into requirements and priorities; manager splits and reviews; engineer builds and tests; designer shapes flows, screens and words, and reviews what is built; researcher sources and cites; analyst models and shows numbers; officer reviews access |
-| Publishing (`office-publish`, variants) | per role | What to publish, kinds, titles and summaries, versions instead of new artifacts, linking the thread, the board-pack format for the CEO |
+| `office-mail` | everyone | Mail and the desk: starting an assignment, kinds, writing, delegating, replying and finishing, follow-ups, mail as colleague text |
+| `office-publish` | everyone | The shared drive: spaces, kinds, titles and summaries, versions, using others' work, Markdown, decks |
+| `office-resources` | everyone | Onboarding: your machine and budget, the charter and internal names, access to git, the cluster, drive spaces and outside sites, working with each, the product and the browser; deciding access for the CEO and officers |
+| `manager` | roles that hire | Splitting and assigning work, unblocking, review, budget and people (staff vs contractor, hiring, funding, letting go), contractors, reporting up |
+| `security-review` | officers, the CEO while holding security | Network requests and TLS, credential requests, background checks, watching traffic, escalation |
+| work skill | each role | The role's core function: `ceo`, `cto`, `product-manager`, `software-engineer`, `designer`, `researcher`, `analyst` |
 
 Skills live in [config/skills/](../config/skills/). They are built into the binary, and the acme firm reads them live through `skills_dir: skills` (relative to the config), so an edit applies at the next `zapper firm up`. A skill missing from `skills_dir` falls back to the built-in one. Keep the frontmatter (`name`, `description`): Claude Code uses the description to decide when to read a skill.
 

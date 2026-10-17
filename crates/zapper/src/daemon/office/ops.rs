@@ -102,7 +102,8 @@ pub struct Powers {
     pub manages: bool,
     /// A contractor (or a candidate quoting): quotes, delivers, no authority.
     pub contractor: bool,
-    /// Owns the firm's services: decides colleagues' access to them.
+    /// A policy owner (the CEO or a security officer): decides colleagues'
+    /// credential requests.
     pub owner: bool,
 }
 
@@ -120,7 +121,7 @@ pub fn powers(run: &FirmRun, w: &super::WorkerRt) -> Powers {
                 .get(&w.role)
                 .is_some_and(|r| !r.hires.is_empty()),
         manages: !contractor && !chart.reports_of(&w.name).is_empty(),
-        owner: !contractor && super::security::owns_services(run, &w.name),
+        owner: !contractor && super::access::is_owner(run, &w.name),
         contractor,
     }
 }
@@ -173,7 +174,7 @@ pub fn tools(p: Powers) -> Vec<Value> {
                 "paths": { "type": "array", "items": { "type": "string" } }, "title": s("Title"),
                 "kind": { "type": "string", "enum": ["document", "report", "dataset", "deck", "board-pack"] },
                 "summary": s("One paragraph: what it is and what it says"),
-                "audience": { "description": "firm (default), board, or a list of names" },
+                "space": s("The drive space to publish into (default general); needs write on it. A new version stays in its artifact's space"),
                 "artifact": s("Existing artifact id to add a version to"), "thread": s("The thread it answers"),
                 "changes": s("What changed from the previous version, for readers: one or two lines. Required with artifact; optional for a first version"),
             }),
@@ -254,8 +255,29 @@ pub fn tools(p: Powers) -> Vec<Value> {
         }),
         &["request", "allow", "scope", "reason"],
     );
-    if p.owner && !officer {
-        v.extend([tool("access_requests", "Pending access requests to the firm's services (git, the cluster, the product) that you decide as their owner.", json!({}), &[]), decide.clone()]);
+    // Credentials: everyone asks for access to git, the cluster and drive
+    // spaces; the policy owners decide.
+    v.extend([
+        tool(
+            "credentials_request",
+            "Ask for access to one of the firm's resources, with a reason: git (read: fetch; write: push branches; admin: also main and tags), cluster (read: view dev; write: deploy to dev; admin: also prod), or drive spaces (read: list and fetch; write: also publish). Ask for the least your work needs. The security officer decides (admin goes to the CEO); you get mail. Grants expire.",
+            json!({ "resource": { "type": "string", "enum": ["git", "cluster", "drive"] }, "level": { "type": "string", "enum": ["read", "write", "admin"] }, "spaces": { "type": "array", "items": { "type": "string" }, "description": "For drive: the spaces, e.g. [\"engineering\"]" }, "reason": s("What your work needs it for") }),
+            &["resource", "level", "reason"],
+        ),
+        tool("credentials", "Your grants (with expiry), your requests, and the resources and spaces there are.", json!({}), &[]),
+    ]);
+    if p.owner {
+        v.extend([
+            tool("credentials_list", "Every grant and credential request in the firm.", json!({}), &[]),
+            tool(
+                "credentials_decide",
+                "Decide a credential request: grant (at most the level asked, for the least time that does the job) or deny with a note. Default expiry is the firm's.",
+                json!({ "request": s("p-3"), "grant": { "type": "boolean" }, "level": { "type": "string", "enum": ["read", "write", "admin"] }, "expires_in": s("e.g. 8h"), "note": s("Why; the requester reads it") }),
+                &["request", "grant", "note"],
+            ),
+            tool("credentials_escalate", "Hand a credential request up (an officer to the CEO, the CEO to the board), with your recommendation.", json!({ "request": s("p-3"), "recommendation": s("What you recommend and why") }), &["request", "recommendation"]),
+            tool("credentials_revoke", "Take a grant back.", json!({ "worker": s("Name"), "resource": s("git, cluster or drive:<space>"), "reason": s("Why") }), &["worker", "resource", "reason"]),
+        ]);
     }
     if officer {
         v.extend([
@@ -462,8 +484,7 @@ pub async fn dispatch(
         "background_check",
         "background_checks",
     ];
-    let owner_may = p.owner && matches!(op, "access_requests" | "access_decide");
-    if officer_only.contains(&op) && !w.officer() && !owner_may {
+    if officer_only.contains(&op) && !w.officer() {
         bail!("{op} is for security officers");
     }
     let allowed = match op {
@@ -475,6 +496,10 @@ pub async fn dispatch(
         | "contract_add" => p.budget && p.hires,
         "contract_quote" | "contract_decline" | "contract_complete" => p.contractor,
         "contracts" => p.contractor || (p.budget && p.hires),
+        "credentials_list"
+        | "credentials_decide"
+        | "credentials_escalate"
+        | "credentials_revoke" => p.owner,
         _ => true,
     };
     if !allowed {
@@ -485,6 +510,59 @@ pub async fn dispatch(
     }
     match op {
         "tools" => Ok(json!(tools(p))),
+        "credentials_request" => {
+            let level = super::access::Level::parse(&req_str(args, "level")?)?;
+            let reason = req_str(args, "reason")?;
+            let resource = req_str(args, "resource")?;
+            let keys: Vec<String> = if resource == "drive" {
+                let sp = strings(&args["spaces"]);
+                if sp.is_empty() {
+                    bail!("for drive, name the spaces");
+                }
+                sp.into_iter().map(|x| format!("drive:{x}")).collect()
+            } else {
+                vec![resource]
+            };
+            let ids = keys
+                .iter()
+                .map(|k| super::access::request(run, me, k, level, &reason))
+                .collect::<Result<Vec<_>>>()?;
+            Ok(json!({ "requests": ids, "note": "the policy owner decides; you'll get mail" }))
+        }
+        "credentials" => Ok(super::access::mine(run, me)),
+        "credentials_list" => Ok(super::access::all(run)),
+        "credentials_decide" => {
+            let level = opt_str(args, "level")
+                .map(|l| super::access::Level::parse(&l))
+                .transpose()?;
+            let grant = args["grant"]
+                .as_bool()
+                .ok_or_else(|| anyhow!("grant: true or false"))?;
+            super::access::decide(
+                _d,
+                run,
+                me,
+                &req_str(args, "request")?,
+                grant,
+                level,
+                opt_str(args, "expires_in").as_deref(),
+                &opt_str(args, "note").unwrap_or_default(),
+            )
+        }
+        "credentials_escalate" => super::access::escalate(
+            run,
+            me,
+            &req_str(args, "request")?,
+            &req_str(args, "recommendation")?,
+        ),
+        "credentials_revoke" => super::access::revoke(
+            _d,
+            run,
+            me,
+            &req_str(args, "worker")?,
+            &req_str(args, "resource")?,
+            &req_str(args, "reason")?,
+        ),
         "stop_check" => Ok(super::foreman::stop_check(run, &w)),
         "budget" => Ok(super::workforce::summary(run, me)),
         "budget_request" => super::workforce::request(
@@ -681,7 +759,7 @@ pub async fn dispatch(
                 title: req_str(args, "title")?,
                 kind: req_str(args, "kind")?,
                 summary: opt_str(args, "summary").unwrap_or_default(),
-                audience: args["audience"].clone(),
+                space: opt_str(args, "space"),
                 artifact: opt_str(args, "artifact"),
                 thread: opt_str(args, "thread").or_else(|| w.context.lock().unwrap().clone()),
                 changes: opt_str(args, "changes").unwrap_or_default(),
@@ -692,6 +770,7 @@ pub async fn dispatch(
             let d = run.drive.lock().unwrap();
             Ok(json!(d.list(
                 me,
+                &|sp| super::access::can_read_space(run, me, sp),
                 opt_str(args, "kind").as_deref(),
                 opt_str(args, "author").as_deref(),
                 opt_str(args, "query").as_deref()
@@ -783,7 +862,7 @@ pub async fn dispatch(
 fn check_attachments(run: &FirmRun, me: &str, list: &[String]) -> Result<()> {
     let d = run.drive.lock().unwrap();
     for a in list {
-        d.resolve(a, me)?;
+        d.resolve(a, me, &|sp| super::access::can_read_space(run, me, sp))?;
     }
     Ok(())
 }

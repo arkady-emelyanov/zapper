@@ -109,6 +109,7 @@ struct Wake {
     request: String,
     screening: String,
     contract: String,
+    credential: String,
 }
 
 fn after<'a>(text: &'a str, marker: &str) -> Option<&'a str> {
@@ -146,6 +147,9 @@ fn parse_wake(text: &str) -> Wake {
     }
     if let Some(rest) = after(text, "Background check ") {
         w.screening = word(rest);
+    }
+    if let Some(rest) = after(text, "Credential request ") {
+        w.credential = word(rest);
     }
     // The first contract id: "Contract offer k-1", "contract k-1".
     let mut rest = text;
@@ -283,6 +287,7 @@ fn play(script: &str) -> Result<()> {
                         ("$request", wake.request.clone()),
                         ("$screening", wake.screening.clone()),
                         ("$contract", wake.contract.clone()),
+                        ("$credential", wake.credential.clone()),
                         ("$artifact", artifact.clone()),
                         ("$last", last.clone()),
                     ];

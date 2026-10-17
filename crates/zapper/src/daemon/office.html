@@ -728,6 +728,8 @@ function newModel() {
     officerChanges: [], articles: '',
     // Contracts: offers, negotiations, agreed terms, how they ended.
     contracts: new Map(),
+    // Credentials: grants by worker and resource, and requests.
+    grants: new Map(), credReqs: new Map(), grantLog: [],
   };
 }
 function setChart(M, chart) {
@@ -815,6 +817,29 @@ function apply(M, e) {
           const t = M.threads.get(o.thread);
           if (t) t.obl = t.obl.map((x) => (x === k ? o.key : x));
         }
+      }
+      break;
+    }
+    case 'credentials': {
+      const ev = str(e.event);
+      if (ev === 'requested' && e.request && typeof e.request.id === 'string') {
+        const q = e.request;
+        M.credReqs.set(q.id, { id: q.id, worker: str(q.worker), resource: str(q.resource), level: str(q.level), reason: str(q.reason), state: str(q.state), decider: q.decider ? str(q.decider) : null, ts, decision: null });
+      } else if (ev === 'decided') {
+        const q = M.credReqs.get(str(e.id));
+        if (q) { q.state = e.decision && e.decision.grant ? 'granted' : 'denied'; q.decision = e.decision || null; }
+      } else if (ev === 'escalated') {
+        const q = M.credReqs.get(str(e.id));
+        if (q) { q.state = 'escalated'; q.decider = e.to && e.to !== BOARD ? str(e.to) : null; }
+      } else if (ev === 'granted' && e.grant) {
+        const g = e.grant;
+        if (!M.grants.has(str(g.worker))) M.grants.set(str(g.worker), new Map());
+        M.grants.get(str(g.worker)).set(str(g.resource), { level: str(g.level), by: str(g.by), note: str(g.note), expires: g.expires != null ? Number(g.expires) : null, ts });
+        M.grantLog.push({ ts, worker: str(g.worker), resource: str(g.resource), level: str(g.level), by: str(g.by) });
+      } else if (ev === 'revoked') {
+        const m = M.grants.get(str(e.worker));
+        if (m) m.delete(str(e.resource));
+        M.grantLog.push({ ts, worker: str(e.worker), resource: str(e.resource), level: 'none', by: str(e.by), reason: str(e.reason) });
       }
       break;
     }
@@ -985,8 +1010,8 @@ function apply(M, e) {
       const id = str(e.artifact);
       if (!id) break;
       let a = M.artifacts.get(id);
-      if (!a) { a = { id, title: '', kind: '', author: '', audience: null, thread: null, versions: [], created: ts }; M.artifacts.set(id, a); }
-      Object.assign(a, { title: str(e.title), kind: str(e.kind), author: str(e.author), audience: e.audience, thread: e.thread || a.thread, last: ts });
+      if (!a) { a = { id, title: '', kind: '', author: '', space: '', thread: null, versions: [], created: ts }; M.artifacts.set(id, a); }
+      Object.assign(a, { title: str(e.title), kind: str(e.kind), author: str(e.author), space: str(e.space || (e.audience === 'board' ? 'board' : 'general')), thread: e.thread || a.thread, last: ts });
       const files = arr(e.files).filter((f) => f && typeof f.path === 'string').map((f) => ({ path: f.path, size: Number(f.size) || 0, sha256: str(f.sha256) }));
       a.versions.push({ version: Number(e.version) || a.versions.length + 1, summary: str(e.summary), changes: str(e.changes), files, ts, title: str(e.title) });
       M.published.push({ artifact: id, version: Number(e.version) || a.versions.length, author: a.author, kind: a.kind, ts });
@@ -1045,6 +1070,9 @@ function statusLine(M, w, now) {
   if (d.overdue.length) parts.push('overdue: ' + d.overdue.length);
   return { text: parts.join(' · '), bad: d.overdue.length > 0 || w.state === 'error' };
 }
+// Credential requests waiting for the board, and a grant's level now.
+const credWaiting = (M) => [...M.credReqs.values()].filter((q) => !q.decider && (q.state === 'pending' || q.state === 'escalated'));
+const grantOf = (M, w, r) => { const g = M.grants.get(w) && M.grants.get(w).get(r); return g && (g.expires == null || g.expires > T()) ? g : null; };
 const escalationsWaiting = (M) => [...M.requests.values()].filter((r) => (r.state === 'escalated' || (r.board_asked && r.state === 'pending')));
 // Background checks the board has to answer: no officer, or none in time.
 const checksWaiting = (M) => [...M.screenings.values()].filter((c) => c.state === 'pending' && (c.boardAsked || !c.officer));
@@ -1501,6 +1529,7 @@ function updatePanel() {
   el('div', { class: 'muted small', style: 'margin-top:4px' }, `${w.turns} turns · ${fmtNum(w.tokens)} tokens` + (w.rateLimited ? ` · ${w.rateLimited} rate-limited` : '')),
   fundsOn(M) ? el('div', { class: 'small', style: 'margin-top:4px' }, 'Budget: ', el('b', {}, fmtTok(balanceOf(M, name))), ' left of ' + fmtTok(M.fundsIn.get(name) || 0) + ' given' + ((M.fundsOut.get(name) || 0) ? ', ' + fmtTok(M.fundsOut.get(name)) + ' passed on to their team' : '') + (w.exhausted && balanceOf(M, name) <= 0 ? ' · out of budget' : '')) : '',
   contractLine(M, w),
+  grantsLine(M, w),
   w.hiredBy && !w.contract ? el('div', { class: 'small muted', style: 'margin-top:4px' }, 'Hired by ' + w.hiredBy + ', ' + fmtDate(w.hiredAt) + ', with ' + fmtTok(w.hireBudget) + ': ' + clip(w.hireReason, 200)) : '',
   w.left ? el('div', { class: 'small', style: 'margin-top:4px' }, 'Left ' + fmtDate(w.left.ts) + ', let go by ' + w.left.by + ': ' + clip(w.left.reason, 200)) : '');
   PANEL.form.refresh();
@@ -2452,6 +2481,7 @@ function mountSecurity() {
   const root = $('tab-security');
   root.replaceChildren(
     el('h2', { class: 'sec' }, 'Escalations waiting for the board'), el('div', { id: 'sec-esc', class: 'list' }),
+    el('h2', { class: 'sec' }, 'Access'), el('div', { id: 'sec-access' }),
     el('h2', { class: 'sec' }, 'Background checks on new hires'), el('div', { id: 'sec-checks' }),
     el('h2', { class: 'sec' }, 'Standing approvals'), el('div', { id: 'sec-standing' }),
     el('h2', { class: 'sec' }, 'Traffic'), el('div', { id: 'sec-traffic' }));
@@ -2469,6 +2499,7 @@ function updateSecurity() {
   if (!M) return;
   const now = T();
   renderChecks(M);
+  renderAccess(M);
   // Escalations.
   const esc = escalationsWaiting(M);
   const box = $('sec-esc');
@@ -2574,6 +2605,53 @@ async function pollSecurity() {
   scheduleRender();
 }
 // Background checks: pending first, with the board's answer; then decided.
+// Who may use what: credential requests waiting for the board, and a
+// matrix of every person's level on each resource.
+function renderAccess(M) {
+  const box = $('sec-access');
+  if (!box) return;
+  const people = [...M.workers.values()].filter((w) => w.inChart);
+  const resources = [...new Set(['git', 'cluster', ...[...M.grants.values()].flatMap((m) => [...m.keys()]), ...[...M.credReqs.values()].map((q) => q.resource)])]
+    .sort((a, b) => (a.startsWith('drive:') ? 1 : 0) - (b.startsWith('drive:') ? 1 : 0) || a.localeCompare(b));
+  const waiting = credWaiting(M);
+  const open = [...M.credReqs.values()].filter((q) => q.state === 'pending' || q.state === 'escalated');
+  const sig = [people.map((w) => w.name).join(','), resources.join(','), [...M.grants.entries()].map(([w, m]) => w + ':' + [...m.entries()].map(([r, g]) => r + g.level + (g.expires || '')).join('/')).join(';'), open.map((q) => q.id + q.state + q.decider).join(','), Math.floor(T() / 60), canWrite()].join('|');
+  if (box.dataset.sig === sig) return;
+  box.dataset.sig = sig;
+  const decideCred = (q, grant) => async () => {
+    const note = grant ? '' : prompt('Deny ' + q.id + ' (' + q.resource + ' ' + q.level + ' for ' + cap(q.worker) + '). The reason, for ' + cap(q.worker) + ':', '');
+    if (!grant && note == null) return;
+    try { await write('POST', F() + '/credentials/requests/' + enc(q.id), { grant, note: grant ? 'granted by the board' : note }); toast((grant ? 'Granted ' : 'Denied ') + q.id); box.dataset.sig = ''; loadFirm(); }
+    catch (e) { toast(e.message, true); }
+  };
+  const revokeCred = (w, r) => async () => {
+    const reason = prompt('Revoke ' + cap(w) + '\'s ' + r + '? The reason:', '');
+    if (reason == null) return;
+    try { await write('DELETE', F() + '/credentials/grants/' + enc(w) + '/' + enc(r) + '?reason=' + enc(reason || 'revoked by the board')); toast('Revoked ' + r + ' for ' + cap(w)); box.dataset.sig = ''; loadFirm(); }
+    catch (e) { toast(e.message, true); }
+  };
+  const can = live() && canWrite();
+  const reqRow = (q) => el('div', { class: 'card', style: 'margin-bottom:8px' + (!q.decider ? ';border-left:3px solid var(--warn)' : '') },
+    el('div', { style: 'display:flex;gap:8px;align-items:baseline;flex-wrap:wrap' },
+      miniAvatar(q.worker), el('b', {}, cap(q.worker)), el('span', {}, 'asks ' + q.level + ' on ' + q.resource), el('span', { class: 'muted small' }, q.id + ', ' + ago(q.ts)),
+      pill('waiting', q.decider ? 'waiting for ' + cap(q.decider) : 'waiting for you'),
+      !q.decider && can ? el('span', { class: 'bud-act' }, el('button', { class: 'btn ok small', type: 'button', onclick: decideCred(q, true) }, 'Grant'), el('button', { class: 'btn small', type: 'button', onclick: decideCred(q, false) }, 'Deny')) : ''),
+    el('div', { class: 'small', style: 'margin-top:4px' }, el('b', {}, 'Reason: '), q.reason));
+  const cell = (w, r) => {
+    const g = grantOf(M, w.name, r);
+    if (!g) return el('td', { class: 'muted' }, '—');
+    const tip = g.level + ' by ' + (g.by === BOARD ? boardName() : cap(g.by)) + (g.expires ? ', until ' + fmtDate(g.expires) : ', while they hold the role') + (g.note ? ': ' + g.note : '');
+    return el('td', { title: tip }, el('span', { class: 'pill ' + (g.level === 'admin' ? 'error' : g.level === 'write' ? 'waiting' : 'closed') }, g.level),
+      g.expires ? el('span', { class: 'muted small' }, ' ' + fmtDur(Math.max(0, g.expires - T()))) : '',
+      can && g.expires ? el('button', { class: 'linkish small', type: 'button', title: 'Revoke', onclick: revokeCred(w.name, r) }, ' ×') : '');
+  };
+  box.replaceChildren(
+    ...(open.length ? [el('div', { class: 'muted small', style: 'margin-bottom:6px' }, open.length + ' credential request' + (open.length > 1 ? 's' : '') + ' open' + (waiting.length ? ', ' + waiting.length + ' for you' : ''))].concat(open.map(reqRow)) : []),
+    people.length ? el('div', { class: 'card', style: 'overflow-x:auto' }, el('table', { class: 't' },
+      el('thead', {}, el('tr', {}, el('th', {}, 'person'), resources.map((r) => el('th', {}, r)))),
+      el('tbody', {}, people.map((w) => el('tr', {}, el('td', {}, who(M, w.name)), resources.map((r) => cell(w, r))))))) : el('div', { class: 'empty card' }, 'Nobody yet.'),
+    el('div', { class: 'muted small', style: 'margin-top:6px' }, 'Grants are decided by the security officer and the CEO (admin goes to the CEO); the CEO and the officers hold admin while they have the role. Everything else expires.'));
+}
 function renderChecks(M) {
   const box = $('sec-checks');
   if (!box) return;
@@ -2831,7 +2909,7 @@ function renderDriveMain(M) {
   const viewer = el('div', { class: 'viewer' });
   main.replaceChildren(el('div', { class: 'card' },
     el('div', { style: 'display:flex;gap:10px;align-items:center;flex-wrap:wrap' }, el('h2', { class: 'sec', style: 'margin:0' }, a.title || a.id), pill(a.kind, a.kind)),
-    el('div', { class: 'muted small', style: 'margin:4px 0 8px' }, a.id + ' · by ' + a.author + ' · v' + ver.version + ' published ' + fmtDate(ver.ts) + (a.audience ? ' · for ' + (Array.isArray(a.audience) ? a.audience.join(', ') : str(a.audience)) : '')),
+    el('div', { class: 'muted small', style: 'margin:4px 0 8px' }, a.id + ' · by ' + a.author + ' · v' + ver.version + ' published ' + fmtDate(ver.ts) + (a.space ? ' · in ' + a.space : '')),
     ver.summary ? el('p', {}, ver.summary) : '',
     // Every version with its note of what changed, newest first.
     el('div', { class: 'vhist' }, [...a.versions].reverse().map((v) => el('div', { class: 'vrow' + (v === ver ? ' sel' : ''), onclick: () => openDrive(a.id, v.version, null), title: 'Open v' + v.version },
@@ -3717,6 +3795,15 @@ function teamChart(M, from, to) {
 function kpi(k, v, sub) { return el('div', { class: 'card kpi' }, el('div', { class: 'k' }, k), el('div', { class: 'v' }, v), sub ? el('div', { class: 'muted small' }, sub) : ''); }
 // Terms in a line: "2.0M tokens, due Oct 17 18:00".
 const termsText = (t) => (t ? [t.budget != null ? fmtTok(t.budget) + ' tokens' : 'budget open', t.due ? 'due ' + fmtDate(t.due) : ''].filter(Boolean).join(', ') : '');
+// A worker's grants, for their panel: what they may use, and until when.
+function grantsLine(M, w) {
+  const m = M.grants.get(w.name);
+  const gs = m ? [...m.entries()].filter(([, g]) => g.expires == null || g.expires > T()) : [];
+  const asked = [...M.credReqs.values()].filter((q) => q.worker === w.name && (q.state === 'pending' || q.state === 'escalated'));
+  return el('div', { class: 'small', style: 'margin-top:4px' }, el('b', {}, 'Access: '),
+    gs.length ? gs.map(([r, g]) => r + ' ' + g.level + (g.expires ? ' (' + fmtDur(Math.max(0, g.expires - T())) + ' left)' : '')).join(' · ') : 'none',
+    asked.length ? el('span', { class: 'muted' }, ' · asked: ' + asked.map((q) => q.resource + ' ' + q.level).join(', ')) : '');
+}
 // A contractor's contract, for their panel.
 function contractLine(M, w) {
   const k = w.contract && M.contracts.get(w.contract);
@@ -3916,7 +4003,7 @@ function renderHeader() {
     const pend = pendingBudget(M);
     if (pend) { bsig += '|' + pend.id; stats.push(el('button', { class: 'btn small', type: 'button', onclick: goDecideBudget }, el('span', { class: 'badge warn' }, '!'), ' budget request ' + pend.id + ': ' + fmtTok(pend.total) + ' — decide')); }
   }
-  const esc = M ? escalationsWaiting(M).length + checksWaiting(M).length : 0;
+  const esc = M ? escalationsWaiting(M).length + checksWaiting(M).length + credWaiting(M).length : 0;
   if (esc) stats.push(el('button', { class: 'btn small', type: 'button', onclick: () => showTab('security') }, el('span', { class: 'badge warn' }, String(esc)), ' waiting for the board'));
   if (live() && S.boardUnread.size) stats.push(el('button', { class: 'btn small', type: 'button', onclick: () => { MSG.view = 'inbox'; MSG.sig = null; showTab('messages'); } }, el('span', { class: 'badge' }, String(S.boardUnread.size)), ' unread'));
   // Rebuilt only when something in it changes, so a click isn't lost to a

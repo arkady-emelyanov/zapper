@@ -118,44 +118,6 @@ fn internal(run: &FirmRun, host: &str) -> bool {
     host == run.domain || host.ends_with(&format!(".{}", run.domain))
 }
 
-/// Whether `worker` owns the firm's services (a role with `owns_services`).
-pub fn owns_services(run: &FirmRun, worker: &str) -> bool {
-    run.chart()
-        .worker(worker)
-        .and_then(|w| run.config.roles.get(&w.role))
-        .is_some_and(|r| r.owns_services)
-}
-
-/// Who decides access to the firm's own services for `requester`: the
-/// owner (the CTO), never the requester; the board without one.
-fn services_owner(run: &FirmRun, requester: &str) -> Option<String> {
-    let chart = run.chart();
-    chart
-        .workers
-        .iter()
-        .filter(|w| {
-            w.name != requester
-                && run
-                    .config
-                    .roles
-                    .get(&w.role)
-                    .is_some_and(|r| r.owns_services)
-                && of_contract(run, &w.name).is_none()
-        })
-        .map(|w| w.name.clone())
-        .next()
-}
-
-fn of_contract(run: &FirmRun, worker: &str) -> Option<super::contracts::Contract> {
-    super::contracts::of(run, worker)
-}
-
-/// Whether `w` decides access requests: an officer, or the owner of the
-/// firm's services.
-pub fn decides_access(run: &FirmRun, w: &WorkerRt) -> bool {
-    w.officer() || owns_services(run, &w.name)
-}
-
 fn subject_of(r: &Request) -> String {
     format!(
         "Access: {} {}",
@@ -199,6 +161,11 @@ pub fn ask(
         .owed
         .first()
         .map(|o| o.subject.clone());
+    // The firm's own services (git, the cluster) come with credentials, not
+    // network approvals.
+    if internal(run, &req.host) {
+        bail!("{} is one of the firm's services: access to it comes with a grant; ask with credentials_request", req.host);
+    }
     let mut sec = run.security.lock().unwrap();
     let method = req.method.clone();
     if let Some(r) = sec.requests.values_mut().find(|r| {
@@ -224,13 +191,7 @@ pub fn ask(
     }
     sec.counter += 1;
     let id = format!("r-{}", sec.counter);
-    // The firm's own services are their owner's to decide; the rest, the
-    // officers'.
-    let officer = if internal(run, &req.host) {
-        services_owner(run, worker)
-    } else {
-        pick_officer(run, &mut sec, worker)
-    };
+    let officer = pick_officer(run, &mut sec, worker);
     let board = officer.is_none();
     let r = Request {
         id: id.clone(),
@@ -260,7 +221,7 @@ pub fn ask(
     sec.requests.insert(id.clone(), r);
     drop(sec);
     if board {
-        run.notice(BOARD, &format!("Access request {id}"), &format!("[Automatic notice] An access request needs the board's decision{}.\n\n{text}\nDecide it in the UI's Security tab.\n", if internal(run, &req.host) { " (the firm's own services, and no one else owns them)" } else { " (the firm has no other officer)" }));
+        run.notice(BOARD, &format!("Access request {id}"), &format!("[Automatic notice] An access request needs the board's decision{}.\n\n{text}\nDecide it in the UI's Security tab.\n", " (the firm has no other officer)"));
     } else if let Some(o) = officer.and_then(|o| run.rt(&o)) {
         o.access_queue.lock().unwrap().push(id.clone());
         o.wake.notify_one();
@@ -419,16 +380,7 @@ pub fn decide_screening(
     if clear {
         if let Some(w) = run.rt(&s.worker) {
             if run.config.roles.get(&w.role).is_some_and(|r| r.officer) {
-                appoint(run, &s.worker, by);
-            }
-            // The owner of the firm's services takes what the board had of them.
-            if run
-                .config
-                .roles
-                .get(&w.role)
-                .is_some_and(|r| r.owns_services)
-            {
-                adopt(run);
+                appoint(d, run, &s.worker, by);
             }
             w.wake.notify_one();
         }
@@ -497,15 +449,7 @@ pub fn adopt(run: &FirmRun) {
             .map(|r| (r.id.clone(), r.worker.clone()))
             .collect();
         for (id, asker) in checks.into_iter().chain(reqs) {
-            let services = sec
-                .requests
-                .get(&id)
-                .is_some_and(|r| internal(run, &r.host));
-            let next = if services {
-                services_owner(run, &asker)
-            } else {
-                pick_officer(run, &mut sec, &asker)
-            };
+            let next = pick_officer(run, &mut sec, &asker);
             let Some(o) = next else { continue };
             if let Some(c) = sec.screenings.get_mut(&id) {
                 c.officer = Some(o.clone());
@@ -556,15 +500,7 @@ pub fn requeue(run: &FirmRun, from: &str) {
             .map(|c| (c.id.clone(), c.by.clone()))
             .collect();
         for (id, asker) in reqs.into_iter().chain(checks) {
-            let services = sec
-                .requests
-                .get(&id)
-                .is_some_and(|r| internal(run, &r.host));
-            let next = if services {
-                services_owner(run, &asker)
-            } else {
-                pick_officer(run, &mut sec, &asker)
-            };
+            let next = pick_officer(run, &mut sec, &asker);
             if let Some(r) = sec.requests.get_mut(&id) {
                 r.officer = next.clone();
                 r.board_asked |= next.is_none();
@@ -595,7 +531,14 @@ pub fn requeue(run: &FirmRun, from: &str) {
 
 /// A hired security officer, cleared: they join the officers. While the
 /// CEO held security alone, it passes to the officer.
-pub fn appoint(run: &FirmRun, worker: &str, by: &str) {
+pub fn appoint(
+    d: &std::sync::Arc<crate::daemon::Daemon>,
+    run: &std::sync::Arc<FirmRun>,
+    worker: &str,
+    by: &str,
+) {
+    // A policy owner now: admin on everything, for as long as they hold it.
+    super::access::owner_access(d, run, worker, by);
     let chart = run.chart();
     let root = chart.root().map(str::to_string);
     let mut officers = chart.security.officers.clone();
@@ -675,14 +618,14 @@ fn request_text(r: &Request) -> String {
     s
 }
 
-pub fn has_work(run: &FirmRun, w: &WorkerRt) -> bool {
-    decides_access(run, w)
+pub fn has_work(_run: &FirmRun, w: &WorkerRt) -> bool {
+    w.officer()
         && (!w.access_queue.lock().unwrap().is_empty() || w.digest_due.load(Ordering::Relaxed))
 }
 
 /// The officer's part of a wake prompt: pending requests, then a digest.
 pub fn take_wake(run: &FirmRun, w: &WorkerRt) -> Option<String> {
-    if !decides_access(run, w) {
+    if !w.officer() {
         return None;
     }
     let ids: Vec<String> = std::mem::take(&mut *w.access_queue.lock().unwrap());
@@ -800,10 +743,8 @@ pub struct DecideArgs {
 /// An officer or the board decides a request.
 pub fn decide(run: &FirmRun, by: &str, id: &str, a: DecideArgs) -> Result<Value> {
     let board = by == BOARD;
-    let officer = run.chart().is_officer(by);
-    let owner = owns_services(run, by);
-    if !board && !officer && !owner {
-        bail!("only security officers, the owner of the firm's services and the board decide access requests");
+    if !board && !run.chart().is_officer(by) {
+        bail!("only security officers and the board decide access requests");
     }
     let mut sec = run.security.lock().unwrap();
     let r = sec
@@ -819,12 +760,6 @@ pub fn decide(run: &FirmRun, by: &str, id: &str, a: DecideArgs) -> Result<Value>
     }
     if !board && r.state == State::Escalated {
         bail!("request {id} was escalated: the board decides it");
-    }
-    if !board && internal(run, &r.host) && !owner {
-        bail!("request {id} is for the firm's own services: their owner or the board decides it");
-    }
-    if !board && !internal(run, &r.host) && !officer {
-        bail!("request {id} is for outside access: the security officers decide it");
     }
     if a.reason.trim().is_empty() {
         bail!("give a reason; the worker and the board read it");

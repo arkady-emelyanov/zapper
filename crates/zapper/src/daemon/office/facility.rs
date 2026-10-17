@@ -246,11 +246,19 @@ async fn git_request(
     let path = req.uri().path().to_string();
     let query = req.uri().query().unwrap_or("").to_string();
     let push = path.ends_with("/git-receive-pack") || query.contains("service=git-receive-pack");
-    let role = run.rt(member).map(|w| w.role.clone()).unwrap_or_default();
-    if push && !run.config.credentials.git.contains(&role) {
+    // The worker's grant, read on every request: a change or revocation
+    // applies to the next fetch or push.
+    let level = super::access::level(run, member, "git");
+    if level == super::access::Level::None {
         return plain(
             StatusCode::FORBIDDEN,
-            "your role can read this repository, not push to it",
+            "you have no access to this repository; ask for it with credentials_request",
+        );
+    }
+    if push && level < super::access::Level::Write {
+        return plain(
+            StatusCode::FORBIDDEN,
+            "you can read this repository, not push to it; ask for write with credentials_request",
         );
     }
     if path.split('/').any(|c| c == "..") {
@@ -286,6 +294,8 @@ async fn git_request(
         .env("HTTP_CONTENT_ENCODING", header("content-encoding"))
         .env("GIT_PROTOCOL", header("git-protocol"))
         .env("REMOTE_USER", member)
+        // The pre-receive hook keeps `main` and tags to admin.
+        .env("ZAPPER_GIT_LEVEL", level.name())
         .env("REMOTE_ADDR", "127.0.0.1")
         .env("GIT_COMMITTER_NAME", member)
         .env("GIT_COMMITTER_EMAIL", format!("{member}@{}", run.domain))
@@ -350,6 +360,151 @@ async fn git_request(
         .unwrap_or_else(|_| plain(StatusCode::INTERNAL_SERVER_ERROR, "bad CGI response"))
 }
 
+/// The repository's `pre-receive` hook: below admin, no updates to `main`
+/// or tags (the git handler sets `ZAPPER_GIT_LEVEL` from the pusher's grant).
+const PRE_RECEIVE: &str = r#"#!/bin/sh
+# Installed by zapper: write may push branches; only admin updates main and tags.
+[ "$ZAPPER_GIT_LEVEL" = admin ] && exit 0
+while read old new ref; do
+    case "$ref" in
+        refs/heads/main|refs/tags/*)
+            echo "zapper: $REMOTE_USER has write access: push a branch; $ref needs admin (ask with credentials_request)" >&2
+            exit 1 ;;
+    esac
+done
+exit 0
+"#;
+
+/// The namespace that holds workers' service accounts.
+const WORKER_NS: &str = "zapper-workers";
+
+/// Network access to git or the cluster follows the grant: a rule in the
+/// worker's own layer allows the host while they hold one.
+pub fn network_follows_grant(
+    run: &FirmRun,
+    worker: &str,
+    resource: &str,
+    level: super::access::Level,
+) {
+    let Some(s) = run.rt(worker).and_then(|w| w.session()) else {
+        return;
+    };
+    let id = format!("credentials-{resource}");
+    let mut p = s.policy.write().unwrap();
+    p.remove(&id);
+    if level == super::access::Level::None {
+        return;
+    }
+    let (host, port) = match resource {
+        "git" => (format!("git.{}", run.domain), 443),
+        _ => (format!("{CLUSTER}.{}", run.domain), API_PORT as u16),
+    };
+    p.insert(
+        zapper_policy::AnyRule::Net(zapper_policy::NetRule {
+            id: Some(id),
+            action: zapper_policy::Action::Allow,
+            host,
+            ports: vec![port],
+            methods: vec![],
+            path: None,
+            secrets: vec![],
+            set_headers: Default::default(),
+            final_: false,
+            comment: Some(format!("credentials: {resource} {}", level.name())),
+        }),
+        Some(0),
+    );
+}
+
+/// A worker's access to the cluster, as their grant says: their own
+/// service account with RoleBindings (read: `view` in dev; write: `edit` in
+/// dev; admin: also `admin` in prod), and a kubeconfig in their VM with its
+/// token. No grant: no account, no kubeconfig. Kubernetes enforces it.
+pub async fn cluster_access(
+    _d: &Arc<Daemon>,
+    run: &FirmRun,
+    worker: &str,
+    level: super::access::Level,
+    expires: Option<f64>,
+) -> Result<()> {
+    use super::access::Level;
+    let Some(c) = run.facility.cluster.lock().unwrap().clone() else {
+        return Ok(());
+    };
+    let sa = format!("w-{worker}");
+    let bindings: Vec<(&str, &str)> = match level {
+        Level::None => vec![],
+        Level::Read => vec![("dev", "view")],
+        Level::Write => vec![("dev", "edit")],
+        Level::Admin => vec![("dev", "edit"), ("prod", "admin")],
+    };
+    let mut script = format!("k3s kubectl delete rolebinding -A -l zapper/worker={worker} --ignore-not-found >/dev/null; ");
+    if level == Level::None {
+        script.push_str(&format!(
+            "k3s kubectl -n {WORKER_NS} delete serviceaccount {sa} --ignore-not-found >/dev/null"
+        ));
+        sh(&c, &script).await?;
+        if let Some(s) = run.rt(worker).and_then(|w| w.session()) {
+            let home = format!("/home/{}", s.resolved.agent.user);
+            let _ = sh(&s, &format!("rm -f {home}/.kube/config")).await;
+        }
+        return Ok(());
+    }
+    script.push_str(&format!("k3s kubectl -n {WORKER_NS} create serviceaccount {sa} --dry-run=client -o yaml | k3s kubectl apply -f - >/dev/null; "));
+    for (ns, role) in &bindings {
+        script.push_str(&format!(
+            "k3s kubectl -n {ns} create rolebinding {sa}-{role} --clusterrole={role} --serviceaccount={WORKER_NS}:{sa} && k3s kubectl -n {ns} label rolebinding {sa}-{role} zapper/worker={worker} >/dev/null; "
+        ));
+    }
+    // The token lives as long as the grant (the owners': 30 days); deleting
+    // the account ends it sooner.
+    let secs = expires
+        .map(|e| (e - super::now()).max(600.0) as u64)
+        .unwrap_or(30 * 86400);
+    script.push_str(&format!(
+        "k3s kubectl -n {WORKER_NS} create token {sa} --duration={secs}s"
+    ));
+    let (code, out) = sh(&c, &script).await?;
+    if code != 0 {
+        bail!("RBAC for {worker}: {out}");
+    }
+    let token = out.lines().last().unwrap_or("").trim().to_string();
+    let ca = run
+        .facility
+        .kubeconfig
+        .lock()
+        .unwrap()
+        .as_deref()
+        .and_then(|k| {
+            k.lines().find_map(|l| {
+                l.trim()
+                    .strip_prefix("certificate-authority-data:")
+                    .map(|v| v.trim().to_string())
+            })
+        })
+        .ok_or_else(|| anyhow!("no cluster CA yet"))?;
+    let kube = format!(
+        "apiVersion: v1\nkind: Config\nclusters:\n- name: {CLUSTER}\n  cluster:\n    server: https://{CLUSTER}.{d}:{API_PORT}\n    certificate-authority-data: {ca}\nusers:\n- name: {worker}\n  user:\n    token: {token}\ncontexts:\n- name: {worker}\n  context:\n    cluster: {CLUSTER}\n    user: {worker}\n    namespace: dev\ncurrent-context: {worker}\n",
+        d = run.domain
+    );
+    if let Some(s) = run.rt(worker).and_then(|w| w.session()) {
+        let home = format!("/home/{}", s.resolved.agent.user);
+        let mut out = Vec::new();
+        let (code, err) = drive::guest_command(
+            &s,
+            vec!["sh".into(), "-c".into(), format!("mkdir -p {home}/.kube && cat > {home}/.kube/config && chmod 600 {home}/.kube/config && chown -R 1000:1000 {home}/.kube")],
+            Some(std::io::Cursor::new(kube.into_bytes())),
+            &mut out,
+            1 << 16,
+        )
+        .await?;
+        if code != 0 {
+            bail!("writing {worker}'s kubeconfig: {err}");
+        }
+    }
+    Ok(())
+}
+
 /// Runs a shell command as root in a session's VM; its stdout.
 async fn sh(s: &Session, script: &str) -> Result<(i32, String)> {
     let mut out = Vec::new();
@@ -387,11 +542,17 @@ pub async fn start(d: &Arc<Daemon>, run: &Arc<FirmRun>, config: &Config) -> Resu
             .args(["config", "http.receivepack", "true"])
             .status()
             .await;
+        // Below admin, pushes may not touch `main` or tags. The hook is the
+        // daemon's: the repository lives on the host, out of workers' reach.
+        let hook = repo.join("hooks").join("pre-receive");
+        std::fs::create_dir_all(repo.join("hooks"))?;
+        std::fs::write(&hook, PRE_RECEIVE)?;
+        std::fs::set_permissions(&hook, std::os::unix::fs::PermissionsExt::from_mode(0o755))?;
+        // A password per worker is who they are, not what they may do: their
+        // grant decides that.
         let mut pw = run.facility.git_passwords.lock().unwrap();
         for w in run.rts() {
-            if run.config.credentials.git.contains(&w.role) || w.officer() {
-                pw.insert(w.name.clone(), random_id(24));
-            }
+            pw.insert(w.name.clone(), random_id(24));
         }
         run.journal
             .append("facility", json!({ "name": "git", "state": "ready" }));
@@ -467,6 +628,12 @@ pub async fn start(d: &Arc<Daemon>, run: &Arc<FirmRun>, config: &Config) -> Resu
     }
     let kube = kube.replace("https://127.0.0.1:6443", &format!("https://{san}:6443"));
     *run.facility.kubeconfig.lock().unwrap() = Some(kube);
+    // The firm's two namespaces (prod is what the ingress serves), and the
+    // one that holds workers' service accounts.
+    let (code, out) = sh(&s, &format!("for n in dev prod {WORKER_NS}; do k3s kubectl create namespace $n --dry-run=client -o yaml | k3s kubectl apply -f - >/dev/null || exit 1; done")).await?;
+    if code != 0 {
+        bail!("creating the namespaces: {out}");
+    }
     run.journal.append(
         "facility",
         json!({ "name": name, "state": "ready", "session": s.id }),
@@ -726,19 +893,11 @@ pub async fn git_log(run_dir: &Path) -> Value {
     json!(commits)
 }
 
-pub fn services_for(run: &FirmRun, role: &str) -> Services {
+pub fn services_for(run: &FirmRun, _role: &str) -> Services {
     let d = &run.domain;
-    let officer_roles: Vec<String> = run
-        .rts()
-        .iter()
-        .filter(|w| w.officer())
-        .map(|w| w.role.clone())
-        .collect();
-    let git = run.config.git.is_some()
-        && (run.config.credentials.git.iter().any(|r| r == role)
-            || officer_roles.iter().any(|r| r == role));
-    let kube = run.config.credentials.kubeconfig.iter().any(|r| r == role)
-        && run.facility.kubeconfig.lock().unwrap().is_some();
+    // Shown to everyone: access to each comes with a grant.
+    let git = run.config.git.is_some();
+    let kube = !run.config.facilities.is_empty();
     let cluster = run.facility.cluster.lock().unwrap().is_some();
     Services {
         git: git.then(|| format!("https://git.{d}/product.git")),
@@ -751,20 +910,12 @@ pub fn services_for(run: &FirmRun, role: &str) -> Services {
 pub fn credentials_for(
     run: &FirmRun,
     worker: &str,
-    role: &str,
+    _role: &str,
     home: &str,
 ) -> Result<Vec<GuestFile>> {
+    // The kubeconfig comes with a cluster grant (cluster_access); the git
+    // password is the worker's identity, and their grant decides the rest.
     let mut files = Vec::new();
-    if run.config.credentials.kubeconfig.iter().any(|r| r == role) {
-        if let Some(k) = run.facility.kubeconfig.lock().unwrap().clone() {
-            files.push(GuestFile {
-                path: format!("{home}/.kube/config"),
-                content: k,
-                mode: 0o600,
-                user_owned: true,
-            });
-        }
-    }
     if let Some(pw) = run.facility.git_passwords.lock().unwrap().get(worker) {
         let d = &run.domain;
         files.push(GuestFile {

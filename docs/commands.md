@@ -33,6 +33,7 @@ The office ([office](office.md)), as the board:
 | Command | Purpose |
 |---|---|
 | `zapper firm ls` | Firms and their runs' states |
+| `zapper firm credentials FIRM [grant WORKER RESOURCE LEVEL \| approve REQUEST \| deny REQUEST \| revoke WORKER RESOURCE] [--level L] [--expires 8h] [--note TEXT]` | Grants and credential requests; or the board grants, decides or revokes (resources: `git`, `cluster`, `drive:<space>`) |
 | `zapper firm contracts FIRM` | The run's contracts: hirer, contractor, state, offered, quoted and agreed budgets, how each ended |
 | `zapper firm up FIRM [--company NAME] [--ceo NAME] [--seed TOKENS] [--ceo-prompt FILE] [--articles FILE] [--security-share F] [--max-concurrent N] [--daily-turns N]` / `zapper firm down FIRM` | Start a fresh run (facilities, then the CEO, idle; the CEO holds security until they hire an officer), with the board's parameters and charter terms for this run / stop it; the run stays on disk |
 | `zapper firm pause FIRM` / `zapper firm resume FIRM` | Stop starting turns / start again |

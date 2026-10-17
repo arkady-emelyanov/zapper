@@ -5,6 +5,7 @@
 //! A run starts fresh with every `firm up` and is written to
 //! `state/firms/<firm>/runs/<id>/` as it happens; the daemon keeps indexes.
 
+pub mod access;
 pub mod contracts;
 pub mod drive;
 pub mod facility;
@@ -188,6 +189,8 @@ pub struct FirmRun {
     pub security: Mutex<security::Security>,
     /// Contract offers, negotiations and contracts.
     pub contracts: Mutex<contracts::Contracts>,
+    /// Credential grants and requests.
+    pub access: Mutex<access::Access>,
     /// Officers' standing approvals per role.
     pub roles: BTreeMap<String, Arc<RwLock<Policy>>>,
     pub turns: Arc<Semaphore>,
@@ -728,6 +731,7 @@ pub async fn up_with(d: &Arc<Daemon>, name: &str, opts: &StartOptions) -> Result
         drive: Mutex::new(drive::Drive::new(&firm)?),
         security: Mutex::new(security::Security::default()),
         contracts: Mutex::new(contracts::Contracts::default()),
+        access: Mutex::new(access::Access::default()),
         roles,
         turns: Arc::new(Semaphore::new(firm.budget.max_concurrent as usize)),
         usage: Mutex::new(Usage {
@@ -756,6 +760,11 @@ pub async fn up_with(d: &Arc<Daemon>, name: &str, opts: &StartOptions) -> Result
     )?;
     run.journal.append("run", json!({ "state": "starting", "company": company, "prompts": prompts, "articles": articles, "chart": chart(name, &firm, &models), "budget": firm.budget }));
     workforce::seed(&run);
+    // The policy owners (the CEO, any founding officers) hold admin on
+    // everything; everyone else starts with nothing.
+    for o in access::owners(&run) {
+        access::owner_access(d, &run, &o, BOARD);
+    }
     d.office
         .runs
         .write()
@@ -930,6 +939,8 @@ pub(super) async fn boot_worker(
         json!({ "worker": w.name, "session": s.id }),
     );
     *w.session.lock().unwrap() = Some(s);
+    // Grants made before the VM was up: its network rules and kubeconfig.
+    access::reapply(d, run, &w.name);
     Ok(())
 }
 
@@ -960,6 +971,7 @@ async fn ticker(d: Arc<Daemon>, run: Arc<FirmRun>) {
         }
         security::tick(&run, &mut last_digest);
         contracts::tick(&d, &run);
+        access::tick(&d, &run);
     }
 }
 

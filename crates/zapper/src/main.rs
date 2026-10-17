@@ -1233,13 +1233,10 @@ mod tests {
         assert!(acme.roles["ceo"]
             .hires
             .contains(&"security-officer".to_string()));
-        // The CTO owns the repository, the cluster and the product.
+        // Access comes with grants: the spaces and their expiry, no roles.
         assert_eq!(acme.roles["cto"].profile, "office-engineer");
-        assert!(acme.roles["cto"].owns_services);
-        assert!(
-            acme.credentials.git.contains(&"cto".to_string())
-                && acme.credentials.kubeconfig.contains(&"cto".to_string())
-        );
+        assert_eq!(acme.credentials.expiry, "24h");
+        assert!(acme.credentials.spaces.contains(&"general".to_string()));
         assert!(acme.roles["ceo"].hires.contains(&"cto".to_string()));
     }
 }

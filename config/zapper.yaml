@@ -130,37 +130,23 @@ profiles:
         - { action: allow, host: api.anthropic.com, ports: [443], secrets: [claude] }
         - { action: allow, host: apps.acme.internal, ports: [80, 443], comment: the product }
         - { action: allow, host: "*.apps.acme.internal", ports: [80, 443] }
-        # The firm's repository and cluster API are for the roles whose
-        # profiles allow them (engineers, designers); not even a request.
-        - { action: deny, host: git.acme.internal, comment: engineers and designers only }
-        - { action: deny, host: cluster.acme.internal, comment: engineers only }
-      exec:
-        - { action: deny, path: kubectl, comment: the cluster is the engineers' }
+        # The firm's repository and cluster API come with a grant: the
+        # credentials subsystem allows them in the worker's own layer while
+        # they hold one (credentials_request); never a network request.
+        - { action: deny, host: git.acme.internal, comment: with a git grant only }
+        - { action: deny, host: cluster.acme.internal, comment: with a cluster grant only }
       # Everything else goes to the security officers.
       defaults: { net: ask }
 
-  # Engineers also reach the firm's repository and the Kubernetes API.
+  # Engineers get a bigger VM; their access to git and the cluster comes
+  # with grants, like everyone's.
   office-engineer:
     extends: office
     description: An office engineer
     engine: { memory_mib: 6144, disk: 24GiB }
-    policy:
-      net:
-        - { action: allow, host: git.acme.internal, ports: [443] }
-        - { action: allow, host: cluster.acme.internal, ports: [6443] }
-      exec:
-        - { action: allow, path: kubectl }
-
-  # Designers also push to the firm's repository (design/ and prototypes).
-  office-designer:
-    extends: office
-    description: An office designer
-    policy:
-      net:
-        - { action: allow, host: git.acme.internal, ports: [443] }
 
   # Security officers reach the internet widely; the global final rules,
-  # private networks and the host stay closed. They read the repository.
+  # private networks and the host stay closed.
   office-security:
     extends: office
     description: A security officer
@@ -169,7 +155,6 @@ profiles:
         # First: the broad rule below would otherwise match the API without
         # the token (this layer is checked before the office profile's).
         - { action: allow, host: api.anthropic.com, ports: [443], secrets: [claude] }
-        - { action: allow, host: git.acme.internal, ports: [443] }
         - { action: allow, host: "*", ports: [80, 443] }
 
   # The firm's cluster: k3s on one node, with the k8s kernel.
@@ -190,8 +175,9 @@ profiles:
         - { action: allow, host: "*.quay.io", ports: [443] }
       defaults: { net: ask }
 
-# Firms: org charts of workers (docs/office.md). `zapper firm up acme` starts
-# a fresh run; write to the CEO in the UI or with `zapper mail send acme`.
+# Firms (docs/office.md): start a company in the UI's Kickoff tab, or with
+# `zapper firm up acme`. Roles that hire also get the manager skill; the CEO
+# and security officers the security-review skill.
 firms:
   acme:
     description: A small product company
@@ -207,11 +193,14 @@ firms:
     skills_dir: skills
     facilities:
       cluster: { kind: k3s, profile: office-k3s }
-    # What the cluster serves until the firm deploys its product on /.
-    landing: { name: "Acme Inc.", motto: "Building digital worlds!" }
+    # What the cluster serves until the firm deploys its product on /; the
+    # company's name comes from Kickoff.
+    landing: { motto: "Building digital worlds!" }
+    # Access to git, the cluster and the drive's spaces is granted during
+    # the run, by request; grants last this long unless decided otherwise.
     credentials:
-      kubeconfig: [cto, engineer]
-      git: [cto, engineer, designer]
+      expiry: 24h
+      spaces: [general, product, engineering, design, research, security, board]
     roles:
       ceo:
         profile: office
@@ -220,13 +209,12 @@ firms:
         skills: { work: ceo }
         hires: [cto, manager, product-manager, engineer, designer, researcher, analyst, security-officer]
         avatar: { figure: ceo, color: "#D97757" }
-      # Owns the repository, the cluster and the product: an engineer's
-      # access (git push, cluster-admin, kubectl) and a manager's skill.
+      # Leads engineering and its releases; access comes with grants, like
+      # everyone's.
       cto:
         profile: office-engineer
         title: CTO
-        skills: { work: manager }
-        owns_services: true              # decides colleagues' access to git, the cluster and the product
+        skills: { work: cto }
         hires: [engineer, designer, researcher, analyst]
         avatar: { figure: manager, color: "#5A7FB5" }
       product-manager:
@@ -246,7 +234,7 @@ firms:
         skills: { work: software-engineer }
         avatar: { figure: engineer, color: "#6A9BCC" }
       designer:
-        profile: office-designer
+        profile: office
         title: Product Designer
         skills: { work: designer }
         avatar: { figure: designer, color: "#C27BA0" }
@@ -268,8 +256,6 @@ firms:
     # they hire a security officer, and hires the rest during the run.
     workers:
       - { name: barbara, role: ceo }
-    # Names for hires whose hirer doesn't pick one.
-    names: [dennis, margaret, ada, grace, iris, ken, hedy, alan, frances, edsger, joan, niklaus]
     security:
       digest_every: { minutes: 10, requests: 200 }
       answer_within: 15m

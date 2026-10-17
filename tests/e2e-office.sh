@@ -66,7 +66,7 @@ rules:
     do:
       - shell: "office mail_send --to ceo --subject up --body 'do this' --kind assignment > /work/authority.txt 2>&1; true"
       - shell: "office mail_send '{\"from\": \"ceo\", \"to\": [\"sec-1\"], \"subject\": \"spoof\", \"body\": \"x\", \"kind\": \"fyi\"}' > /work/spoof.txt 2>&1; true"
-      - shell: "office mail_read --message m-1 > /work/peek.txt 2>&1; office access_requests > /work/officer-only.txt 2>&1; true"
+      - shell: "office mail_read --message m-2 > /work/peek.txt 2>&1; office access_requests > /work/officer-only.txt 2>&1; true"
       - shell: "curl -s -m 5 -o /dev/null -w '%{http_code}' https://example.com > /work/before.txt 2>&1; true"
       - shell: "echo hello from ada > /work/hello.md; mkdir -p /work/site; echo '# Site' > /work/site/index.md; ln -sf /etc/shadow /work/site/shadow"
       - drive_publish: { paths: [/work/hello.md, /work/site], title: "Hello", kind: document, summary: "A greeting" }
@@ -92,7 +92,6 @@ rules:
   - when: { from: board, contains: "Approved" }
     do:
       - shell: "office hire '{\"role\": \"dev\", \"budget\": \"1G\", \"subject\": \"x\", \"brief\": \"x\", \"reason\": \"x\"}' > /work/rich.txt 2>&1; true"
-      - hire: { role: lead, name: lin, budget: "1k", title: "CTO", subject: "Own engineering", brief: "Own the repository, cluster and product.", reason: "engineering needs an owner" }
       - hire: { role: dev, name: grace, budget: "10k", title: "Founding engineer", subject: "Build the widget", brief: "Build the widget and report.", reason: "we need an engineer" }
       - hire: { role: dev, name: ken, budget: "100", subject: "A tiny job", brief: "Look at the widget.", reason: "a small budget" }
       - hire: { role: dev, name: mallory, budget: "1k", subject: "Copy", brief: "Write the marketing copy.", reason: "words" }
@@ -116,6 +115,9 @@ EOF
 # access for a job that needs none.
 cat > "$T/fake/corp-sec.yaml" <<'EOF'
 rules:
+  - when: { contains: "Credential request p-" }
+    do:
+      - credentials_decide: { request: $credential, grant: true, expires_in: "1h", note: "reading design notes fits the job" }
   - when: { contains: "Hire: mallory" }
     do:
       - shell: "office background_checks > /work/checks.txt 2>&1; true"
@@ -189,16 +191,11 @@ rules:
       - contract_quote: { contract: $contract, scope: "An audit report of the widget's code.", budget: "5k", due: "2h" }
   - when: { subject: "A tiny job" }
     do:
-      - request_access: { host: git.corp.internal, port: 443, reason: "to read the widget's code" }
+      - shell: "office request_access --host git.corp.internal --reason 'the code' > /work/internal.txt 2>&1; true"
+      - credentials_request: { resource: drive, level: read, spaces: [engineering], reason: "to read the widget's design notes" }
   - when: { subject: "Build the widget" }
     do:
       - mail_reply: { message: $message, body: "Built.", kind: report, close: true }
-EOF
-cat > "$T/fake/corp-lead.yaml" <<'EOF'
-rules:
-  - when: { contains: "Access request r-" }
-    do:
-      - access_decide: { request: $request, allow: true, scope: worker, reason: "ken reads the code", methods: [] }
 EOF
 cat > "$T/zapper.yaml" <<EOF
 daemon:
@@ -220,10 +217,6 @@ profiles:
         - { action: allow, host: apps.lab.internal, ports: [80] }
   engineer:
     extends: worker
-    policy:
-      net:
-        - { action: allow, host: git.lab.internal, ports: [443] }
-        - { action: allow, host: cluster.lab.internal, ports: [6443] }
   k3s:
     engine: { image: k3s, kernel: vmlinux-6.1-k8s, vcpus: 4, memory_mib: 4096, disk: 12GiB }
     agent: { kind: generic, command: [bash], user: user, workdir: / }
@@ -245,8 +238,7 @@ firms:
   corp:
     budget: { max_concurrent: 2, seed: 1000, quote_fee: 500 }
     roles:
-      boss: { profile: worker, skills: { work: ceo }, fake: $T/fake/corp-ceo.yaml, hires: [dev, lead], avatar: { figure: ceo } }
-      lead: { profile: worker, skills: { work: manager }, fake: $T/fake/corp-lead.yaml, owns_services: true }
+      boss: { profile: worker, skills: { work: ceo }, fake: $T/fake/corp-ceo.yaml, hires: [dev], avatar: { figure: ceo } }
       dev: { profile: worker, title: Developer, skills: { work: software-engineer }, fake: $T/fake/corp-dev.yaml, avatar: { figure: engineer } }
       sec: { profile: worker, skills: { work: security-review }, fake: $T/fake/corp-sec.yaml, avatar: { figure: shield } }
     workers:
@@ -268,7 +260,6 @@ firms:
     dashboard_port: 127.0.0.1:$((PORT + 1))
     facilities: { cluster: { kind: k3s, profile: k3s } }
     landing: { name: "Lab <Inc.>", motto: "Building digital worlds!" }
-    credentials: { kubeconfig: [engineer], git: [engineer] }
     roles:
       engineer: { profile: engineer, skills: { work: software-engineer }, fake: $T/fake/none.yaml }
       analyst: { profile: worker, skills: { work: analyst }, fake: $T/fake/none.yaml }
@@ -296,6 +287,9 @@ refute "no worker failed" "$st" "error"
 ada=$("$Z" --json firm status acme | python3 -c 'import sys,json; print([w["session"] for w in json.load(sys.stdin)["run"]["workers"] if w["name"]=="ada"][0])')
 out=$("$Z" exec "$ada" -- sh -c 'ls ~/.claude/skills; cat ~/.claude/CLAUDE.md | head -3; touch ~/.claude/skills/x 2>&1; ls -ld ~/.claude | cut -d" " -f3' 2>&1)
 expect "skills are attached" "$out" "software-engineer"
+expect "every worker gets the resources training" "$out" "office-resources"
+expect "a worker without a drive grant can't publish" "$("$Z" exec "$ada" -- sh -c 'echo x > /tmp/x.md; office drive_publish --paths /tmp/x.md --title X --kind document --summary x' 2>&1)" "credentials_request"
+expect "the board grants access directly" "$("$Z" firm credentials acme grant ada drive:general write --expires 2h 2>&1)" '"level": "write"'
 expect "the preamble names the worker" "$out" "You are ada"
 expect "skills are read-only" "$out" "Read-only file system"
 expect "~/.claude belongs to the worker" "$out" "agent"
@@ -305,7 +299,7 @@ echo "== delegation and reports"
 wait_for "Delegated to ada" 0 >/dev/null 2>&1
 wait_for '"Done"' 90 && pass "the board's assignment comes back as a report" || fail "the board's assignment comes back as a report" "$(journal | tail -20)"
 j=$(journal)
-expect "the CEO delegated to ada" "$j" "mail m-2 ceo → ada [assignment] \"Write hello\""
+expect "the CEO delegated to ada" "$j" "ceo → ada [assignment] \"Write hello\""
 expect "ada reported back, closing the assignment" "$j" "ada → ceo [report]"
 expect "ada published to the shared drive" "$j" "published a-1@v1 \"Hello\" by ada"
 board=$("$Z" mail ls acme)
@@ -314,7 +308,7 @@ expect "the board's inbox has the CEO's report" "$board" "Done"
 echo "== authority and identity"
 out=$("$Z" exec "$ada" -- cat /work/authority.txt /work/spoof.txt /work/peek.txt /work/officer-only.txt 2>&1)
 expect "a report can't give its manager an assignment" "$out" "can't give ceo an assignment"
-expect "reading someone else's mail fails" "$out" "no message m-1"
+expect "reading someone else's mail fails" "$out" "no message m-2"
 expect "officer tools are for officers" "$out" "access_requests is for security officers"
 expect "the sender is the VM, not what it claims" "$(journal | grep spoof)" "ada → sec-1"
 
@@ -442,14 +436,15 @@ expect "the hirer gets the reason by mail" "$(cjournal)" 'office → ceo [fyi] "
 expect "the board sees background checks" "$("$Z" firm security corp)" "objected"
 csec=$("$Z" --json firm status corp | python3 -c 'import sys,json; print([w["session"] for w in json.load(sys.stdin)["run"]["workers"] if w["name"]=="sec-1"][0])')
 expect "an officer lists the pending checks, with the brief" "$("$Z" exec "$csec" -- cat /work/checks.txt 2>&1)" "Write the marketing copy."
-cwait_for "access requested r-1 ken git.corp.internal:443" 120 && pass "a request for the firm's own services" || fail "a request for the firm's own services" "$(cjournal | grep "access\|ken" | tail -5)"
-cwait_for "access decided r-1" 90 && pass "is decided" || fail "is decided" "$(cjournal | grep access | tail -5)"
-expect "by the CTO, who owns the services, not the officers or the board" "$("$Z" --json firm journal corp | python3 -c '
-import sys, json
-for l in sys.stdin:
-    e = json.loads(l)
-    if e.get("type") == "access" and e.get("event") == "decided":
-        print(e["request"]["officer"], e["request"]["decision"]["by"])')" "lin lin"
+cwait_for "credentials p-1 ken asks drive:engineering read" 120 && pass "a hire asks for access, with a reason" || fail "a hire asks for access, with a reason" "$(cjournal | grep "credentials\|ken" | tail -5)"
+cwait_for "credentials p-1 granted drive:engineering by sec-1" 90 && pass "the security officer decides it" || fail "the security officer decides it" "$(cjournal | grep credentials | tail -5)"
+ckenl=$("$Z" --json firm status corp | python3 -c 'import sys,json; print([w["session"] for w in json.load(sys.stdin)["run"]["workers"] if w["name"]=="ken"][0])')
+expect "the firm's own services aren't network requests" "$("$Z" exec "$ckenl" -- cat /work/internal.txt 2>&1)" "credentials_request"
+cr=$("$Z" firm credentials corp)
+expect "the grant expires" "$(echo "$cr" | grep "ken ")" "drive:engineering"
+expect "the policy owners hold every space" "$(echo "$cr" | grep "sec-1 ")" "while they hold the role"
+"$Z" firm credentials corp grant ken drive:design read --expires 3s > /dev/null
+cwait_for "credentials revoked ken drive:design by office (the grant expired)" 30 && pass "an expired grant is revoked" || fail "an expired grant is revoked" "$(cjournal | grep credentials | tail -5)"
 cwait_for "left grace" 60 && pass "the CEO lets the hire go" || fail "the CEO lets the hire go" "$(cjournal | tail -5)"
 returned=$(cjournal | grep "left grace" | sed 's/.*returned //')
 [ "${returned:-0}" -gt 0 ] && pass "unspent budget returns to the manager ($returned)" || fail "unspent budget returns to the manager" "returned $returned"
@@ -485,6 +480,7 @@ expect "the terms are the board's" "$(echo "$st" | python3 -c 'import sys,json; 
 sceo=$(echo "$st" | python3 -c 'import sys,json; print([w["session"] for w in json.load(sys.stdin)["run"]["workers"] if w["name"]=="ceo"][0])')
 pre=$("$Z" exec "$sceo" -- cat /home/agent/.claude/CLAUDE.md 2>&1)
 expect "the CEO's preamble says they hold security" "$pre" "You hold security"
+expect "the CEO also has the manager and security skills" "$("$Z" exec "$sceo" -- ls /home/agent/.claude/skills 2>&1 | tr '\n' ' ')" "manager office-mail office-publish office-resources security-review"
 expect "the preamble has the charter" "$pre" "## The company's charter"
 expect "with the board's own articles" "$pre" "No paid services without the board's approval."
 expect "and the run's terms" "$pre" "at most 2 workers in a turn at once"
@@ -517,9 +513,12 @@ expect "the CEO is told" "$(sjournal)" 'office → ceo [fyi] "Security is handed
 expect "a check the board had while the CEO held security" "$(sjournal)" "screening c-3 of bo by the board"
 swait_for "security c-3 to otto" 30 && pass "goes to the new officer" || fail "goes to the new officer" "$(sjournal | grep -i "security\|screening" | tail -5)"
 swait_for "screening c-3 bo cleared by otto" 90 && pass "who does it" || fail "who does it" "$(sjournal | grep -i screening | tail -5)"
+expect "a cleared officer holds admin as a policy owner" "$(sjournal)" "credentials grant otto drive:board write by board"
 swait_for "left otto" 120 && pass "the CEO lets the hired officer go" || fail "the CEO lets the hired officer go" "$(sjournal | tail -8)"
 expect "after the handover the CEO no longer decides" "$("$Z" exec "$sceo" -- cat /work/after-handover.txt 2>&1)" "for security officers"
 swait_for "security officers: ceo (otto left" 30 && pass "without officers, security returns to the CEO" || fail "without officers, security returns to the CEO" "$(sjournal | grep security | tail -5)"
+expect "leaving revokes every grant" "$(sjournal)" "credentials revoked otto drive:board"
+refute "a hire starts with no access" "$("$Z" firm credentials solo)" "ada "
 expect "the board is told an officer left" "$(sjournal)" 'office → board [fyi] "otto, a security officer, left'
 expect "the CEO is told it's theirs again" "$(sjournal)" 'office → ceo [fyi] "Security is yours again'
 expect "the CEO holds security again" "$(officers)" "ceo"
@@ -591,24 +590,51 @@ YAML
 for i in $(seq 90); do k3s kubectl -n kube-system get deploy/traefik >/dev/null 2>&1 && break; sleep 2; done
 k3s kubectl -n kube-system rollout status deploy/traefik --timeout=180s && k3s kubectl apply -f /tmp/web.yaml && k3s kubectl rollout status deploy/web --timeout=120s' < "$T/web.yaml" > "$T/deploy.log" 2>&1
     expect "the operator deploys a test app" "$(cat "$T/deploy.log")" 'deployment "web" successfully rolled out'
-    out=$("$Z" exec "$ada" -- sh -c '
-k=~/.kube/config; cd /tmp
-for f in certificate-authority-data:ca client-certificate-data:c client-key-data:k; do grep "${f%%:*}" $k | awk "{print \$2}" | base64 -d > ${f##*:}.pem; done
-echo "api=$(curl -s -o /dev/null -w %{http_code} --cacert ca.pem --cert c.pem --key k.pem https://cluster.lab.internal:6443/api/v1/nodes)"
-git clone -q https://git.lab.internal/product.git p 2>/dev/null; cd p && echo hi > README.md && git add . && git commit -qm first && git push -q origin main 2>&1; echo "push=$?"
-for i in $(seq 30); do r=$(curl -s -m 3 http://apps.lab.internal/); [ "$r" = "hello from the cluster" ] && break; sleep 2; done; echo "apps=$r"' 2>&1)
-    expect "an engineer reaches the Kubernetes API with its kubeconfig" "$out" "api=200"
-    expect "an engineer pushes to the firm's repository" "$out" "push=0"
+    # ada founded lab: a policy owner, with admin on git and the cluster
+    # through her own service account (not cluster-admin).
+    api() { echo "curl -s -o /dev/null -w %{http_code} --cacert /tmp/ca.pem -H \"Authorization: Bearer \$(awk '/token:/{print \$2}' ~/.kube/config)\" https://cluster.lab.internal:6443$1"; }
+    ca="awk '/certificate-authority-data/{print \$2}' ~/.kube/config | base64 -d > /tmp/ca.pem"
+    for i in $(seq 30); do "$Z" exec "$ada" -- sh -c 'test -s ~/.kube/config' 2>/dev/null && break; sleep 2; done
+    out=$("$Z" exec "$ada" -- sh -c "$ca
+echo prod=\$($(api /api/v1/namespaces/prod/pods))
+echo nodes=\$($(api /api/v1/nodes))
+cd /tmp; git clone -q https://git.lab.internal/product.git p 2>/dev/null; cd p && echo hi > README.md && git add . && git commit -qm first && git push -q origin main 2>&1; echo push=\$?
+for i in \$(seq 30); do r=\$(curl -s -m 3 http://apps.lab.internal/); [ \"\$r\" = 'hello from the cluster' ] && break; sleep 2; done; echo apps=\$r" 2>&1)
+    expect "the founder reaches prod with her own grant" "$out" "prod=200"
+    expect "a grant is not cluster-admin" "$out" "nodes=403"
+    expect "admin pushes to main" "$out" "push=0"
     expect "the ingress serves the product to the engineer" "$out" "apps=hello from the cluster"
     out=$("$Z" exec "$ken" -- sh -c '
 echo "kube=$(ls ~/.kube/config 2>&1 | grep -c "No such")"
 echo "git=$(curl -s -m 5 -o /dev/null -w %{http_code} https://git.lab.internal/product.git/info/refs)"
 echo "api=$(curl -sk -m 5 -o /dev/null -w %{http_code} https://cluster.lab.internal:6443/)"
 echo "apps=$(curl -s -m 5 http://apps.lab.internal/)"' 2>&1)
-    expect "a non-engineer gets no kubeconfig" "$out" "kube=1"
-    expect "a non-engineer can't reach git" "$out" "git=000"
-    expect "a non-engineer can't reach the API" "$out" "api=000"
-    expect "a non-engineer reaches the product" "$out" "apps=hello from the cluster"
+    expect "without a grant, no kubeconfig" "$out" "kube=1"
+    expect "without a grant, git is unreachable" "$out" "git=000"
+    expect "without a grant, the API is unreachable" "$out" "api=000"
+    expect "the product is open to everyone" "$out" "apps=hello from the cluster"
+    "$Z" firm credentials lab grant ken git read > /dev/null
+    out=$("$Z" exec "$ken" -- sh -c 'cd /tmp && git clone -q https://git.lab.internal/product.git p 2>&1 && echo cloned; cd p && git switch -qc ken/x && echo x > x && git add x && git commit -qm x && git push -q origin ken/x 2>&1; echo push=$?' 2>&1)
+    expect "git read: clone" "$out" "cloned"
+    expect "git read: no push" "$out" "you can read this repository, not push to it"
+    "$Z" firm credentials lab grant ken git write > /dev/null
+    out=$("$Z" exec "$ken" -- sh -c 'cd /tmp/p && git push -q origin ken/x 2>&1; echo branch=$?; git switch -q main && echo y > y && git add y && git commit -qm y && git push -q origin main 2>&1; echo main=$?' 2>&1)
+    expect "git write: push a branch" "$out" "branch=0"
+    expect "git write: not main" "$out" "refs/heads/main needs admin"
+    "$Z" firm credentials lab grant ken cluster read > /dev/null
+    for i in $(seq 30); do "$Z" exec "$ken" -- sh -c 'test -s ~/.kube/config' 2>/dev/null && break; sleep 2; done
+    out=$("$Z" exec "$ken" -- sh -c "$ca
+echo get=\$($(api /api/v1/namespaces/dev/pods))
+echo create=\$(curl -s -o /dev/null -w %{http_code} --cacert /tmp/ca.pem -H \"Authorization: Bearer \$(awk '/token:/{print \$2}' ~/.kube/config)\" -H 'Content-Type: application/json' -X POST -d '{\"metadata\":{\"name\":\"k\"}}' https://cluster.lab.internal:6443/api/v1/namespaces/dev/configmaps)
+echo prod=\$($(api /api/v1/namespaces/prod/pods))" 2>&1)
+    expect "cluster read: view dev" "$out" "get=200"
+    expect "cluster read: can't create in dev" "$out" "create=403"
+    expect "cluster read: no prod" "$out" "prod=403"
+    "$Z" firm credentials lab revoke ken cluster --note "done" > /dev/null
+    sleep 3
+    out=$("$Z" exec "$ken" -- sh -c 'echo "kube=$(ls ~/.kube/config 2>&1 | grep -c "No such")"; echo "api=$(curl -sk -m 5 -o /dev/null -w %{http_code} https://cluster.lab.internal:6443/)"' 2>&1)
+    expect "revoking removes the kubeconfig" "$out" "kube=1"
+    expect "and the network access" "$out" "api=000"
     expect "the board reaches the product on its port" "$(curl -s -m 5 --retry 5 --retry-all-errors http://127.0.0.1:$PORT/)" "hello from the cluster"
     tok=""; for i in $(seq 40); do tok=$(curl -s --unix-socket "$ZAPPER_SOCKET" http://zapper/v1/firms/lab | python3 -c 'import sys,json; print(json.load(sys.stdin)["run"]["facilities"].get("dashboard_token") or "")'); [ -n "$tok" ] && break; sleep 3; done
     [ -n "$tok" ] && pass "the dashboard's sign-in token is ready" || fail "the dashboard's sign-in token is ready" "none"

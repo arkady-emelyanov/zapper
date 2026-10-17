@@ -264,6 +264,7 @@ pub async fn offer(d: &Arc<Daemon>, run: &Arc<FirmRun>, by: &str, a: OfferArgs) 
     );
     draft.expects = Some(Expects::Reply);
     draft.context = hirer.context.lock().unwrap().clone();
+    super::prompts::onboard(run, &name);
     let sent = run.send(draft)?;
     let now = now();
     let c = Contract {

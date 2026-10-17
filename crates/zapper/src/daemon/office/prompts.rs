@@ -116,6 +116,33 @@ pub const CHARTER: &[Article] = &[
     },
 ];
 
+/// A new hire's training, the first thing they read: how the firm works,
+/// mail and the desk, and the credentials they don't have yet.
+pub fn onboard(run: &super::FirmRun, worker: &str) {
+    let spaces = run.config.credentials.spaces.join(", ");
+    let mut resources = Vec::new();
+    if run.config.git.is_some() {
+        resources.push("git (the repository)".to_string());
+    }
+    if !run.config.facilities.is_empty() {
+        resources.push("cluster (namespaces dev and prod)".to_string());
+    }
+    resources.push(format!("the shared drive's spaces ({spaces})"));
+    run.notice(
+        worker,
+        &format!("Welcome to {}", run.company),
+        &format!(
+            "[Automatic notice] Welcome. Before your first assignment, how the firm works:\n\n\
+1. Mail: you work through mail with your colleagues and your manager, as the office-mail skill describes. Your desk (`desk()`) shows what you owe and what you wait for; reply in the thread, and end your turn while you wait.\n\
+2. Credentials: you start with no access to {}. Ask for what your work needs with `credentials_request(resource, level, spaces?, reason)`, at the least level, with a reason; the security officer decides and you get mail. Grants expire; ask again if you still need one. The office-resources skill has the details.\n\
+3. The shared drive: published work lives in spaces; reading or publishing in one needs a grant on it.\n\
+4. The charter in your instructions is the company's law.\n\n\
+Your brief comes next: read it, work out what access it needs, and ask for that first.\n",
+            resources.join(", ")
+        ),
+    );
+}
+
 /// The terms of a run: what the board set when it started the company.
 pub fn terms(firm: &Firm) -> Vec<String> {
     let b = &firm.budget;
@@ -256,10 +283,12 @@ reports more or takes it back; release() lets someone go.\n",
     }
     let mut lines = Vec::new();
     if let Some(g) = &services.git {
-        lines.push(format!("Git: {g} (your credentials are set up)"));
+        lines.push(format!(
+            "Git: {g} (with a grant: ask with credentials_request)"
+        ));
     }
     if let Some(k) = &services.kube {
-        lines.push(format!("Kubernetes: kubectl is configured for {k}"));
+        lines.push(format!("Kubernetes: {k}, namespaces dev and prod (with a grant, kubectl is configured for you)"));
     }
     if let Some(p) = &services.product {
         lines.push(format!("The product: {p} (the cluster's ingress)"));

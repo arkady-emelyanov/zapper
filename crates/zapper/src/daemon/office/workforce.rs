@@ -487,16 +487,7 @@ pub(super) fn access_summary(run: &FirmRun, config: &zapper_policy::Config, role
             lines.push(format!("exec: {}", exec.join("; ")));
         }
     }
-    let mut creds = Vec::new();
-    if run.config.credentials.git.iter().any(|x| x == role) {
-        creds.push("git (push to the firm's repository)");
-    }
-    if run.config.credentials.kubeconfig.iter().any(|x| x == role) {
-        creds.push("kubeconfig (cluster-admin on the firm's cluster)");
-    }
-    if !creds.is_empty() {
-        lines.push(format!("credentials: {}", creds.join(", ")));
-    }
+    lines.push("credentials: none at the start; git, the cluster and drive spaces come only with grants the policy owners decide".into());
     lines.join("\n")
 }
 
@@ -522,11 +513,50 @@ fn pick_name(run: &FirmRun, chart: &Firm, role: &str, wanted: Option<&str>) -> R
     if let Some(n) = run.config.names.iter().find(|n| !taken(n)) {
         return Ok(n.clone());
     }
+    // No pool in the config: a random free name from the built-in one.
+    use rand::seq::SliceRandom;
+    let mut pool: Vec<&str> = NAMES.iter().copied().filter(|n| !taken(n)).collect();
+    pool.shuffle(&mut rand::thread_rng());
+    if let Some(n) = pool.first() {
+        return Ok(n.to_string());
+    }
     (1..1000)
         .map(|i| format!("{role}-{i}"))
         .find(|n| !taken(n))
         .ok_or_else(|| anyhow!("no free name"))
 }
+
+/// Names for hires whose hirer doesn't pick one, when the config has no pool.
+const NAMES: &[&str] = &[
+    "ada",
+    "alan",
+    "anders",
+    "annie",
+    "barbara",
+    "bjarne",
+    "claude",
+    "dennis",
+    "donald",
+    "edsger",
+    "ellen",
+    "frances",
+    "grace",
+    "guido",
+    "hedy",
+    "iris",
+    "joan",
+    "john",
+    "katherine",
+    "ken",
+    "linus",
+    "margaret",
+    "mary",
+    "niklaus",
+    "radia",
+    "sophie",
+    "tim",
+    "vint",
+];
 
 pub struct HireArgs {
     pub role: String,
@@ -599,6 +629,8 @@ pub async fn hire(d: &Arc<Daemon>, run: &Arc<FirmRun>, by: &str, a: HireArgs) ->
         a.reason.trim(),
         None,
     )?;
+    // Training first: how mail and credentials work, before the brief.
+    super::prompts::onboard(run, &name);
     // The brief: their first assignment, waiting for them when they boot.
     let mut draft = Draft::new(
         by,
@@ -715,9 +747,8 @@ pub(super) fn join(
         "funds",
         json!({ "event": "move", "from": by, "to": name, "tokens": budget, "reason": why }),
     );
-    let officer = run.config.roles.get(role).is_some_and(|r| r.officer);
-    if run.config.git.is_some() && (run.config.credentials.git.iter().any(|r| r == role) || officer)
-    {
+    // Their git identity; their grant decides what it may do.
+    if run.config.git.is_some() {
         run.facility
             .git_passwords
             .lock()
@@ -778,6 +809,14 @@ pub fn let_go(
     // What they had to decide (as the owner of the firm's services) moves on.
     super::security::requeue(run, worker);
     super::contracts::left(run, worker, reason);
+    // Offboarding: every grant goes.
+    super::access::revoke_all(
+        d,
+        run,
+        worker,
+        by,
+        &format!("left the firm: {}", reason.trim()),
+    );
     run.departed
         .lock()
         .unwrap()

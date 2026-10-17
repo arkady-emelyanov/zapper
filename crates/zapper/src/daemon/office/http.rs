@@ -62,6 +62,7 @@ pub fn read_routes() -> Router<Arc<Daemon>> {
         .route("/firms/{f}/threads/{id}", get(thread))
         .route("/firms/{f}/drive", get(drive_list))
         .route("/firms/{f}/security", get(security_state))
+        .route("/firms/{f}/credentials", get(credentials_state))
 }
 
 /// The board's writes, in the API and the UI: including deleting a past run.
@@ -87,6 +88,15 @@ pub fn board_routes() -> Router<Arc<Daemon>> {
         .route(
             "/firms/{f}/security/screenings/{id}",
             post(screening_decide),
+        )
+        .route(
+            "/firms/{f}/credentials/requests/{id}",
+            post(credentials_decide),
+        )
+        .route("/firms/{f}/credentials/grants", post(credentials_grant))
+        .route(
+            "/firms/{f}/credentials/grants/{worker}/{resource}",
+            delete(credentials_revoke),
         )
 }
 
@@ -390,7 +400,11 @@ async fn thread(State(d): D, Path((f, id)): Path<(String, String)>) -> R<Json<Va
 
 async fn drive_list(State(d): D, Path(f): Path<String>) -> R<Json<Value>> {
     let run = d.office.run(&f)?;
-    let list = run.drive.lock().unwrap().list(BOARD, None, None, None);
+    let list = run
+        .drive
+        .lock()
+        .unwrap()
+        .list(BOARD, &|_| true, None, None, None);
     Ok(Json(json!(list)))
 }
 
@@ -467,6 +481,72 @@ async fn upload(State(d): D, Path(f): Path<String>, text: String) -> R<Json<Valu
 }
 
 /// The board clears a new hire or objects: `{clear: bool, note?}`.
+/// Every grant and credential request of the running firm.
+async fn credentials_state(State(d): D, Path(f): Path<String>) -> R<Json<Value>> {
+    let run = d.office.active(&f)?;
+    Ok(Json(super::access::all(&run)))
+}
+
+/// The board decides a credential request: `{grant, level?, expires_in?, note}`.
+async fn credentials_decide(
+    State(d): D,
+    Path((f, id)): Path<(String, String)>,
+    text: String,
+) -> R<Json<Value>> {
+    let v = body(&text)?;
+    let run = d.office.active(&f)?;
+    let grant = v["grant"]
+        .as_bool()
+        .ok_or_else(|| bad("grant: true or false"))?;
+    let level = v["level"]
+        .as_str()
+        .map(super::access::Level::parse)
+        .transpose()?;
+    Ok(Json(super::access::decide(
+        &d,
+        &run,
+        BOARD,
+        &id,
+        grant,
+        level,
+        v["expires_in"].as_str(),
+        v["note"].as_str().unwrap_or(""),
+    )?))
+}
+
+/// The board grants directly: `{worker, resource, level, expires_in?, note?}`.
+async fn credentials_grant(State(d): D, Path(f): Path<String>, text: String) -> R<Json<Value>> {
+    let v = body(&text)?;
+    let run = d.office.active(&f)?;
+    let s = |k: &str| v[k].as_str().ok_or_else(|| bad(format!("{k} is required")));
+    let level = super::access::Level::parse(s("level")?)?;
+    Ok(Json(super::access::board_grant(
+        &d,
+        &run,
+        s("worker")?,
+        s("resource")?,
+        level,
+        v["expires_in"].as_str(),
+        v["note"].as_str().unwrap_or(""),
+    )?))
+}
+
+/// The board revokes a grant: `?reason=`.
+async fn credentials_revoke(
+    State(d): D,
+    Path((f, worker, resource)): Path<(String, String, String)>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> R<Json<Value>> {
+    let run = d.office.active(&f)?;
+    let reason = q
+        .get("reason")
+        .cloned()
+        .unwrap_or_else(|| "revoked by the board".into());
+    Ok(Json(super::access::revoke(
+        &d, &run, BOARD, &worker, &resource, &reason,
+    )?))
+}
+
 async fn screening_decide(
     State(d): D,
     Path((f, id)): Path<(String, String)>,

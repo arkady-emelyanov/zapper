@@ -17,9 +17,11 @@ macro_rules! builtin {
 pub const BUILTIN: &[(&str, &str)] = builtin![
     "office-mail",
     "office-publish",
+    "office-resources",
     "ceo",
     "product-manager",
     "manager",
+    "cto",
     "software-engineer",
     "designer",
     "researcher",
@@ -29,6 +31,10 @@ pub const BUILTIN: &[(&str, &str)] = builtin![
 
 /// The skill officers work by.
 const SECURITY: &str = "security-review";
+/// The skill of every role that hires.
+const MANAGER: &str = "manager";
+/// Every worker's training: the firm's resources and how to get access.
+const RESOURCES: &str = "office-resources";
 
 /// A skill's `SKILL.md`: from the firm's directory if it has one, else built in.
 pub fn text(dir: Option<&str>, name: &str) -> Result<String> {
@@ -56,7 +62,9 @@ pub fn text(dir: Option<&str>, name: &str) -> Result<String> {
 /// Writes `skills/<role>/<skill>/SKILL.md` in the run directory.
 pub fn prepare(run: &FirmRun, _config: &Config) -> Result<()> {
     let dir = run.config.skills_dir.as_deref();
-    // The CEO holds security while the firm has no officer.
+    // The hierarchy: everyone's shared skills, the role's own work skill,
+    // the manager skill for roles that hire, and the security skill for
+    // officers and the CEO (who holds security until an officer is hired).
     let root_role = run
         .config
         .root()
@@ -64,8 +72,17 @@ pub fn prepare(run: &FirmRun, _config: &Config) -> Result<()> {
         .map(|w| w.role.clone());
     for (role_name, role) in &run.config.roles {
         let mut names = role.skills.names();
-        if root_role.as_deref() == Some(role_name.as_str()) && !names.contains(&SECURITY) {
-            names.push(SECURITY);
+        names.push(RESOURCES);
+        let mut add = |n: &'static str| {
+            if !names.contains(&n) {
+                names.push(n);
+            }
+        };
+        if !role.hires.is_empty() {
+            add(MANAGER);
+        }
+        if role.officer || root_role.as_deref() == Some(role_name.as_str()) {
+            add(SECURITY);
         }
         for skill in names {
             let out = run.dir.join("skills").join(role_name).join(skill);

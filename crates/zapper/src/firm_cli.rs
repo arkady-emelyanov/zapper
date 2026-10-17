@@ -125,12 +125,31 @@ pub enum FirmCmd {
         #[arg(long, default_value = "")]
         note: String,
     },
-    /// The run's budget: what the board approved, balances, the CEO's
-    /// requests; with approve or decline, the board's answer to a request.
     /// The run's contracts: offers, quotes, counters, agreed terms, how they ended.
     Contracts {
         firm: String,
     },
+    /// Grants and credential requests; or the board's action:
+    /// `grant WORKER RESOURCE LEVEL`, `approve REQUEST`, `deny REQUEST`,
+    /// `revoke WORKER RESOURCE` (resources: git, cluster, drive:<space>).
+    Credentials {
+        firm: String,
+        /// grant, approve, deny or revoke
+        action: Option<String>,
+        /// The action's arguments.
+        args: Vec<String>,
+        /// For approve: a lower level than asked.
+        #[arg(long)]
+        level: Option<String>,
+        /// How long the grant lasts, e.g. 8h (default: the firm's).
+        #[arg(long)]
+        expires: Option<String>,
+        /// A note to the worker (required to deny; the reason to revoke).
+        #[arg(long, default_value = "")]
+        note: String,
+    },
+    /// The run's budget: what the board approved, balances, the CEO's
+    /// requests; with approve or decline, the board's answer to a request.
     Budget {
         firm: String,
         /// approve or decline
@@ -312,6 +331,47 @@ pub fn journal_line(e: &Value) -> String {
                 e["officer"].as_str().unwrap_or("the board")
             ),
             other => format!("security {other} {e}"),
+        },
+        "credentials" => match e["event"].as_str().unwrap_or("") {
+            "requested" => format!(
+                "credentials {} {} asks {} {}",
+                s(&e["request"]["id"]),
+                s(&e["request"]["worker"]),
+                s(&e["request"]["resource"]),
+                s(&e["request"]["level"])
+            ),
+            "decided" => format!(
+                "credentials {} {} {} by {}",
+                s(&e["id"]),
+                if e["decision"]["grant"] == json!(true) {
+                    "granted"
+                } else {
+                    "denied"
+                },
+                s(&e["resource"]),
+                s(&e["decision"]["by"])
+            ),
+            "escalated" => format!(
+                "credentials {} escalated by {} to {}",
+                s(&e["id"]),
+                s(&e["by"]),
+                s(&e["to"])
+            ),
+            "granted" => format!(
+                "credentials grant {} {} {} by {}",
+                s(&e["grant"]["worker"]),
+                s(&e["grant"]["resource"]),
+                s(&e["grant"]["level"]),
+                s(&e["grant"]["by"])
+            ),
+            "revoked" => format!(
+                "credentials revoked {} {} by {} ({})",
+                s(&e["worker"]),
+                s(&e["resource"]),
+                s(&e["by"]),
+                s(&e["reason"])
+            ),
+            other => format!("credentials {other} {e}"),
         },
         "contract" => match e["event"].as_str().unwrap_or("") {
             "offered" => format!(
@@ -596,6 +656,123 @@ pub async fn firm(c: &Client, cmd: FirmCmd, json_out: bool) -> Result<i32> {
                     "\nbudget: {} tokens (seed {}, approved {}), spent {}",
                     f["total"], f["seed"], f["approved"], f["spent"]
                 );
+            }
+        }
+        FirmCmd::Credentials {
+            firm,
+            action,
+            args,
+            level,
+            expires,
+            note,
+        } => {
+            let base = format!("/v1/firms/{firm}/credentials");
+            let arg = |i: usize, what: &str| {
+                args.get(i)
+                    .cloned()
+                    .ok_or_else(|| anyhow::anyhow!("give the {what}"))
+            };
+            match action.as_deref() {
+                None => {
+                    let v = c.json(Method::GET, &base, None).await?;
+                    if json_out {
+                        print_json(&v);
+                        return Ok(0);
+                    }
+                    let now = crate::daemon::now();
+                    println!(
+                        "{:<12} {:<20} {:<7} {:<10} EXPIRES",
+                        "WORKER", "RESOURCE", "LEVEL", "BY"
+                    );
+                    for g in v["grants"].as_array().into_iter().flatten() {
+                        let exp = g["expires"]
+                            .as_f64()
+                            .map(|e| format!("in {} min", ((e - now) / 60.0).max(0.0) as u64))
+                            .unwrap_or_else(|| "while they hold the role".into());
+                        println!(
+                            "{:<12} {:<20} {:<7} {:<10} {exp}",
+                            s(&g["worker"]),
+                            s(&g["resource"]),
+                            s(&g["level"]),
+                            s(&g["by"])
+                        );
+                    }
+                    let open: Vec<&Value> = v["requests"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter(|q| matches!(q["state"].as_str(), Some("pending" | "escalated")))
+                        .collect();
+                    if !open.is_empty() {
+                        println!(
+                            "\n{:<6} {:<12} {:<20} {:<7} {:<10} REASON",
+                            "ID", "WORKER", "RESOURCE", "LEVEL", "DECIDER"
+                        );
+                        for q in open {
+                            println!(
+                                "{:<6} {:<12} {:<20} {:<7} {:<10} {}",
+                                s(&q["id"]),
+                                s(&q["worker"]),
+                                s(&q["resource"]),
+                                s(&q["level"]),
+                                q["decider"].as_str().unwrap_or("board"),
+                                s(&q["reason"]).chars().take(60).collect::<String>()
+                            );
+                        }
+                    }
+                }
+                Some("grant") => {
+                    let body = json!({ "worker": arg(0, "worker")?, "resource": arg(1, "resource")?, "level": arg(2, "level")?, "expires_in": expires, "note": note });
+                    print_json(
+                        &c.json(
+                            Method::POST,
+                            &format!("{base}/grants"),
+                            Some(body.to_string()),
+                        )
+                        .await?,
+                    );
+                }
+                Some(a @ ("approve" | "deny")) => {
+                    let body = json!({ "grant": a == "approve", "level": level, "expires_in": expires, "note": note });
+                    print_json(
+                        &c.json(
+                            Method::POST,
+                            &format!("{base}/requests/{}", arg(0, "request")?),
+                            Some(body.to_string()),
+                        )
+                        .await?,
+                    );
+                }
+                Some("revoke") => {
+                    let reason = if note.is_empty() {
+                        "revoked by the board".to_string()
+                    } else {
+                        note
+                    };
+                    let q: String = reason
+                        .bytes()
+                        .map(|b| {
+                            if b.is_ascii_alphanumeric() {
+                                (b as char).to_string()
+                            } else {
+                                format!("%{b:02X}")
+                            }
+                        })
+                        .collect();
+                    print_json(
+                        &c.json(
+                            Method::DELETE,
+                            &format!(
+                                "{base}/grants/{}/{}?reason={q}",
+                                arg(0, "worker")?,
+                                arg(1, "resource")?
+                            ),
+                            None,
+                        )
+                        .await?,
+                    );
+                }
+                Some(other) => bail!("{other}: grant, approve, deny or revoke"),
             }
         }
         FirmCmd::Contracts { firm } => {

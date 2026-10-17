@@ -44,8 +44,8 @@ pub struct Firm {
     /// The page the cluster serves before the firm deploys anything.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub landing: Option<Landing>,
-    /// Roles whose VMs get credentials for the firm's services at boot.
-    #[serde(skip_serializing_if = "Credentials::is_empty")]
+    /// The credentials subsystem: how long grants last, and the shared
+    /// drive's spaces. Access itself is granted during a run, never by role.
     pub credentials: Credentials,
     /// Directory of skills (`<name>/SKILL.md`) used instead of the built-in
     /// ones of the same name.
@@ -167,11 +167,6 @@ pub struct Role {
     /// they join the officers once their background check clears.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub officer: bool,
-    /// Workers of this role own the firm's services (git, the cluster, the
-    /// product): they decide colleagues' access requests to them, instead
-    /// of the board.
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    pub owns_services: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -305,18 +300,33 @@ impl Landing {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Credentials {
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub kubeconfig: Vec<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub git: Vec<String>,
+    /// How long a grant lasts unless its decider says otherwise, e.g. `24h`.
+    pub expiry: String,
+    /// The shared drive's spaces: a flat list of names. Every artifact is
+    /// published into one, and grants are per space.
+    pub spaces: Vec<String>,
 }
 
-impl Credentials {
-    fn is_empty(&self) -> bool {
-        self.kubeconfig.is_empty() && self.git.is_empty()
+impl Default for Credentials {
+    fn default() -> Self {
+        Credentials {
+            expiry: "24h".into(),
+            spaces: [
+                "general",
+                "product",
+                "engineering",
+                "design",
+                "research",
+                "security",
+                "board",
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
+        }
     }
 }
 
@@ -587,21 +597,17 @@ impl Firm {
         if self.facilities.len() > 1 {
             err("one facility (the cluster) is supported".into());
         }
-        for r in self
-            .credentials
-            .kubeconfig
-            .iter()
-            .chain(&self.credentials.git)
-        {
-            if !self.roles.contains_key(r) {
-                err(format!("credentials: unknown role {r}"));
+        if let Err(e) = parse_duration(&self.credentials.expiry) {
+            err(format!("credentials.expiry: {e}"));
+        }
+        let mut spaces = BTreeSet::new();
+        for sp in &self.credentials.spaces {
+            if !valid_worker_name(sp) || !spaces.insert(sp.as_str()) {
+                err(format!("credentials.spaces: {sp:?} must be a unique name of lowercase letters, digits and dashes"));
             }
         }
-        if !self.credentials.kubeconfig.is_empty() && self.facilities.is_empty() {
-            err("credentials.kubeconfig needs a cluster facility".into());
-        }
-        if !self.credentials.git.is_empty() && self.git.is_none() {
-            err("credentials.git needs git: {}".into());
+        if self.credentials.spaces.is_empty() {
+            err("credentials.spaces: at least one space for the shared drive".into());
         }
         if self.product_port.is_some() && self.facilities.is_empty() {
             err("product_port needs a cluster facility".into());

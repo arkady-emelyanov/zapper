@@ -19,6 +19,10 @@ The office's routes ([office](office.md)), for the board. F is a firm, RUN a run
 | `GET /v1/firms` | ✓ | Firms with their runs' states |
 | `GET /v1/firms/F` | ✓ | The chart (live, while a run goes), `officers` (who holds security now), `start` (the config's founders and terms, and the charter's articles, for the start form), the run's `articles`, and the run: workers' states, usage, budget, `funds` (seed, approved, balances, budget requests), `contracts` (offers, quotes, counters, agreed terms, how each ended) |
 | `POST /v1/firms/F/up` · `/down` · `/pause {paused}` | ✓ | Start a fresh run (optionally `{company, ceo, seed, ceo_prompt, articles, security_share, max_concurrent, daily_turns}`; the company starts with its CEO for this run), stop it, pause or resume it |
+| `GET /v1/firms/F/credentials` | ✓ | Every grant (worker, resource, level, by, expiry) and credential request of the running firm |
+| `POST /v1/firms/F/credentials/requests/ID` | ✓ | The board decides a credential request: `{grant, level?, expires_in?, note}` |
+| `POST /v1/firms/F/credentials/grants` | ✓ | The board grants directly: `{worker, resource, level, expires_in?, note?}` (resource `git`, `cluster` or `drive:<space>`) |
+| `DELETE /v1/firms/F/credentials/grants/WORKER/RESOURCE?reason=` | ✓ | The board revokes a grant |
 | `GET /v1/firms/F/runs` | ✓ | Past runs, newest first |
 | `DELETE /v1/firms/F/runs/RUN` | ✓ | Delete a past run (not the running one) |
 | `GET /v1/firms/F/runs/RUN/config` | ✓ | `{config, skills}`: the config the run started with (YAML, secret values hidden; null for older runs) and each role's skills |

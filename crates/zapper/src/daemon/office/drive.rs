@@ -45,29 +45,25 @@ pub struct Artifact {
     pub title: String,
     pub kind: String,
     pub author: String,
-    /// `firm`, `board`, or names.
-    pub audience: Value,
+    /// The drive space it is published in: who may read it is a grant on
+    /// that space.
+    pub space: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thread: Option<String>,
     pub versions: Vec<Version>,
 }
 
 impl Artifact {
-    pub fn visible_to(&self, who: &str) -> bool {
-        if who == BOARD || who == self.author {
-            return true;
-        }
-        match &self.audience {
-            Value::String(s) if s == "firm" => true,
-            Value::Array(names) => names.iter().any(|n| n == who),
-            _ => false,
-        }
+    /// Whether `who` may see it: the board and its author always, others
+    /// with read on its space (`can_read`).
+    pub fn visible_to(&self, who: &str, can_read: &dyn Fn(&str) -> bool) -> bool {
+        who == BOARD || who == self.author || can_read(&self.space)
     }
 
     fn summary(&self) -> Value {
         let last = self.versions.last();
         json!({
-            "id": self.id, "title": self.title, "kind": self.kind, "author": self.author, "audience": self.audience,
+            "id": self.id, "title": self.title, "kind": self.kind, "author": self.author, "space": self.space,
             "thread": self.thread, "versions": self.versions.len(), "latest": last.map(|v| v.version),
             "summary": last.map(|v| v.summary.clone()), "updated": last.map(|v| v.created),
             "changes": last.map(|v| v.changes.clone()).filter(|c| !c.is_empty()),
@@ -230,7 +226,8 @@ pub struct PublishArgs {
     pub title: String,
     pub kind: String,
     pub summary: String,
-    pub audience: Value,
+    /// The space to publish into; a new version stays in its artifact's.
+    pub space: Option<String>,
     pub artifact: Option<String>,
     pub thread: Option<String>,
     /// What changed from the previous version; required for a new version.
@@ -251,6 +248,7 @@ impl Drive {
     pub fn list(
         &self,
         who: &str,
+        can_read: &dyn Fn(&str) -> bool,
         kind: Option<&str>,
         author: Option<&str>,
         query: Option<&str>,
@@ -259,7 +257,7 @@ impl Drive {
         self.artifacts
             .values()
             .rev()
-            .filter(|a| a.visible_to(who))
+            .filter(|a| a.visible_to(who, can_read))
             .filter(|a| kind.is_none_or(|k| a.kind == k))
             .filter(|a| author.is_none_or(|x| a.author == x))
             .filter(|a| {
@@ -275,7 +273,12 @@ impl Drive {
     }
 
     /// `a-3` or `a-3@v2` (also with a `drive:` prefix) → artifact and version.
-    pub fn resolve(&self, r: &str, who: &str) -> Result<(&Artifact, &Version)> {
+    pub fn resolve(
+        &self,
+        r: &str,
+        who: &str,
+        can_read: &dyn Fn(&str) -> bool,
+    ) -> Result<(&Artifact, &Version)> {
         let r = r.trim().trim_start_matches("drive:");
         let (id, ver) = match r.split_once('@') {
             Some((id, v)) => (
@@ -291,7 +294,7 @@ impl Drive {
         let a = self
             .artifacts
             .get(id)
-            .filter(|a| a.visible_to(who))
+            .filter(|a| a.visible_to(who, can_read))
             .ok_or_else(|| anyhow!("no artifact {id}"))?;
         let v = match ver {
             Some(n) => a
@@ -305,21 +308,6 @@ impl Drive {
                 .ok_or_else(|| anyhow!("{id} has no versions"))?,
         };
         Ok((a, v))
-    }
-}
-
-fn audience(v: &Value) -> Result<Value> {
-    match v {
-        Value::Null => Ok(json!("firm")),
-        Value::String(s) if s == "firm" || s == "board" => Ok(v.clone()),
-        Value::Array(a)
-            if a.iter()
-                .all(|x| x.as_str().is_some_and(zapper_policy::valid_worker_name))
-                && a.len() <= 64 =>
-        {
-            Ok(v.clone())
-        }
-        _ => bail!("audience is \"firm\", \"board\", or a list of names"),
     }
 }
 
@@ -351,7 +339,29 @@ pub async fn publish(
     if a.paths.is_empty() || a.paths.len() > MAX_PATHS {
         bail!("give 1 to {MAX_PATHS} paths");
     }
-    let aud = audience(&a.audience)?;
+    // The space: given, or the artifact's for a new version; publishing
+    // into it needs write there.
+    let space = match (&a.space, &a.artifact) {
+        (Some(sp), _) => sp.trim().to_string(),
+        (None, Some(id)) => run
+            .drive
+            .lock()
+            .unwrap()
+            .artifacts
+            .get(id)
+            .map(|x| x.space.clone())
+            .unwrap_or_else(|| "general".into()),
+        (None, None) => "general".into(),
+    };
+    if !run.config.credentials.spaces.contains(&space) {
+        bail!(
+            "no drive space {space:?} (spaces: {})",
+            run.config.credentials.spaces.join(", ")
+        );
+    }
+    if !super::access::can_write_space(run, worker, &space) {
+        bail!("you can't publish into the {space} space; ask for write on drive:{space} with credentials_request");
+    }
     if let Some(id) = &a.artifact {
         let d = run.drive.lock().unwrap();
         let art = d
@@ -457,12 +467,12 @@ pub async fn publish(
         title: a.title.clone(),
         kind: a.kind.clone(),
         author: worker.to_string(),
-        audience: aud.clone(),
+        space: space.clone(),
         thread: a.thread.clone(),
         versions: vec![],
     });
     art.title = a.title.clone();
-    art.audience = aud;
+    art.space = space;
     if a.thread.is_some() {
         art.thread = a.thread.clone();
     }
@@ -481,7 +491,7 @@ pub async fn publish(
     });
     let entry = json!({
         "artifact": id, "version": version, "title": art.title, "kind": art.kind, "author": worker,
-        "audience": art.audience, "thread": art.thread, "summary": a.summary, "changes": changes, "files": files,
+        "space": art.space, "thread": art.thread, "summary": a.summary, "changes": changes, "files": files,
     });
     drop(d);
     run.journal.append("published", entry);
@@ -577,7 +587,7 @@ pub fn publish_board(
             title: title.clone(),
             kind: "document".into(),
             author: BOARD.into(),
-            audience: json!("firm"),
+            space: "board".into(),
             thread: thread.clone(),
             versions: vec![Version {
                 version: 1,
@@ -591,7 +601,7 @@ pub fn publish_board(
     drop(d);
     run.journal.append("published", json!({
         "artifact": id, "version": 1, "title": title, "kind": "document", "author": BOARD,
-        "audience": "firm", "thread": thread, "summary": summary, "changes": changes, "files": entries,
+        "space": "board", "thread": thread, "summary": summary, "changes": changes, "files": entries,
     }));
     Ok(
         json!({ "artifact": id, "version": 1, "ref": format!("drive:{id}@v1"), "files": entries.len(), "size": total }),
@@ -614,7 +624,9 @@ pub async fn fetch(
     let dest = guest_path(dest, &home)?;
     let (id, version, files) = {
         let d = run.drive.lock().unwrap();
-        let (a, v) = d.resolve(r, worker)?;
+        let (a, v) = d.resolve(r, worker, &|sp| {
+            super::access::can_read_space(run, worker, sp)
+        })?;
         (a.id.clone(), v.version, v.files.clone())
     };
     let tmp = run
