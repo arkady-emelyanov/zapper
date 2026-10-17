@@ -245,7 +245,7 @@ The firm's shared drive is a versioned artifact store in the run's directory on 
 id        a-17
 version   2                  each publish of the same artifact adds a version
 title     "Pricing analysis"
-kind      document | report | code | dataset | deck | board-pack
+kind      document | report | dataset | deck | board-pack   (no code: code is shared through git, as a branch)
 author    ken
 summary   one paragraph, shown in lists and in mail
 changes   what this version changed from the previous one; required from version 2
@@ -269,7 +269,7 @@ Publishing copies the named files out of the VM (see [the office protocol](#the-
 - **document, report**: Markdown, rendered in the UI.
 - **deck, board-pack**: Markdown slides (one `---` per slide) plus images; the UI shows them as a slide viewer. The CEO's publishing skill says a board pack has a summary, progress against the goal, metrics, risks and asks.
 - **dataset**: CSV/JSON with a table preview.
-- **code**: a tree of files, or a git bundle. The product's code lives in the firm's [git repository](#the-git-repository); a `code` artifact is for snapshots and for code outside the product.
+- **No code**: code lives in the firm's [git repository](#the-git-repository) and is shared as a branch; `drive_publish` refuses `kind: "code"` and says so. Reports on code work name the branch and commits.
 
 ### Rendering safely
 
@@ -388,6 +388,7 @@ The UI has a tab bar for the office. zapper's own views of sessions (network, te
 | Tab | For |
 |---|---|
 | Overview | The firm at a glance, and writing to any worker |
+| Work | Assignments as tickets: a board by status and a timeline of who worked on what |
 | Messages | All mail in the firm |
 | Security | What officers approved, what they decided, and why |
 | Shared drive | Published work, including board packs |
@@ -405,11 +406,22 @@ The UI's state is built by folding the run's journal in the browser: live, it fo
 
 - **Org chart**: the tree from the config, top to bottom. Each node is the worker's animated avatar, name, title and a one-line status ("drafting pricing.md", "waiting for ada", "overdue: 1"). Envelopes animate along the edges as mail is sent, also between workers who aren't directly connected; a badge shows unread mail. The board sits above the CEO as its own node.
 - **Click a worker** to open a side panel:
+  - **Unread mail**, first, when there is any: the messages the worker hasn't read yet (the mail badge on its node counts them), and why: a worker reads its mail when it wakes, so they wait for the end of its current turn, a free turn slot, the budget, or the firm to resume.
   - **Write as the board**: subject, body, kind (`assignment`, `question`, `fyi`), `due`, attachments from the shared drive or small files from the board's computer (up to 10 files, 5 MiB together, stored on the shared drive as the board's artifact). Sent as `board` in a new thread, or as a reply in one of the worker's threads.
   - **Desk**: open assignments, threads waiting on others, overdue items, pending access requests.
   - **Now**: a live transcript of the current turn (text and tool calls, rendered as text), and earlier turns on demand.
   - Recent mail, published work, and a link to its session in zapper's session views.
 - **Kickoff**: when the firm is idle and has no threads, the CEO's panel opens with an empty assignment ready to write.
+
+### Work
+
+Every assignment is a ticket, derived from the mail, so workers have nothing extra to maintain. An assignment to several workers is a ticket for each. A report closes the ticket, and an assignment sent while working on another is its sub-task.
+
+- **Board**: columns **To do** (not read yet), **In progress**, **Waiting on others** (it has open sub-tasks) and **Done**. Each card shows the subject, who owes it to whom, how long it has been open or how long it took, sub-tasks done, the due date (overdue in red), and a pulsing dot while its owner is in a turn on it. A card opens its thread.
+- **Timeline**: a Gantt chart with a bar per assignment from sent to reported, nested under the assignment it was delegated from, coloured by status, with due dates and a line for now. Inside each bar, marks show the owner's turns on that thread: when the work actually happened, as opposed to when it was merely open. A row opens its thread.
+- Filter by owner. In replay both views follow the timeline.
+
+Questions and FYIs aren't tickets. Work that never went through an assignment, like engineers coordinating over git, doesn't show here.
 
 ### Messages
 
@@ -426,11 +438,11 @@ A mail client over the whole firm, read-only except for the board's own mail.
 - **Standing approvals**: every rule an officer added at a worker or role layer: host, ports, methods, paths, scope, expiry, officer, reason, when, and how many requests it has allowed since. The board can revoke one or promote it into the startup config.
 - **Decision log**: every access decision, newest first: the request (worker, host, method, path), the worker's reason, the assignment it was working on, the officer, allow or deny, scope, reason, time to decide. Filters by worker, officer, host, outcome. Expanding an entry shows the request in the network view and the officer's turn transcript for that decision.
 - **Escalations**: requests waiting for the board (secrets, private networks, global rules), with the officer's recommendation; answering here is the board's decision.
-- **Traffic**: the firm's requests across all workers as one live list (allowed, denied, waiting), the officers' digests, and anything an officer flagged.
+- **Traffic**: the firm's requests across all workers as one live list (allowed, denied, waiting), the latest 25 first with **Load more** for older ones, the officers' digests, and anything an officer flagged.
 
 ### Shared drive
 
-Artifacts by kind, author and thread. An artifact shows its version history, newest first, each version with the author's note of what changed; clicking one opens that version. Viewers: Markdown for documents and reports, a slide viewer for decks and board packs, a table for datasets, a file tree for code.
+Artifacts by kind, author and thread. An artifact shows its version history, newest first, each version with the author's note of what changed; clicking one opens that version. Viewers: Markdown for documents and reports, a slide viewer for decks and board packs, a table for datasets, and a file list for anything else (including `code` artifacts of older runs).
 
 ### Git
 

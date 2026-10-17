@@ -123,13 +123,18 @@ impl RequestLog {
     }
 
     /// Counts a finished record's bodies against the budget, dropping the
-    /// oldest bodies when it's exceeded.
-    fn account(&mut self, rec: &Record) {
-        self.body_bytes += rec.req_body.data.len() + rec.resp_body.data.len();
+    /// oldest bodies when it's exceeded. Called without the record's lock:
+    /// the log's lock comes first, then records' (see `finish`).
+    fn account(&mut self, rec: &Shared, bytes: usize) {
+        self.body_bytes += bytes;
         let mut i = 0;
         while self.body_bytes > MAX_BODY_BYTES && i < self.records.len() {
+            if Arc::ptr_eq(&self.records[i], rec) {
+                i += 1;
+                continue;
+            }
             let mut old = self.records[i].lock().unwrap();
-            if old.done && old.id != rec.id {
+            if old.done {
                 let freed = old.req_body.data.len() + old.resp_body.data.len();
                 old.req_body.data = Vec::new();
                 old.resp_body.data = Vec::new();
@@ -149,15 +154,23 @@ impl RequestLog {
 }
 
 /// Marks a record finished and counts it.
+///
+/// Lock order: the log, then a record. Readers of the log (`list`, `get`)
+/// lock records while holding the log, so the record's lock is released
+/// here before the log's is taken; holding both the other way round
+/// deadlocked the proxy against the officers' digest.
 pub fn finish(log: &Mutex<RequestLog>, rec: &Shared) {
-    let mut r = rec.lock().unwrap();
-    if r.done {
-        return;
-    }
-    r.done = true;
-    let elapsed = r.start.elapsed().as_secs_f64() * 1000.0;
-    r.total_ms.get_or_insert(elapsed);
-    log.lock().unwrap().account(&r);
+    let bytes = {
+        let mut r = rec.lock().unwrap();
+        if r.done {
+            return;
+        }
+        r.done = true;
+        let elapsed = r.start.elapsed().as_secs_f64() * 1000.0;
+        r.total_ms.get_or_insert(elapsed);
+        r.req_body.data.len() + r.resp_body.data.len()
+    };
+    log.lock().unwrap().account(rec, bytes);
 }
 
 pub fn mark_ttfb(rec: &Shared) {
@@ -338,6 +351,50 @@ mod tests {
         assert_eq!(d["response_body"]["kept"], BODY_CAP);
         assert_eq!(d["response_body"]["truncated"], true);
         assert!(d["total_ms"].is_number());
+    }
+
+    /// Runs `f` on a thread and fails the test if it doesn't end in time.
+    fn within(secs: u64, f: impl FnOnce() + Send + 'static) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            f();
+            let _ = tx.send(());
+        });
+        rx.recv_timeout(std::time::Duration::from_secs(secs)).expect("deadlock: did not finish in time");
+    }
+
+    #[test]
+    fn over_budget_finish_does_not_lock_itself() {
+        within(10, || {
+            let log = Mutex::new(RequestLog::default());
+            // Enough kept bodies to pass the budget, so `account` walks the records.
+            for _ in 0..(MAX_BODY_BYTES / BODY_CAP + 4) {
+                let rec = log.lock().unwrap().start("https", "GET", "a.example", 443, Some("/"), vec![]);
+                rec.lock().unwrap().resp_body.push(&vec![b'a'; BODY_CAP]);
+                finish(&log, &rec);
+            }
+            assert!(log.lock().unwrap().body_bytes <= MAX_BODY_BYTES + BODY_CAP);
+        });
+    }
+
+    #[test]
+    fn finishing_while_listing_does_not_deadlock() {
+        within(20, || {
+            let log = Arc::new(Mutex::new(RequestLog::default()));
+            let reader = {
+                let log = log.clone();
+                std::thread::spawn(move || {
+                    for _ in 0..2000 {
+                        let _ = log.lock().unwrap().list();
+                    }
+                })
+            };
+            for _ in 0..2000 {
+                let rec = log.lock().unwrap().start("https", "GET", "a.example", 443, Some("/"), vec![]);
+                finish(&log, &rec);
+            }
+            reader.join().unwrap();
+        });
     }
 
     #[test]

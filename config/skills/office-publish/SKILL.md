@@ -12,7 +12,7 @@ The shared drive is where the firm's finished work lives. Your `/work` directory
 - Publish deliverables: what an assignment asked for, a document others will build on, a result the board or your manager will read.
 - Do not publish scratch: notes to yourself, intermediate files, logs, partial drafts nobody asked to see.
 - Publish before you report. Your report mail attaches the artifact; the body summarises it.
-- Product code lives in the firm's git repository, not on the drive. Publish code only when asked, or for code that is not part of the product.
+- Code is never published to the drive; it lives in the firm's git repository. To share code, also unfinished, push a branch and mail its name and commit. A report on code work names the branch and commits instead of attaching an artifact. The drive refuses `kind: "code"`.
 
 ## The tools
 
@@ -26,7 +26,6 @@ The shared drive is where the firm's finished work lives. Your `/work` directory
 |---|---|
 | `document` | Briefs, specs, designs, findings, guides: Markdown meant to be read and referred to |
 | `report` | Results of a piece of work or a period: what was done, outcome, evidence |
-| `code` | A snapshot of files or a git bundle, when asked |
 | `dataset` | CSV or JSON data; CSV with a header row is preferred |
 | `deck` | Slides for a presentation |
 | `board-pack` | The CEO's report to the board, as slides |

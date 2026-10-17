@@ -70,7 +70,12 @@ secrets:
 policy:
   defaults: { net: deny, exec: allow }
   net:
-    - { action: deny, host: "metadata.google.internal", final: true, comment: cloud metadata }
+    - {
+        action: deny,
+        host: "metadata.google.internal",
+        final: true,
+        comment: cloud metadata,
+      }
   exec: []
 
 profiles:
@@ -83,7 +88,7 @@ profiles:
       vcpus: 2
       memory_mib: 2048
       disk: 4GiB
-      network: nic        # or vsock: no NIC, proxy-aware programs only
+      network: nic # or vsock: no NIC, proxy-aware programs only
     agent:
       kind: generic
       command: [bash, -l]
@@ -118,7 +123,7 @@ profiles:
       kind: claude-code
       user: agent
       workdir: /work
-      model: claude-opus-5-5
+      model: claude-sonnet-5-5
       permission_mode: bypassPermissions
       env:
         CLAUDE_CODE_OAUTH_TOKEN: "{{secret:claude}}"
@@ -127,15 +132,33 @@ profiles:
         NODE_PATH: /usr/local/lib/node_modules
     policy:
       net:
-        - { action: allow, host: api.anthropic.com, ports: [443], secrets: [claude] }
-        - { action: allow, host: apps.acme.internal, ports: [80, 443], comment: the product }
+        - {
+            action: allow,
+            host: api.anthropic.com,
+            ports: [443],
+            secrets: [claude],
+          }
+        - {
+            action: allow,
+            host: apps.acme.internal,
+            ports: [80, 443],
+            comment: the product,
+          }
         - { action: allow, host: "*.apps.acme.internal", ports: [80, 443] }
         # The firm's repository and cluster API are for the roles whose
         # profiles allow them (engineers, designers); not even a request.
-        - { action: deny, host: git.acme.internal, comment: engineers and designers only }
+        - {
+            action: deny,
+            host: git.acme.internal,
+            comment: engineers and designers only,
+          }
         - { action: deny, host: cluster.acme.internal, comment: engineers only }
       exec:
-        - { action: deny, path: kubectl, comment: the cluster is the engineers' }
+        - {
+            action: deny,
+            path: kubectl,
+            comment: the cluster is the engineers',
+          }
       # Everything else goes to the security officers.
       defaults: { net: ask }
 
@@ -168,7 +191,12 @@ profiles:
       net:
         # First: the broad rule below would otherwise match the API without
         # the token (this layer is checked before the office profile's).
-        - { action: allow, host: api.anthropic.com, ports: [443], secrets: [claude] }
+        - {
+            action: allow,
+            host: api.anthropic.com,
+            ports: [443],
+            secrets: [claude],
+          }
         - { action: allow, host: git.acme.internal, ports: [443] }
         - { action: allow, host: "*", ports: [80, 443] }
 
@@ -176,16 +204,40 @@ profiles:
   office-k3s:
     extends: base
     description: A firm's Kubernetes cluster
-    engine: { image: k3s, kernel: vmlinux-6.1-k8s, vcpus: 4, memory_mib: 8192, disk: 30GiB }
+    engine:
+      {
+        image: k3s,
+        kernel: vmlinux-6.1-k8s,
+        vcpus: 4,
+        memory_mib: 8192,
+        disk: 30GiB,
+      }
     agent: { kind: generic, command: [bash], user: user, workdir: / }
     policy:
       net:
-        - { action: allow, host: registry-1.docker.io, ports: [443], comment: image pulls }
+        - {
+            action: allow,
+            host: registry-1.docker.io,
+            ports: [443],
+            comment: image pulls,
+          }
         - { action: allow, host: auth.docker.io, ports: [443] }
-        - { action: allow, host: production.cloudflare.docker.com, ports: [443] }
-        - { action: allow, host: production.cloudfront.docker.com, ports: [443] }
+        - {
+            action: allow,
+            host: production.cloudflare.docker.com,
+            ports: [443],
+          }
+        - {
+            action: allow,
+            host: production.cloudfront.docker.com,
+            ports: [443],
+          }
         - { action: allow, host: ghcr.io, ports: [443] }
-        - { action: allow, host: pkg-containerd.githubusercontent.com, ports: [443] }
+        - {
+            action: allow,
+            host: pkg-containerd.githubusercontent.com,
+            ports: [443],
+          }
         - { action: allow, host: quay.io, ports: [443] }
         - { action: allow, host: "*.quay.io", ports: [443] }
       defaults: { net: ask }
@@ -198,8 +250,8 @@ firms:
     board: { name: Board }
     budget: { daily_turns: 400, max_concurrent: 3 }
     git: {}
-    product_port: 0.0.0.0:8080           # the product, on your LAN too; 127.0.0.1:8080 keeps it on this machine
-    dashboard_port: 127.0.0.1:8081       # the cluster's dashboard (Headlamp), for you
+    product_port: 0.0.0.0:8080 # the product, on your LAN too; 127.0.0.1:8080 keeps it on this machine
+    dashboard_port: 127.0.0.1:8081 # the cluster's dashboard (Headlamp), for you
     # The workers' prompts, relative to this file: edit a SKILL.md and it
     # applies at the next `zapper firm up`. Skills missing here are built in.
     skills_dir: skills

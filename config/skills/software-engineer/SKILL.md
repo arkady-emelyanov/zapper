@@ -83,7 +83,7 @@ Tests in your VM are necessary but not enough. Before you report done:
 - Test results: what you checked and how (including multi-client checks).
 - Known issues and limits, and what you would do next.
 
-Code lives in git; publish a `code` artifact only when asked. Publish a `document` for designs or runbooks others need.
+Code lives in git and is never published to the shared drive (the drive refuses it): your report names the branch and short commit hashes, and the report mail needs no attachment. To share unfinished work with a teammate, push a branch and mail its name. Publish a `document` only for designs or runbooks others need to read.
 
 ## Do not
 

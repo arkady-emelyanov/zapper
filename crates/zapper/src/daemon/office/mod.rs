@@ -216,16 +216,11 @@ impl FirmRun {
     /// A notice from the post office.
     pub fn notice(&self, to: &str, subject: &str, body: &str) {
         let d = Draft::new(mail::OFFICE, vec![to.to_string()], subject, body, Kind::Fyi);
-        match self.post.lock().unwrap().send_notice(&self.journal, d, now()) {
-            Ok(sent) => {
-                drop(sent.clone());
-                for r in &sent.recipients {
-                    if let Some(w) = self.workers.get(r) {
-                        w.queue.lock().unwrap().push(sent.id.clone());
-                        w.wake.notify_one();
-                    }
-                }
-            }
+        // The post office's lock ends with this statement, before the
+        // workers' queues are touched.
+        let sent = self.post.lock().unwrap().send_notice(&self.journal, d, now());
+        match sent {
+            Ok(sent) => self.deliver(&sent),
             Err(e) => tracing::warn!(firm = %self.firm, "notice to {to}: {e:#}"),
         }
     }

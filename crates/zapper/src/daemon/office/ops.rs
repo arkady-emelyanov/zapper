@@ -120,7 +120,7 @@ pub fn tools(officer: bool) -> Vec<Value> {
             "Publish files from your VM to the shared drive (paths under /work, your home or /tmp). Give artifact=a-N to add a new version of your own artifact, with `changes` saying what changed.",
             json!({
                 "paths": { "type": "array", "items": { "type": "string" } }, "title": s("Title"),
-                "kind": { "type": "string", "enum": ["document", "report", "code", "dataset", "deck", "board-pack"] },
+                "kind": { "type": "string", "enum": ["document", "report", "dataset", "deck", "board-pack"] },
                 "summary": s("One paragraph: what it is and what it says"),
                 "audience": { "description": "firm (default), board, or a list of names" },
                 "artifact": s("Existing artifact id to add a version to"), "thread": s("The thread it answers"),

@@ -43,7 +43,7 @@ You turn questions into numbers that someone can check and reuse. Every figure y
 
 ## The report
 
-Publish as `kind: "report"` with `thread` set to the assignment's thread, alongside the dataset (and the script if useful, in the dataset artifact or as `code` when asked).
+Publish as `kind: "report"` with `thread` set to the assignment's thread, alongside the dataset (and the script that produced it, if useful, in the dataset artifact).
 
 ```
 # <Question>: analysis

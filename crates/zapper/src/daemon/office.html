@@ -133,6 +133,10 @@
   .row2 { display:grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .hint { background: var(--accent-soft); border-radius: 10px; padding: 8px 12px; color: var(--accent-ink); }
   .chips { display:flex; flex-wrap: wrap; gap: 6px; }
+  .unread-box { margin-top: 12px; padding: 4px 12px 10px; border: 1px solid var(--line2); border-left: 3px solid var(--accent); border-radius: 10px; background: var(--accent-soft); }
+  .unread-box h3 { margin-top: 8px; }
+  .bdg .ic.mail { cursor: pointer; }
+  .more-row { display:flex; gap: 10px; align-items: center; justify-content: center; margin: 10px 0; }
   .attach-row { display:flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 2px 0 6px; }
   .chip { border: 1px solid var(--line2); border-radius: 999px; padding: 1px 10px; font-size: 12px; cursor: pointer; background: var(--panel); }
   .chip:hover { border-color: var(--accent); }
@@ -324,6 +328,34 @@
   .commits .c { display:flex; gap: 10px; padding: 5px 0; border-bottom: 1px dashed var(--line); font-size: 13px; align-items: baseline; }
   .commits .c:last-child { border-bottom: 0; }
 
+  /* work: tickets and timeline */
+  .tk-board { display:grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; align-items: start; }
+  @media (max-width: 1000px) { .tk-board { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .tk-col { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 8px; display:flex; flex-direction: column; gap: 8px; min-height: 80px; }
+  .tk-h { display:flex; justify-content: space-between; font-weight: 600; font-size: 13px; padding: 2px 4px 4px; }
+  .tk-none { padding: 4px; }
+  .tk { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; cursor: pointer; display:flex; flex-direction: column; gap: 4px; }
+  .tk:hover { border-color: var(--line2); box-shadow: var(--shadow); }
+  .tk.late { border-left: 3px solid var(--bad); }
+  .tk.live { border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+  .tk-s { font-size: 13px; line-height: 1.35; }
+  .tk-m { display:flex; gap: 6px; align-items: center; flex-wrap: wrap; font-size: 12px; }
+  .tk-m .av.mini { width: 20px; height: 20px; }
+  .tk .bad { color: var(--bad); }
+  .dot.pulse { animation: pulse 1.4s ease-in-out infinite; margin-right: 6px; vertical-align: middle; }
+  @keyframes pulse { 50% { opacity: .3; } }
+  @media (prefers-reduced-motion: reduce) { .dot.pulse { animation: none; } }
+  .gantt .grid { stroke: var(--line); stroke-width: 1; }
+  .gantt .now { stroke: var(--accent); stroke-dasharray: 3 3; }
+  .gantt .grow { cursor: pointer; }
+  .gantt .grow .hit { fill: transparent; }
+  .gantt .grow:hover .hit { fill: var(--accent-soft); }
+  .gantt text.own { fill: var(--muted); font-size: 11px; }
+  .chart.gantt { max-width: none; }
+  .gb.todo { fill: var(--line2); } .gb.doing { fill: var(--info); opacity: .45; } .gb.waiting { fill: var(--warn); opacity: .45; } .gb.done { fill: var(--ok); opacity: .45; }
+  .gb.late { stroke: var(--bad); stroke-width: 1.5; }
+  .ge { fill: var(--s-working); }
+  .gantt .due { stroke: var(--text); stroke-width: 2; } .gantt .due.late { stroke: var(--bad); }
   /* statistics */
   .chart { width: 100%; max-width: 1100px; display: block; }
   .chart.bars { max-width: 760px; }
@@ -428,6 +460,7 @@
 </header>
 <main>
   <section class="tab" id="tab-overview"></section>
+  <section class="tab" id="tab-work"></section>
   <section class="tab" id="tab-messages"></section>
   <section class="tab" id="tab-security"></section>
   <section class="tab" id="tab-drive"></section>
@@ -566,7 +599,7 @@ function completeBytes(text) {
 
 // ────────────────────────────── state ──────────────────────────────
 
-const TABS = [['overview', 'Overview'], ['messages', 'Messages'], ['security', 'Security'], ['drive', 'Shared drive'], ['git', 'Git'], ['stats', 'Statistics'], ['vms', 'VMs']];
+const TABS = [['overview', 'Overview'], ['work', 'Work'], ['messages', 'Messages'], ['security', 'Security'], ['drive', 'Shared drive'], ['git', 'Git'], ['stats', 'Statistics'], ['vms', 'VMs']];
 const S = {
   firms: [], firm: null, info: null, tab: 'overview',
   mode: 'live',          // 'live' or 'replay'
@@ -601,6 +634,8 @@ function newModel() {
     requests: new Map(), access: [], standing: new Map(), artifacts: new Map(),
     published: [], digests: [], opErrors: [], turns: [], settled: [], escalations: [],
     fetched: [], overBudget: false, count: 0,
+    // Turns and the threads they worked on: the effort inside the Work tab's bars.
+    spans: [],
   };
 }
 function setChart(M, chart) {
@@ -619,8 +654,8 @@ function worker(M, name) {
   if (!w) {
     w = { name, role: '', title: '', reports_to: null, officer: false, avatar: null, inChart: false,
       state: 'off', detail: '', since: null, segs: [], session: null, sessions: [],
-      unread: new Set(), turns: 0, tokens: 0, cost: 0, rateLimited: 0, interrupted: 0, errors: 0,
-      inTurn: false, reviewing: false };
+      unread: new Set(), turns: 0, tokens: 0, rateLimited: 0, interrupted: 0, errors: 0,
+      inTurn: false, reviewing: false, turnThreads: new Set(), span: null };
     M.workers.set(name, w);
   }
   return w;
@@ -710,16 +745,21 @@ function apply(M, e) {
     case 'turn': {
       if (typeof e.worker !== 'string') break;
       const w = worker(M, e.worker);
+      const endSpan = () => { if (w.span) { w.span.to = ts; w.span = null; } w.turnThreads = new Set(); };
       if (e.event === 'start') {
+        endSpan();
         w.inTurn = true; w.reviewing = !!e.reviewing;
         for (const id of arr(e.messages)) w.unread.delete(str(id));
+        for (const id of arr(e.messages)) { const m = M.mails.get(str(id)); if (m) w.turnThreads.add(m.thread); }
+        if (w.turnThreads.size) { w.span = { worker: w.name, threads: new Set(w.turnThreads), from: ts, to: null }; M.spans.push(w.span); }
       } else if (e.event === 'end') {
+        endSpan();
         w.inTurn = false; w.turns++;
         const tok = Number(e.tokens) || 0;
-        w.tokens += tok; w.cost += Number(e.cost_usd) || 0;
+        w.tokens += tok;
         M.turns.push({ worker: w.name, ts, tokens: tok, ms: Number(e.ms) || 0, error: !!e.is_error });
-      } else if (e.event === 'interrupted') { w.inTurn = false; w.interrupted++; }
-      else if (e.event === 'rate_limited') { w.inTurn = false; w.rateLimited++; }
+      } else if (e.event === 'interrupted') { endSpan(); w.inTurn = false; w.interrupted++; }
+      else if (e.event === 'rate_limited') { endSpan(); w.inTurn = false; w.rateLimited++; }
       break;
     }
     case 'access': {
@@ -1123,7 +1163,7 @@ function updateOverview() {
     n.rm.textContent = (STATE_ICON[w.state] || '') + ' ' + w.state;
     const d = desk(M, name, now), unread = workerUnread(name);
     n.bdg.replaceChildren(
-      unread ? el('span', { class: 'ic mail', title: unread + ' unread' }, ICONS.mail(), unread) : '',
+      unread ? el('span', { class: 'ic mail', title: unread + ' unread: click to see them', onclick: (ev) => { ev.stopPropagation(); openPanel(name); } }, ICONS.mail(), unread) : '',
       d.reqs.length ? el('span', { class: 'ic lock', title: d.reqs.length + ' access request(s) pending' }, ICONS.lock()) : '',
       d.overdue.length ? el('span', { class: 'ic clock', title: d.overdue.length + ' overdue' }, ICONS.clock(), d.overdue.length) : '');
     n.el.classList.toggle('sel', PANEL.name === name);
@@ -1187,6 +1227,8 @@ function openPanel(name, opts) {
   PANEL.desk = el('div', { class: 'desk' });
   PANEL.feed = el('div', { class: 'feed' });
   PANEL.mail = el('div', { class: 'list' });
+  PANEL.unread = el('div', { class: 'list' });
+  PANEL.unreadBox = el('div', { class: 'unread-box hidden' }, el('h3', { id: 'panel-unread-h' }, 'Unread mail'), el('div', { class: 'muted small', id: 'panel-unread-why' }), PANEL.unread);
   PANEL.pub = el('div', { class: 'list' });
   PANEL.earlier = el('button', { class: 'btn small ghost', onclick: () => { if (PANEL.tr) { PANEL.tr.all = !PANEL.tr.all; renderFeed(); } } }, 'Show earlier turns');
   p.replaceChildren(
@@ -1195,6 +1237,7 @@ function openPanel(name, opts) {
       el('button', { class: 'btn ghost close', title: 'Close', onclick: closePanel }, '✕')),
     PANEL.state,
     opts.kickoff ? el('div', { class: 'hint', style: 'margin-top:12px' }, 'Give ' + name + ' the firm\'s first task.') : '',
+    PANEL.unreadBox,
     el('h3', {}, 'Write as the board'), PANEL.form,
     el('h3', {}, 'Desk'), PANEL.desk,
     el('div', { style: 'display:flex;align-items:baseline;gap:8px' }, el('h3', {}, 'Now'), PANEL.earlier), PANEL.feed,
@@ -1223,7 +1266,7 @@ function updatePanel() {
   PANEL.state.replaceChildren(el('div', { style: 'display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px' },
     pill(w.state === 'error' ? 'error' : w.state === 'working' || w.state === 'reviewing' ? 'accent' : '', w.state), el('span', {}, sl.text),
     sess ? el('span', { class: 'muted small', style: 'margin-left:auto' }, sessionsLink('Session'), ' ', el('span', { class: 'mono' }, sess)) : ''),
-  el('div', { class: 'muted small', style: 'margin-top:4px' }, `${w.turns} turns · ${fmtNum(w.tokens)} tokens` + (w.cost ? ` · $${w.cost.toFixed(2)}` : '') + (w.rateLimited ? ` · ${w.rateLimited} rate-limited` : '')));
+  el('div', { class: 'muted small', style: 'margin-top:4px' }, `${w.turns} turns · ${fmtNum(w.tokens)} tokens` + (w.rateLimited ? ` · ${w.rateLimited} rate-limited` : '')));
   PANEL.form.refresh();
   // Desk.
   const d = desk(M, name, now);
@@ -1242,9 +1285,22 @@ function updatePanel() {
   for (const r of d.reqs) items.push(el('div', { class: 'item' }, pill(r.state, r.state), el('span', {}, 'access: ' + (r.method ? r.method + ' ' : '') + r.host + (r.port && r.port !== 443 ? ':' + r.port : '') + (r.path || '')),
     el('button', { class: 'linkish', onclick: () => showTab('security') }, 'security')));
   PANEL.desk.replaceChildren(...(items.length ? items : [el('div', { class: 'muted' }, 'Nothing on the desk.')]));
+  // Unread: delivered, not yet handed to a turn. A worker reads its mail
+  // when it wakes, so say when that will be.
+  const unread = [...w.unread].map((id) => M.mails.get(id)).filter(Boolean).sort((a, b) => a.ts - b.ts);
+  PANEL.unreadBox.classList.toggle('hidden', !unread.length);
+  if (unread.length) {
+    $('panel-unread-h').textContent = 'Unread mail (' + unread.length + ')';
+    const why = { working: name + ' is in a turn and reads these when it ends.', reviewing: name + ' is in a turn and reads these when it ends.',
+      queued: name + ' is queued for a turn (the firm runs a few at once) and reads these then.', booting: name + '\'s VM is starting; it reads these once up.',
+      'over-budget': name + ' is over budget: these wait until the budget allows a turn.', error: name + ' had an error; these wait for the next turn.',
+      off: 'The firm is off: these were never read.' }[w.state] || name + ' reads these at its next turn.';
+    $('panel-unread-why').textContent = M.runState === 'paused' ? 'The firm is paused: ' + name + ' reads these when it resumes.' : why;
+    PANEL.unread.replaceChildren(...unread.map((m) => mailItem(m, true)));
+  }
   // Recent mail.
   const mails = [...M.mails.values()].filter((m) => m.from === name || m.to.includes(name) || m.cc.includes(name)).slice(-8).reverse();
-  PANEL.mail.replaceChildren(...(mails.length ? mails.map((m) => mailItem(m)) : [el('div', { class: 'muted' }, 'No mail yet.')]));
+  PANEL.mail.replaceChildren(...(mails.length ? mails.map((m) => mailItem(m, w.unread.has(m.id))) : [el('div', { class: 'muted' }, 'No mail yet.')]));
   const arts = [...M.artifacts.values()].filter((a) => a.author === name).reverse();
   PANEL.pub.replaceChildren(...(arts.length ? arts.map((a) => artifactItem(a)) : [el('div', { class: 'muted' }, 'Nothing published.')]));
   if (S.mode === 'replay') renderFeed();
@@ -1252,10 +1308,10 @@ function updatePanel() {
 // The sessions UI, with the firm to come back to.
 function sessionsHref() { return '/sessions' + (S.firm ? '?firm=' + enc(S.firm) : ''); }
 function sessionsLink(text) { const a = el('a', {}, text); a.href = sessionsHref(); return a; }
-function mailItem(m) {
+function mailItem(m, unread) {
   const t = S.M.threads.get(m.thread);
-  return el('div', { class: 'li', onclick: () => openThread(m.thread) },
-    el('div', { class: 'top' }, el('span', { class: 'subj' }, clip((t && t.subject) || m.subject || '(no subject)', 70)), pill(m.kind, m.kind)),
+  return el('div', { class: 'li', onclick: () => openThread(m.thread, m.id) },
+    el('div', { class: 'top' }, el('span', { class: 'subj' }, unread ? el('span', { class: 'dot', title: 'not read yet' }) : '', unread ? ' ' : '', clip((t && t.subject) || m.subject || '(no subject)', 70)), pill(m.kind, m.kind)),
     el('div', { class: 'meta' }, m.from + ' → ' + m.to.join(', '), el('span', {}, '· ' + ago(m.ts))));
 }
 function artifactItem(a) {
@@ -1539,7 +1595,6 @@ function feedNodes(e) {
       const bits = ['Turn finished'];
       if (e.num_turns) bits.push(e.num_turns + ' steps');
       if (tok) bits.push(fmtNum(tok) + ' tokens');
-      if (e.total_cost_usd) bits.push('$' + Number(e.total_cost_usd).toFixed(3));
       if (e.duration_ms) bits.push(fmtDur(e.duration_ms / 1000));
       out.push(el('div', { class: 'tx turn' + (e.is_error ? ' err' : '') }, t, bits.join(' · '), e.is_error && e.result ? el('pre', {}, clip(str(e.result), 4000)) : ''));
       break;
@@ -2130,7 +2185,9 @@ function delegationTree(M, rootId, now) {
 
 // ───────────────────────────── security ─────────────────────────────
 
-const SEC = { cards: new Map(), logSig: null, stSig: null, open: new Set(), timer: null, traffic: [], trafficAt: 0 };
+// Traffic shows the latest TRAFFIC_PAGE requests; "Load more" adds a page.
+const TRAFFIC_PAGE = 25;
+const SEC = { cards: new Map(), logSig: null, stSig: null, open: new Set(), timer: null, traffic: [], trafficAt: 0, trafficShown: TRAFFIC_PAGE };
 
 function mountSecurity() {
   const root = $('tab-security');
@@ -2143,7 +2200,7 @@ function mountSecurity() {
     el('h2', { class: 'sec' }, 'Standing approvals'), el('div', { id: 'sec-standing' }),
     el('h2', { class: 'sec' }, 'Decision log'), el('div', { class: 'bar' }, fw, fo, fh, fr, el('span', { class: 'muted small', id: 'sf-count' })), el('div', { id: 'sec-log' }),
     el('h2', { class: 'sec' }, 'Traffic'), el('div', { id: 'sec-traffic' }));
-  SEC.cards.clear(); SEC.logSig = null; SEC.stSig = null; SEC.open.clear();
+  SEC.cards.clear(); SEC.logSig = null; SEC.stSig = null; SEC.open.clear(); SEC.trafficShown = TRAFFIC_PAGE;
 }
 const reqWhat = (r) => (r ? (r.method ? r.method + ' ' : r.methods ? arr(r.methods).join(',') + ' ' : '') + str(r.host) + (r.port && r.port !== 443 ? ':' + r.port : '') + str(r.path || '') : '');
 const ruleWhat = (rule) => {
@@ -2276,10 +2333,11 @@ function renderTraffic(M) {
   const digests = dig.length ? el('details', { style: 'margin-bottom:10px' }, el('summary', { class: 'muted' }, 'Officers\' digests (' + M.digests.length + ')'),
     el('div', { class: 'desk' }, dig.map((d) => el('div', { class: 'item' }, el('span', { class: 'muted small' }, fmtDate(d.ts)), d.requests + ' requests, ' + d.allowed + ' allowed', d.new_hosts.length ? el('span', { class: 'mono small' }, 'new: ' + clip(d.new_hosts.join(', '), 200)) : '')))) : '';
   if (!live()) { box.replaceChildren(digests, el('div', { class: 'empty card' }, 'Live traffic is shown for the running firm only.')); return; }
-  const sig = SEC.trafficAt + '|' + M.digests.length;
+  const sig = SEC.trafficAt + '|' + M.digests.length + '|' + SEC.trafficShown;
   if (box.dataset.sig === sig) return;
   box.dataset.sig = sig;
-  const rows = SEC.traffic.slice(0, 500).map((r) => el('tr', {},
+  const shown = Math.min(SEC.trafficShown, SEC.traffic.length);
+  const rows = SEC.traffic.slice(0, shown).map((r) => el('tr', {},
     el('td', { class: 'small' }, typeof r.ts === 'number' ? fmtTime(r.ts) : str(r.ts)),
     el('td', {}, r.worker),
     el('td', {}, str(r.method)),
@@ -2292,7 +2350,9 @@ function renderTraffic(M) {
     el('td', { class: 'small' }, r.inspected ? 'inspected' : '')));
   box.replaceChildren(digests, rows.length
     ? el('table', { class: 't' }, el('thead', {}, el('tr', {}, ['time', 'worker', 'method', 'url', 'status', 'action', 'rule', 'size', 'time', ''].map((h) => el('th', {}, h)))), el('tbody', {}, rows))
-    : el('div', { class: 'empty card' }, SEC.trafficAt ? 'No requests yet.' : 'Loading…'));
+    : el('div', { class: 'empty card' }, SEC.trafficAt ? 'No requests yet.' : 'Loading…'),
+    shown < SEC.traffic.length ? el('div', { class: 'more-row' }, el('span', { class: 'muted small' }, 'Latest ' + shown + ' of ' + SEC.traffic.length),
+      el('button', { class: 'btn small', type: 'button', onclick: () => { SEC.trafficShown += TRAFFIC_PAGE; renderTraffic(S.M); } }, 'Load more')) : '');
 }
 async function pollSecurity() {
   if (!live() || S.tab !== 'security' || !S.info || !S.info.run) return;
@@ -2484,7 +2544,7 @@ const DRV = { sel: null, sig: null, mainSig: null, viewKey: null };
 
 function mountDrive() {
   const root = $('tab-drive');
-  const fk = selectOf([['', 'any kind'], 'document', 'report', 'code', 'dataset', 'deck', 'board-pack'], '', { id: 'df-kind', onchange: () => { DRV.sig = null; updateDrive(); } });
+  const fk = selectOf([['', 'any kind'], 'document', 'report', 'dataset', 'deck', 'board-pack'], '', { id: 'df-kind', onchange: () => { DRV.sig = null; updateDrive(); } });
   const fa = el('select', { id: 'df-author', onchange: () => { DRV.sig = null; updateDrive(); } });
   const fq = el('input', { type: 'search', id: 'df-q', placeholder: 'Search titles', oninput: () => { DRV.sig = null; updateDrive(); } });
   root.replaceChildren(el('div', { class: 'split' },
@@ -2782,6 +2842,154 @@ function gitCommitView(c) {
     str(c.message).includes('\n') ? el('pre', { class: 'git-msg' }, str(c.message).split('\n').slice(1).join('\n').trim()) : '',
     el('div', { class: 'git-files small' }, arr(c.files).map((x) => el('div', {}, el('span', { class: 'dadd' }, '+' + str(x.added)), ' ', el('span', { class: 'ddel' }, '−' + str(x.removed)), ' ', el('span', { class: 'mono' }, str(x.path))))),
     diff, c.truncated ? el('div', { class: 'muted small' }, 'Diff cut at 1 MB.') : '');
+}
+
+// ─────────────────────────────── work ───────────────────────────────
+//
+// Assignments as tickets, derived from the mail: an assignment is a ticket
+// for each recipient, a report closes it, and the thread it was sent from
+// makes it a sub-task. Nothing here is written by workers.
+
+const WORK = { view: 'board', owner: '', sig: null };
+const WORK_COLS = [['todo', 'To do'], ['doing', 'In progress'], ['waiting', 'Waiting on others'], ['done', 'Done']];
+
+function tickets(M, now) {
+  const list = [...M.obl.values()].filter((o) => o.expects === 'done').map((o) => {
+    const t = M.threads.get(o.thread) || {};
+    const m = M.mails.get(o.message) || {};
+    return { o, id: o.key, thread: o.thread, message: o.message, owner: o.debtor, by: o.creditor, subject: m.subject || t.subject || '(no subject)',
+      created: o.created, due: o.due, end: o.settled ? o.settled.ts : null, parent: null, kids: [] };
+  });
+  const byThread = new Map();
+  for (const k of list) { if (!byThread.has(k.thread)) byThread.set(k.thread, []); byThread.get(k.thread).push(k); }
+  // The parent: in the thread the assignment was sent from, the ticket its
+  // sender owed there (or any ticket of that thread).
+  for (const k of list) {
+    const t = M.threads.get(k.thread);
+    const cands = t && t.context && t.context !== k.thread ? byThread.get(t.context) || [] : [];
+    const p = cands.find((x) => x.owner === k.by) || cands[0];
+    if (p && p !== k) { k.parent = p; p.kids.push(k); }
+  }
+  for (const k of list) {
+    const w = M.workers.get(k.owner);
+    k.overdue = !k.end && k.due && now > k.due;
+    k.working = !k.end && !!(w && w.inTurn && w.turnThreads.has(k.thread));
+    k.openKids = k.kids.filter((x) => !x.end).length;
+    k.status = k.end ? 'done' : k.working ? 'doing' : k.openKids ? 'waiting' : w && w.unread.has(k.message) ? 'todo' : 'doing';
+  }
+  return list;
+}
+
+function mountWork() {
+  const seg = el('div', { class: 'seg', id: 'wk-view' });
+  for (const [v, l] of [['board', 'Board'], ['timeline', 'Timeline']]) {
+    const b = el('button', { type: 'button', onclick: () => { WORK.view = v; WORK.sig = null; updateWork(); } }, l);
+    b.dataset.v = v; seg.append(b);
+  }
+  const owner = el('select', { id: 'wk-owner', onchange: (e) => { WORK.owner = e.target.value; WORK.sig = null; updateWork(); } });
+  $('tab-work').replaceChildren(el('div', { class: 'bar' }, seg, owner, el('span', { class: 'muted small', id: 'wk-sum' })), el('div', { id: 'wk-body' }));
+  WORK.sig = null;
+}
+
+function updateWork() {
+  const M = S.M;
+  if (!M || !$('wk-body')) return;
+  const now = T();
+  for (const b of $('wk-view').children) b.classList.toggle('on', b.dataset.v === WORK.view);
+  const people = chartWorkers().map((w) => w.name);
+  const sel = $('wk-owner');
+  if (sel.dataset.sig !== people.join(',')) {
+    sel.dataset.sig = people.join(',');
+    sel.replaceChildren(opt('', 'everyone'), ...people.map((n) => opt(n, who(M, n), n === WORK.owner)));
+  }
+  const busy = [...M.workers.values()].filter((w) => w.inTurn).map((w) => w.name + [...w.turnThreads].join('')).join(',');
+  const sig = [WORK.view, WORK.owner, M.count, busy, Math.floor(now / (WORK.view === 'timeline' ? 5 : 30))].join('|');
+  if (sig === WORK.sig) return;
+  WORK.sig = sig;
+  const all = tickets(M, now);
+  const mine = WORK.owner ? all.filter((k) => k.owner === WORK.owner) : all;
+  const n = (st) => mine.filter((k) => k.status === st).length;
+  const late = mine.filter((k) => k.overdue).length;
+  $('wk-sum').textContent = mine.length ? `${mine.length} assignments · ${n('todo') + n('doing') + n('waiting')} open · ${n('done')} done` + (late ? ` · ${late} overdue` : '') : '';
+  if (!all.length) {
+    $('wk-body').replaceChildren(el('div', { class: 'empty card' }, 'No assignments yet. Every assignment sent by mail becomes a ticket here, for each recipient; a report closes it.'));
+    return;
+  }
+  $('wk-body').replaceChildren(WORK.view === 'timeline' ? workTimeline(M, mine, all, now) : workBoard(M, mine, now));
+}
+
+function ticketCard(M, k, now) {
+  const age = k.end ? 'took ' + fmtDur(k.end - k.created) : (k.status === 'todo' ? 'waiting ' : 'open ') + fmtDur(now - k.created);
+  return el('div', { class: 'tk' + (k.overdue ? ' late' : '') + (k.working ? ' live' : ''), title: 'Open the thread', onclick: () => openThread(k.thread, k.message) },
+    el('div', { class: 'tk-s' }, k.working ? el('span', { class: 'dot pulse', title: k.owner + ' is working on it now' }) : '', clip(k.subject, 90)),
+    el('div', { class: 'tk-m' }, miniAvatar(k.owner), el('b', {}, k.owner), el('span', { class: 'muted' }, '← ' + (k.by === BOARD ? boardName() : k.by))),
+    el('div', { class: 'tk-m muted small' },
+      el('span', {}, age),
+      k.kids.length ? el('span', {}, '· ' + (k.kids.length - k.openKids) + '/' + k.kids.length + ' delegated done') : '',
+      k.due && !k.end ? el('span', { class: k.overdue ? 'bad' : '' }, '· due ' + fmtDate(k.due)) : '',
+      k.parent ? el('span', { title: 'part of: ' + k.parent.subject }, '· part of ' + clip(k.parent.subject, 30)) : ''));
+}
+
+function workBoard(M, list, now) {
+  const cols = WORK_COLS.map(([st, label]) => {
+    let ks = list.filter((k) => k.status === st);
+    ks.sort(st === 'done' ? (a, b) => b.end - a.end : (a, b) => (b.overdue - a.overdue) || (b.working - a.working) || a.created - b.created);
+    return el('div', { class: 'tk-col' }, el('div', { class: 'tk-h' }, el('span', {}, label), el('span', { class: 'muted' }, String(ks.length))),
+      ...(ks.length ? ks.slice(0, 200).map((k) => ticketCard(M, k, now)) : [el('div', { class: 'muted small tk-none' }, '—')]));
+  });
+  return el('div', { class: 'tk-board' }, ...cols);
+}
+
+// A Gantt chart: a bar per assignment from sent to reported, nested under
+// the assignment it was delegated from; inside, the owner's turns on it.
+function workTimeline(M, list, all, now) {
+  const inList = new Set(list);
+  const rows = [];
+  const visit = (k, depth) => {
+    if (inList.has(k)) rows.push([k, depth]);
+    for (const c of k.kids.slice().sort((a, b) => a.created - b.created)) visit(c, inList.has(k) ? depth + 1 : depth);
+  };
+  for (const k of all.filter((x) => !x.parent).sort((a, b) => a.created - b.created)) visit(k, 0);
+  const from = Math.min(...rows.map(([k]) => k.created), M.started || now);
+  const to = Math.max(now, from + 60);
+  const span = to - from, W = 1100, L = 330, BW = W - L - 12, RH = 24;
+  const x = (t) => L + ((Math.min(Math.max(t, from), to) - from) / span) * BW;
+  const svg = sv('svg', { class: 'chart gantt', viewBox: `0 0 ${W} ${rows.length * RH + 30}`, role: 'img', 'aria-label': 'assignments over time' });
+  for (let k = 0; k <= 6; k++) {
+    const gx = L + (k / 6) * BW;
+    svg.append(sv('line', { class: 'grid', x1: gx, x2: gx, y1: 0, y2: rows.length * RH + 4 }));
+    const t = sv('text', { x: gx, y: rows.length * RH + 20, 'text-anchor': k === 0 ? 'start' : k === 6 ? 'end' : 'middle' });
+    t.textContent = span > 86400 ? fmtDate(from + (k / 6) * span) : fmtTime(from + (k / 6) * span).slice(0, 5);
+    svg.append(t);
+  }
+  if (now < to) svg.append(sv('line', { class: 'now', x1: x(now), x2: x(now), y1: 0, y2: rows.length * RH + 4 }));
+  rows.forEach(([k, depth], i) => {
+    const y = i * RH + 4;
+    const g = sv('g', { class: 'grow', onclick: () => openThread(k.thread, k.message) });
+    const lbl = sv('text', { class: 'lbl', x: 8 + depth * 14, y: y + 14 });
+    lbl.textContent = (depth ? '↳ ' : '') + clip(k.subject, Math.max(16, 40 - depth * 2));
+    const own = sv('text', { class: 'own', x: L - 8, y: y + 14, 'text-anchor': 'end' });
+    own.textContent = k.owner;
+    const x0 = x(k.created), x1 = x(k.end || now);
+    const bar = sv('rect', { class: 'gb ' + k.status + (k.overdue ? ' late' : ''), x: x0, y: y + 4, width: Math.max(2, x1 - x0), height: 14, rx: 3 });
+    const tt = sv('title');
+    tt.textContent = k.subject + '\n' + k.owner + ' ← ' + k.by + ' · ' + (k.end ? 'done in ' + fmtDur(k.end - k.created) : k.status + ' for ' + fmtDur(now - k.created)) + (k.due ? ' · due ' + fmtDate(k.due) : '') + (k.kids.length ? ' · ' + k.kids.length + ' delegated' : '');
+    g.append(sv('rect', { class: 'hit', x: 0, y, width: W, height: RH }), lbl, own, bar, tt);
+    // The owner's turns on this thread: when it was actually worked on.
+    for (const sp of M.spans) {
+      if (sp.worker !== k.owner || !sp.threads.has(k.thread)) continue;
+      const a = Math.max(sp.from, k.created), b = Math.min(sp.to == null ? now : sp.to, k.end || now);
+      if (b <= a) continue;
+      g.append(sv('rect', { class: 'ge', x: x(a), y: y + 7, width: Math.max(1.5, x(b) - x(a)), height: 8, rx: 2 }));
+    }
+    if (k.due && k.due <= to) g.append(sv('line', { class: 'due' + (k.overdue ? ' late' : ''), x1: x(k.due), x2: x(k.due), y1: y + 2, y2: y + 20 }));
+    svg.append(g);
+  });
+  return el('div', { class: 'card' }, svg,
+    el('div', { class: 'legend' },
+      ...[['todo', 'to do'], ['doing', 'in progress'], ['waiting', 'waiting on others'], ['done', 'done']].map(([c, l]) => el('span', {}, sv('svg', { width: 12, height: 10 }, sv('rect', { class: 'gb ' + c, width: 12, height: 10, rx: 2 })), ' ', l)),
+      el('span', {}, sv('svg', { width: 12, height: 10 }, sv('rect', { class: 'ge', y: 2, width: 12, height: 6, rx: 2 })), ' turns on it'),
+      el('span', { class: 'muted' }, '| due date · click a row for its thread')));
 }
 
 // ──────────────────────────── statistics ────────────────────────────
@@ -3084,7 +3292,7 @@ function showTab(t) {
   if (t === 'overview') requestAnimationFrame(fitOverview);
 }
 function mountAll() {
-  mountOverview(); mountMessages(); mountSecurity(); mountDrive(); mountGit(); mountStats(); mountVms();
+  mountOverview(); mountWork(); mountMessages(); mountSecurity(); mountDrive(); mountGit(); mountStats(); mountVms();
   MSG.thread = null; MSG.treeRoot = null; MSG.compose = false; MSG.reply = null;
   DRV.sel = null; SEC.traffic = []; SEC.trafficAt = 0; S.security = null;
 }
@@ -3102,6 +3310,7 @@ function render() {
   if (!S.M) return;
   try {
     if (S.tab === 'overview') updateOverview();
+    else if (S.tab === 'work') updateWork();
     else if (S.tab === 'messages') updateMessages();
     else if (S.tab === 'security') updateSecurity();
     else if (S.tab === 'drive') updateDrive();

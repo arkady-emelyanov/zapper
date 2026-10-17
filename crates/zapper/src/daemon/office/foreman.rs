@@ -333,7 +333,7 @@ pub async fn run(_d: Arc<Daemon>, run: Arc<FirmRun>, w: Arc<WorkerRt>) {
                         "turn",
                         json!({
                             "worker": w.name, "event": "end", "ms": ms, "tokens": t, "usage": r["usage"],
-                            "cost_usd": r["total_cost_usd"], "num_turns": r["num_turns"], "is_error": r["is_error"],
+                            "num_turns": r["num_turns"], "is_error": r["is_error"],
                         }),
                     );
                 }

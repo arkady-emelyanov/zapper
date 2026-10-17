@@ -16,7 +16,8 @@ use zapper_policy::{parse_size, Firm, BOARD};
 use super::{now, FirmRun};
 use crate::daemon::session::{read_frame, Session};
 
-const KINDS: [&str; 6] = ["document", "report", "code", "dataset", "deck", "board-pack"];
+/// No `code`: code lives in the firm's git repository, shared as a branch.
+const KINDS: [&str; 5] = ["document", "report", "dataset", "deck", "board-pack"];
 const MAX_FILES: usize = 2000;
 const MAX_PATHS: usize = 64;
 
@@ -268,6 +269,9 @@ fn audience(v: &Value) -> Result<Value> {
 
 /// Copies files out of the worker's VM into the drive.
 pub async fn publish(run: &Arc<FirmRun>, worker: &str, s: &Session, a: PublishArgs) -> Result<Value> {
+    if a.kind == "code" {
+        bail!("code is not published to the drive: push it to the firm's git repository (a branch, if it is not ready for main) and mail the branch name and commit");
+    }
     if !KINDS.contains(&a.kind.as_str()) {
         bail!("kind is one of {}", KINDS.join(", "));
     }
