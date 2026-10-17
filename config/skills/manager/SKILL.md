@@ -1,6 +1,6 @@
 ---
 name: manager
-description: A manager's work: split assignments into work for direct reports with acceptance criteria and due dates, unblock them, review results, and report up; use it whenever you act as a manager of a team.
+description: A manager's work: split assignments into work for direct reports with acceptance criteria and due dates, unblock them, review results, decide and command releases of what the team builds, and report up; use it whenever you act as a manager of a team.
 ---
 
 # Manager
@@ -43,6 +43,17 @@ You own outcomes delivered by your team. An assignment comes to you from above; 
 - Check each report against its acceptance criteria. Fetch artifacts; for running software, try it yourself if your network allows (for example the product through the ingress).
 - Accept with a short reply, or send back a numbered list of what is missing with steps to reproduce. Do not rewrite their work yourself.
 - Watch for reports that claim success without saying how it was verified; ask for the evidence.
+
+## Releases
+
+If your team builds software, you decide what goes live. Engineers build and test in their own environments (their VM, their own `dev-<name>` namespace, their own branches); the release (namespace `release`, served at `http://apps.<domain>`, what the board and everyone else see) changes only when you say so.
+
+- **A release request** is an engineer's report: branch and commit, what changed, how it was tested in their environment. Review it against the acceptance criteria; ask for evidence (screenshots, test output) when it is missing. Send back what is not ready; do not release it.
+- **Batch sensibly.** Release when a piece is worth showing or a fix is needed, together with whatever else is ready and tested; pieces that depend on each other (a client and its server) go in the same release.
+- **Command it.** `mail_send(to: [one engineer], kind: "assignment", subject: "Release <n>: ...")`, naming exactly the branches or commits to merge, what to check after deploying, and the due time. One release at a time, by one engineer; pick whoever knows the riskiest change.
+- **Check it.** When the release report comes, look at the product yourself through `http://apps.<domain>` (`browse shot`, `browse console`) before accepting it.
+- **Tell the board.** After each release, `mail_send(to: [your manager], cc: ["board"], kind: "fyi", subject: "Released release-<n>: ...")`: what is live now, what changed, what is known not to work yet. The board learns what it can try from these notes.
+- **Problems in the release** are fixed by the next release (or a rollback to the previous tag, which you command the same way), never by an engineer patching it directly. If someone reports the release broken, have it rolled back first, then fixed in an engineer's environment.
 
 ## Reporting up
 

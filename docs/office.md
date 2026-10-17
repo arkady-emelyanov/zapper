@@ -48,11 +48,11 @@ firms:
       ceo:
         profile: office                    # a zapper profile: image, network, secrets
         title: CEO
+        model: claude-opus-5-5             # the others use the profile's claude-sonnet-5-5
         skills: { work: ceo }              # communication: office-mail, publishing: office-publish by default
         avatar: { figure: ceo, color: "#D97757" }
       engineer:
         profile: office-engineer           # also reaches git and the Kubernetes API
-        model: claude-sonnet-5-5           # others use the profile's claude-opus-5-5
         skills: { work: software-engineer }
         avatar: { figure: engineer, color: "#6A9BCC" }
       security-officer:
@@ -320,6 +320,14 @@ When something looks wrong the officer can revoke a standing approval, deny a ho
 
 A firm builds and runs a product; which product is up to the board's kickoff and the CEO's and product manager's decisions. For that it has a git repository and a Kubernetes cluster, both new and empty in every run.
 
+### Environments and releases
+
+The firm works like a small engineering team, by the skills rather than by enforcement (every engineer's kubeconfig is cluster-admin, and anyone who may push can push to `main`):
+
+- Each engineer builds and tests in their own environment: their VM, their own namespace `dev-<name>` reached with `kubectl port-forward`, and their own branches `<name>/<topic>`. Load and abuse tests stay there.
+- The **release** is namespace `release` on the ingress's default route, at `apps.<domain>`: what the board and the other workers see. Only the CTO (the engineers' manager) decides what goes in. An engineer's finished work is a release request; the CTO assigns one engineer a release, who merges exactly that into `main`, tags it `release-<n>`, deploys it and verifies it through the ingress. Problems are rolled back or fixed in the next release, never patched in place.
+- The CTO announces each release to the board (cc) with what is live, so the board knows what it can try; releases show as tickets in the Work tab and as tags in the Git tab.
+
 ### Names and who reaches what
 
 Facilities are reached by name under the firm's `domain`, through the same proxy and policy as everything else. The guest's resolver answers these names only when a rule could allow them, as for any host; they are never looked up on the host's DNS. The daemon routes connections to them itself, so no VM ever reaches another VM or a host address directly.
@@ -393,10 +401,11 @@ The UI has a tab bar for the office. zapper's own views of sessions (network, te
 | Security | What officers approved, what they decided, and why |
 | Shared drive | Published work, including board packs |
 | Git | The firm's repository: branches, files and commits |
-| Statistics | Activity, throughput and budgets |
 | VMs | Every running VM of the daemon, now: the host, each firm's workers and cluster, other sessions; size, usage and counters; terminals to watch read-only, and each worker's Claude transcript |
+| Statistics | Activity, throughput and budgets |
+| Runs | The firm's runs, each with what it was asked to build; opens one in replay, or deletes it |
 
-A header above the tabs shows the firm's name and state (off, starting, running, paused), unread board mail, escalations waiting for the board, and the firm controls: up, down, pause. A **Runs** menu in the header opens a past run in [replay](#replay); the header then shows a timeline instead of the controls.
+A header above the tabs shows the firm's name and state (off, starting, running, paused), unread board mail, escalations waiting for the board, and the firm controls: **Start**, **Stop** and pause. The **Runs** tab, at the right of the tab bar, lists the firm's runs and opens one in [replay](#replay).
 
 A footer on every tab shows the run's vital numbers, and flashes one when it changes: workers working, waiting and idle; messages and open obligations (overdue in red); access requests pending and decided; artifacts and versions on the shared drive; commits on `main`; turns and tokens; time since the run started. Each opens its tab.
 
@@ -499,11 +508,14 @@ Every `firm up` starts a fresh **run**: an idle firm with empty mailboxes, an em
 
 ```
 state/firms/<firm>/runs/<run-id>/
-  run.json             start and end, the firm's config as booted (secrets redacted), worker → session ids
+  run.json             start and end, the org chart and budget as booted, worker → session ids
+  config.yaml          the whole zapper config the run started with (profiles, rules, firms), inline secret values hidden
   journal.jsonl        every firm event: mail, follow-ups, state changes, access requests and decisions,
                        publishes, budgets; the source for the UI, statistics and replay
   transcripts/<worker>.jsonl   each worker's Claude stream-json events
   drive/<sha256>       shared drive files
+  skills/<role>/       the skills each role's workers had, mounted read-only
+  git/product.git      the firm's repository
 ```
 
 - Each worker's session keeps its own audit log and terminal recordings in `state/sessions/<id>/`, as any zapper session does; `run.json` links them.
@@ -513,7 +525,7 @@ state/firms/<firm>/runs/<run-id>/
 
 ### Replay
 
-The daemon can open a finished run read-only: `zapper firm replay <run>`, or the Runs menu in the UI. Nothing boots: no VMs, no Claude, no mail delivery. The UI shows the run as it was, with a timeline in the header: play and pause, speed (1×, 10×, 60×), jump to the next event, and drag to any moment. Avatars move through their states, envelopes fly, threads fill in, decisions appear, and transcripts and shared drive files open as they were at that moment. All writes are disabled. A replay can be opened while a firm is running.
+The daemon can open a finished run read-only: `zapper firm replay <run>`, or the **Runs** tab in the UI. It lists the runs the board kicked off (a run nobody gave a task is left out), newest first, each with what it was asked to build (the board's first message), when, how long and how many messages; the running one is marked live and opens the live view. Each past run has a **Delete** button. Nothing boots: no VMs, no Claude, no mail delivery. The UI shows the run as it was, with the player pinned to the top of the page: play and pause, speed (1×, 10×, 60×, 120×), jump to the next event, and drag to any moment; **✕** closes the replay and returns to the tab you came from. **Config**, in the player and on each run in the Runs tab, shows what the run started with: the whole config (`config.yaml`, secret values hidden) and every role's skills (`skills/`), so a run can be compared with the next after a prompt change. Avatars move through their states, envelopes fly, threads fill in, decisions appear, and transcripts and shared drive files open as they were at that moment. All writes are disabled. A replay can be opened while a firm is running.
 
 A run can't be resumed ([limitations](#limitations)).
 

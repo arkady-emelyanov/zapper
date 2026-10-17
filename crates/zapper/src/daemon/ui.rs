@@ -20,9 +20,9 @@ pub async fn terminal() -> impl IntoResponse {
     ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], include_str!("terminal.html"))
 }
 
-/// Claude's spark, in clay.
+/// The firm's logo, as on the product's landing page and in the UI's header.
 pub async fn favicon() -> impl IntoResponse {
-    const SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><g stroke="#D97757" stroke-width="3.2" stroke-linecap="round"><path d="M16 3v26M3 16h26M6.8 6.8l18.4 18.4M25.2 6.8 6.8 25.2"/></g></svg>"##;
+    const SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><g fill="none" stroke="#D97757" stroke-width="5" stroke-linejoin="round" stroke-linecap="round"><circle cx="32" cy="32" r="28.5"/><path d="M42.16 36.21L36.21 42.16L27.79 42.16L21.84 36.21L21.84 27.79L27.79 21.84L36.21 21.84L42.16 27.79Z"/><path d="M42.16 36.21L42.16 60.23M36.21 42.16L19.23 59.15M27.79 42.16L3.77 42.16M21.84 36.21L4.85 19.23M21.84 27.79L21.84 3.77M27.79 21.84L44.77 4.85M36.21 21.84L60.23 21.84M42.16 27.79L59.15 44.77"/></g></svg>"##;
     ([(header::CONTENT_TYPE, "image/svg+xml")], SVG)
 }
 

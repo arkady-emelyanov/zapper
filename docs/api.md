@@ -20,7 +20,8 @@ The office's routes ([office](office.md)), for the board. F is a firm, RUN a run
 | `GET /v1/firms/F` | ✓ | The chart, and the run: workers' states, usage, budget |
 | `POST /v1/firms/F/up` · `/down` · `/pause {paused}` | ✓ | Start a fresh run, stop it, pause or resume it |
 | `GET /v1/firms/F/runs` | ✓ | Past runs, newest first |
-| `DELETE /v1/firms/F/runs/RUN` | | Delete a past run |
+| `DELETE /v1/firms/F/runs/RUN` | ✓ | Delete a past run (not the running one) |
+| `GET /v1/firms/F/runs/RUN/config` | ✓ | `{config, skills}`: the config the run started with (YAML, secret values hidden; null for older runs) and each role's skills |
 | `GET /v1/firms/F/runs/RUN/journal[?follow=true&from=OFFSET]` | ✓ | The journal (`application/x-ndjson`), or followed as server-sent events, one entry per `data:` |
 | `GET /v1/firms/F/runs/RUN/transcripts/WORKER[?follow=true]` | ✓ | A worker's Claude stream-json events and wake prompts |
 | `GET /v1/firms/F/runs/RUN/drive/ARTIFACT/VERSION/PATH` | ✓ | A published file, with its own content type and `Content-Security-Policy: sandbox` |

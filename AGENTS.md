@@ -105,7 +105,7 @@ Invariants (each has a test in `tests/e2e.sh` or a unit test; a change that brea
 - The host accepts only the first control connection; the agent accepts terminal connections only from CID 2.
 - The seccomp filter kills foreign-arch and x32 syscalls, so exec checks cannot be bypassed through another syscall table.
 - Anything from the guest is bounded (line, frame, connection and approval limits) and rendered as text in the UI.
-- The UI's writes are answering approvals and the board's firm actions (mail, up/down/pause, security decisions); each requires the token cookie, a local `Host`, `X-Zapper-UI: 1` and a local `Origin`.
+- The UI's writes are answering approvals and the board's firm actions (mail, start/stop/pause, security decisions, deleting a past run); each requires the token cookie, a local `Host`, `X-Zapper-UI: 1` and a local `Origin`.
 - In a firm, the sender of every office request is the VM it came from; roles and the chart are checked on the host; an `ask` is refused at once and decided by officers or the board, never past `final` rules; the firm's service names are routed by the daemon and never resolved on the host.
 - A config change is validated as a whole and applied atomically, or not at all.
 

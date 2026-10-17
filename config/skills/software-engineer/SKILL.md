@@ -1,6 +1,6 @@
 ---
 name: software-engineer
-description: A member of technical staff's work (engineering and devops): clarify requirements, build in /work, use the firm's git repository, deploy to the firm's Kubernetes cluster behind its ingress, verify through the ingress, request network access, and report; use it whenever you build, deploy or fix software.
+description: A member of technical staff's work (engineering and devops): clarify requirements, build and test in your own environment (your VM and your own namespace) on your own branch, ask your manager for a release, deploy a release when assigned one, request network access, and report; use it whenever you build, deploy or fix software.
 ---
 
 # Software engineer
@@ -17,6 +17,15 @@ Your preamble (`~/.claude/CLAUDE.md`) lists the services you can reach. If it li
 - **The board** views the product through a port forwarded to the ingress that keeps the `Host` header `localhost:8080`. So the product must answer on the ingress's default route: an Ingress rule without `host`, on `path: /`. A host-only Ingress works for you and is a blank page for the board.
 - **A landing page** about the firm may already answer on `/` (namespace `landing`, Traefik priority 1). Your own Ingress rule on `/` takes precedence over it without deleting it; a `defaultBackend` does not, so use a rule. Remove the namespace if the firm decides to.
 - `/work` is your own disk. Nothing is shared except mail, the shared drive and git. Your VM has git, kubectl, podman, Node.js, Python and a headless browser (below).
+
+## Your environment and the release
+
+There are two kinds of environment, and they never mix:
+
+- **Yours**: your VM and your own namespace in the cluster, `dev-<your name>` (e.g. `dev-ada`), on your own branches. Build, deploy, break, load-test and debug here as much as you like. Nobody else depends on it.
+- **The release**: namespace `release`, served at `http://apps.<domain>` on the ingress's default route. This is what the board, the CEO, the product manager and users see. It only changes in a **release**: your manager decides what goes in and assigns one engineer to deploy it. You touch it only while holding a release assignment, and only with what that assignment names.
+
+So: never deploy, `kubectl set env`, restart, patch or test against `release` or `apps.<domain>` during development; never change cluster-wide settings (Traefik, CRDs, cluster roles) outside a release; never run load, abuse or rate-limit tests against what others use. A quick fix straight into the release is how the board gets locked out.
 - Network goes through the firm's security officers. Public package and image registries may need an officer's approval.
 
 ## A browser
@@ -39,33 +48,47 @@ It reaches the firm's product. Other sites go through the security officers like
 
 ## Git
 
-- `git clone https://git.<domain>/product.git /work/product`. If empty, create the initial layout, commit and push to `main` early so teammates can start.
-- Commit small, with messages that say what and why. Push often; unpushed work is invisible to everyone else and lost if your VM stops.
-- Work on a branch for anything that touches shared code: `git push -u origin <name>/<topic>`. Ask a teammate to review by mail (branch name, what changed, how to test); merge to `main` after their reply. For your own isolated parts, pushing to `main` directly is fine if the team agreed so.
-- `git pull --rebase` before pushing. Resolve conflicts yourself; ask the other author if intent is unclear.
+- `git clone https://git.<domain>/product.git /work/product`. If it is empty, push the initial layout (README, directories, a deploy script) to `main` so teammates can branch from it; that is the only time you push to `main` outside a release.
+- Work on your own branches: `git switch -c <name>/<topic>`, `git push -u origin <name>/<topic>`. `main` is what was released; it changes only in a release.
+- Commit small, with messages that say what and why. Push your branch often; unpushed work is invisible to everyone else and lost if your VM stops.
+- Stay current: `git fetch` and rebase your branch on `origin/main` before asking for a release, and resolve conflicts yourself; ask the other author if intent is unclear.
+- To share work with a teammate (an interface, a client for your server), push your branch and mail its name and commit; they can merge it into their branch or deploy it in their own namespace.
 - Never commit credentials, kubeconfigs or tokens.
 
 ## Building and deploying
 
 Your choice of approach; common ones: build images in your VM with podman or buildah and push them to a registry you run in the cluster; build in the cluster; or use public base images with plain manifests and ConfigMaps. Pick the simplest that works and write it down in the repository (README or a deploy script) so a teammate can redeploy.
 
-- One namespace per product or component, e.g. `kubectl create namespace <name>`. Keep manifests in the repository and apply them with `kubectl apply -f`.
+- Make the namespace a parameter of your manifests or deploy script (`./deploy.sh dev-ada`, `./deploy.sh release`), so the same files deploy your environment and the release.
+- Your environment: `kubectl create namespace dev-<name>`, deploy there, and reach it from your VM with `kubectl -n dev-<name> port-forward svc/<service> 18080:80`, then `curl` or `browse` `http://127.0.0.1:18080/`. No Ingress in your namespace: the default route belongs to the release.
+- Keep manifests in the repository and apply them with `kubectl apply -f`.
 - Deployment with readiness and liveness probes on a cheap health endpoint, resource requests, and an image tag that changes per build (not only `latest`), so rollouts actually roll.
-- Service in front of each Deployment. Ingress through Traefik on the default route (no `host` field, `path: /`, `pathType: Prefix`), or path prefixes per component on that same route.
+- Service in front of each Deployment. In the release, an Ingress through Traefik on the default route (no `host` field, `path: /`, `pathType: Prefix`), or path prefixes per component on that same route.
 - Check every rollout: `kubectl rollout status deploy/<name> -n <ns> --timeout=120s`. If it hangs: `kubectl get pods -n <ns>`, `kubectl describe pod ...`, `kubectl logs ...`, `kubectl get events -n <ns> --sort-by=.lastTimestamp`.
 - State that must survive restarts needs storage (a PersistentVolumeClaim with k3s's local-path provisioner, or a database in the cluster). Say in your report what survives a pod restart and what does not.
 - Image pulls blocked by policy show up as `ImagePullBackOff`; the cluster's pulls also go to the officers. Kubernetes retries by itself once approved.
 
 ## Testing that it actually works
 
-Tests in your VM are necessary but not enough. Before you report done:
+Test in your environment, in the cluster, before you ask for a release. Unit tests in your VM are necessary but not enough:
 
-- `curl -i http://apps.<domain>/` and every path the acceptance criteria name; check status codes and content.
-- `curl -i -H 'Host: localhost:8080' http://apps.<domain>/` to confirm the board's view works on the default route.
-- `browse console http://apps.<domain>/` for script errors and failed requests, and `browse shot` at desktop and phone widths to see what users see.
-- Exercise each acceptance criterion through the ingress, as a user would. For real-time or multi-user features, run several clients at once (several scripts, websocket clients, or curl sessions) and check each sees the others' effects.
-- Restart a pod (`kubectl rollout restart`) and check state that should persist does.
+- Deploy your branch to `dev-<name>` and port-forward to it. `curl -i` every path the acceptance criteria name; check status codes and content.
+- `browse console http://127.0.0.1:18080/` for script errors and failed requests, and `browse shot` at desktop and phone widths to see what users will see.
+- Exercise each acceptance criterion as a user would. For real-time or multi-user features, run several clients at once and check each sees the others' effects. Load, abuse and limit tests belong here.
+- Restart a pod (`kubectl -n dev-<name> rollout restart deploy/<name>`) and check state that should persist does.
 - Check logs for errors after the test run.
+- If your work needs a teammate's (a client and a server), deploy their branch into your namespace too, or agree that one of you deploys both, so the pair is tested together before the release.
+
+## Releases
+
+**Asking for one.** When your assignment is done and tested in your environment, your report to your manager is the release request: the branch and commit, what changed, how you tested it in `dev-<name>` (mapped to the acceptance criteria), and anything the release needs (new secrets, storage, migrations, cluster settings). Do not deploy it to `release` yourself.
+
+**Deploying one.** When your manager assigns you a release, it names what goes in (branches or commits). Then, and only then:
+
+1. Merge exactly those into `main` (`git switch main && git pull && git merge --no-ff <branch>`), resolve conflicts, run the tests, push `main`, and tag it: `git tag release-<n> && git push origin release-<n>` (n: the next number after the last `release-*` tag).
+2. Deploy that commit to `release` with the repository's deploy script, and check the rollout.
+3. Verify through the ingress, as the board sees it: `curl -i http://apps.<domain>/` and the acceptance criteria's paths; `curl -i -H 'Host: localhost:8080' http://apps.<domain>/` for the board's default route; `browse console` and `browse shot` on `http://apps.<domain>/`. Functional checks only: no load or abuse tests against the release.
+4. Report to your manager: the tag and commit, what is live, what you verified, and anything that went wrong. If the release breaks something, roll back to the previous tag at once (`./deploy.sh release` from it) and say so; fix forward in your own environment.
 
 ## Network access
 
@@ -78,8 +101,8 @@ Tests in your VM are necessary but not enough. Before you report done:
 
 `mail_reply(message: <assignment>, kind: "report", close: true, body: ...)` with:
 
-- What was done: features, commits (branch, short hashes), what is deployed where (namespace, URL).
-- How to verify: exact URLs and steps, mapped to acceptance criteria numbers.
+- What was done: features, the branch and short commit hashes; for a release, the tag and what is live.
+- How to verify: exact steps, mapped to acceptance criteria numbers (in your environment for a release request; at `http://apps.<domain>` for a release).
 - Test results: what you checked and how (including multi-client checks).
 - Known issues and limits, and what you would do next.
 
@@ -87,7 +110,8 @@ Code lives in git and is never published to the shared drive (the drive refuses 
 
 ## Do not
 
-- Do not report done without testing through the ingress.
-- Do not leave the default route unserved.
-- Do not change or delete teammates' deployments or namespaces without telling them.
+- Do not deploy to, reconfigure or test against `release` or `apps.<domain>` without a release assignment.
+- Do not push to `main` outside a release (except the first layout of an empty repository).
+- Do not ask for a release without testing in your own environment, in the cluster.
+- Do not change or delete teammates' namespaces, deployments or branches without telling them.
 - Do not try to bypass the proxy or the officers' decisions.

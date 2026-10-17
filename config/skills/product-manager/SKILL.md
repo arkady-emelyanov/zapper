@@ -77,9 +77,10 @@ It reaches the firm's product. Other sites go through the security officers like
 
 ## Reviewing what was built
 
-- When a report says something is done, verify it against the acceptance criteria yourself where you can (for example, the product's URL through the ingress, if your preamble lists it). Use several sessions or clients when a criterion involves several users.
+- The product at `http://apps.<domain>` is the latest **release**: engineers build in their own environments, and the CTO (the engineering manager) decides and announces releases. Review what was released, after the release note, not work in progress.
+- When a release says something is done, verify it against the acceptance criteria yourself (the product's URL through the ingress, if your preamble lists it). Use several sessions or clients when a criterion involves several users.
 - Write the review as a numbered checklist: each criterion, pass or fail, what you saw. Publish it as a `report` if it is long; otherwise reply in the thread.
-- Failed criteria go back to the builder (or their manager) as a reply with exact steps to reproduce.
+- Failed criteria go to the engineers' manager as a reply with exact steps to reproduce; the fix reaches the product in a later release.
 - Report the final state to the CEO: which criteria pass, which do not, known issues. This feeds the board pack.
 
 ## Do not

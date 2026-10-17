@@ -129,7 +129,7 @@ In the UI: envelopes move along the org chart as workers mail each other, the Me
 zapper firm down acme
 ```
 
-The run stays on disk: `zapper firm runs acme` lists runs, and the UI's Runs menu replays one. The next `zapper firm up acme` starts a fresh run.
+The run stays on disk: `zapper firm runs acme` lists runs, and the UI's Runs tab replays one. The next `zapper firm up acme` starts a fresh run.
 
 ## Next
 

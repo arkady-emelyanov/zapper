@@ -42,6 +42,7 @@ pub fn read_routes() -> Router<Arc<Daemon>> {
         .route("/firms/{f}", get(status))
         .route("/firms/{f}/runs", get(runs))
         .route("/firms/{f}/runs/{run}/journal", get(journal))
+        .route("/firms/{f}/runs/{run}/config", get(run_config))
         .route("/firms/{f}/runs/{run}/transcripts/{worker}", get(transcript))
         .route("/firms/{f}/runs/{run}/drive/{artifact}/{version}/{*path}", get(drive_file))
         .route("/firms/{f}/runs/{run}/git", get(git_log))
@@ -56,7 +57,7 @@ pub fn read_routes() -> Router<Arc<Daemon>> {
         .route("/firms/{f}/security", get(security_state))
 }
 
-/// The board's writes, in the API and the UI.
+/// The board's writes, in the API and the UI: including deleting a past run.
 pub fn board_routes() -> Router<Arc<Daemon>> {
     Router::new()
         .route("/firms/{f}/up", post(up))
@@ -69,11 +70,7 @@ pub fn board_routes() -> Router<Arc<Daemon>> {
         .route("/firms/{f}/security/requests/{id}", post(decide))
         .route("/firms/{f}/security/rules/{id}", delete(revoke))
         .route("/firms/{f}/security/rules/{id}/promote", post(promote))
-}
-
-/// Writes for the API only.
-pub fn api_routes() -> Router<Arc<Daemon>> {
-    Router::new().route("/firms/{f}/runs/{run}", delete(prune))
+        .route("/firms/{f}/runs/{run}", delete(prune))
 }
 
 async fn list(State(d): D) -> Json<Value> {
@@ -115,6 +112,11 @@ async fn status(State(d): D, Path(f): Path<String>) -> R<Json<Value>> {
         })).collect::<Vec<_>>(),
         "run": run.map(|r| r.status()),
     })))
+}
+
+/// The config a run started with (secret values hidden) and its skills.
+async fn run_config(State(d): D, Path((f, run)): Path<(String, String)>) -> R<Json<Value>> {
+    Ok(Json(super::run_config(&super::run_dir(&d, &f, &run)?)))
 }
 
 async fn runs(State(d): D, Path(f): Path<String>) -> R<Json<Value>> {

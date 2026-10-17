@@ -118,7 +118,7 @@ profiles:
       kind: claude-code
       user: agent
       workdir: /work
-      model: claude-opus-5-5
+      model: claude-sonnet-5-5         # the whole firm; the CEO's role sets Opus
       permission_mode: bypassPermissions
       env:
         CLAUDE_CODE_OAUTH_TOKEN: "{{secret:claude}}"
@@ -214,6 +214,7 @@ firms:
       ceo:
         profile: office
         title: CEO
+        model: claude-opus-5-5
         skills: { work: ceo }
         avatar: { figure: ceo, color: "#D97757" }
       product-manager:
@@ -228,23 +229,19 @@ firms:
       engineer:
         profile: office-engineer
         title: Member of Technical Staff
-        model: claude-sonnet-5-5
         skills: { work: software-engineer }
         avatar: { figure: engineer, color: "#6A9BCC" }
       designer:
         profile: office-designer
         title: Product Designer
-        model: claude-sonnet-5-5
         skills: { work: designer }
         avatar: { figure: designer, color: "#C27BA0" }
       researcher:
         profile: office
-        model: claude-sonnet-5-5
         skills: { work: researcher }
         avatar: { figure: researcher, color: "#8E82C2" }
       analyst:
         profile: office
-        model: claude-sonnet-5-5
         skills: { work: analyst }
         avatar: { figure: analyst, color: "#BFA35A" }
       security-officer:

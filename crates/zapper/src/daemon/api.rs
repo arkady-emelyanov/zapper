@@ -100,8 +100,7 @@ pub fn api(daemon: Arc<Daemon>) -> Router {
         .route("/sessions/{id}/attach", get(attach))
         .route("/evaluate", post(evaluate))
         .route("/approvals/{id}", post(answer))
-        .merge(super::office::http::board_routes())
-        .merge(super::office::http::api_routes());
+        .merge(super::office::http::board_routes());
     Router::new().nest("/v1", read_routes().merge(write)).with_state(daemon)
 }
 

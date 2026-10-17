@@ -60,7 +60,7 @@ In a firm ([office](office.md)), each worker is a session, so everything above h
 
 What the office does not defend: workers are free to persuade, mislead or instruct each other through mail and access-request reasons. That is deliberate ([workers manipulating workers](office.md#workers-manipulating-workers)); the controls above are what holds regardless.
 
-Engineers hold real credentials for the firm's services (a cluster-admin kubeconfig and a git password, per run); like any `guest` secret, they can use them anywhere their network rules let them. The UI's writes are wider than before: the board's mail, firm up/down/pause and security decisions, under the same guards as answering approvals.
+Engineers hold real credentials for the firm's services (a cluster-admin kubeconfig and a git password, per run); like any `guest` secret, they can use them anywhere their network rules let them. The UI's writes are wider than before: the board's mail, firm start/stop/pause, security decisions and deleting past runs, under the same guards as answering approvals.
 
 ## Secrets given to a session can be used by it
 

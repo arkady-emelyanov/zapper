@@ -189,7 +189,8 @@ mail='{"to":["ceo"],"subject":"From the UI","body":"hello","kind":"fyi"}'
 [ "$(post "$mail" -b "zapper_token=$token" -H 'x-zapper-ui: 1' -H 'Origin: http://evil.example')" = 403 ] && pass "the board's mail needs a local Origin" || fail "the board's mail needs a local Origin" "not 403"
 [ "$(post "$mail" -b "zapper_token=$token" -H 'x-zapper-ui: 1' -H "Origin: $base")" = 200 ] && pass "the board writes to a worker from the UI" || fail "the board writes to a worker from the UI" "not 200"
 expect "the UI's mail is the board's" "$(journal | grep 'From the UI')" "board → ceo [fyi]"
-[ "$(curl -s -o /dev/null -w '%{http_code}' -X DELETE -b "zapper_token=$token" -H 'x-zapper-ui: 1' -H "Origin: $base" "$base/api/firms/acme/runs/current")" = 405 ] || [ "$(curl -s -o /dev/null -w '%{http_code}' -X DELETE -b "zapper_token=$token" -H 'x-zapper-ui: 1' -H "Origin: $base" "$base/api/firms/acme/runs/current")" = 404 ] && pass "the UI can't delete runs" || fail "the UI can't delete runs" "reachable"
+del_run() { curl -s -o /dev/null -w '%{http_code}' -X DELETE "$@"; }
+[ "$(del_run -b "zapper_token=$token" -H 'x-zapper-ui: 1' -H "Origin: $base" "$base/api/firms/acme/runs/current")" != 200 ] && [ -f "$(ls -d "$T"/state/firms/acme/runs/*/ | tail -1)journal.jsonl" ] && pass "the running run can't be deleted" || fail "the running run can't be deleted" "deleted"
 page=$(curl -s -b "zapper_token=$token" "$base/")
 expect "the UI serves the office page" "$page" "<title>"
 expect "the sessions page moved" "$(curl -s -b "zapper_token=$token" "$base/sessions")" "zapper"
@@ -215,6 +216,11 @@ expect "a published file is served sandboxed" "$(curl -s -D - -o /dev/null -b "z
 expect "a new run starts fresh" "$("$Z" mail ls acme)" "ID"
 refute "with an empty inbox" "$("$Z" mail ls acme)" "Done"
 "$Z" firm down acme > /dev/null
+gone=$("$Z" firm runs acme | sed -n 2p | cut -d' ' -f1)
+[ "$(del_run -b "zapper_token=$token" -H "Origin: $base" "$base/api/firms/acme/runs/$gone")" = 403 ] && pass "deleting a run from the UI needs X-Zapper-UI" || fail "deleting a run from the UI needs X-Zapper-UI" "not 403"
+[ "$(del_run -b "zapper_token=$token" -H 'x-zapper-ui: 1' -H "Origin: $base" "$base/api/firms/acme/runs/$gone")" = 200 ] && pass "the board deletes a finished run from the UI" || fail "the board deletes a finished run from the UI" "not 200"
+refute "the deleted run is gone" "$("$Z" firm runs acme)" "$gone"
+expect "the other run stays" "$("$Z" firm runs acme)" "$run"
 
 if [ -f "$DATA/images/k3s.ext4" ] && [ -f "$DATA/kernels/vmlinux-6.1-k8s" ]; then
     echo "== the cluster, git and the product port"

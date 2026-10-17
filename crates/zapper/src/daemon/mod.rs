@@ -452,11 +452,25 @@ impl Daemon {
 
 pub const REDACTED: &str = "<redacted>";
 
-fn redact(mut c: Config) -> Config {
+pub fn redact(mut c: Config) -> Config {
     for s in c.secrets.values_mut() {
         if let SecretSource::Value { value } = &mut s.source {
             *value = REDACTED.into();
         }
     }
     c
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn redacted_config_hides_inline_secret_values() {
+        let c = Config::from_yaml("secrets:\n  api: { value: s3cr3t-inline, hosts: [api.example.com] }\n  tok: { file: ~/.config/zapper/claude-token, hosts: [api.anthropic.com] }\n").unwrap();
+        let yaml = redact(c).to_yaml();
+        assert!(!yaml.contains("s3cr3t-inline"), "{yaml}");
+        assert!(yaml.contains(REDACTED));
+        assert!(yaml.contains("claude-token"), "file sources are kept: they are paths, not values");
+    }
 }

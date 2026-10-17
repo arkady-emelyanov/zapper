@@ -45,7 +45,6 @@
   .brand .desc { color: var(--muted); font-size: 13px; max-width: 360px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .spark-logo { width: 22px; height: 22px; }
   .hstats { display:flex; align-items:center; gap:10px; margin-left: 6px; flex-wrap: wrap; }
-  .hctl { margin-left:auto; display:flex; align-items:center; gap:8px; flex-wrap: wrap; }
   .pill { display:inline-flex; align-items:center; gap:5px; padding: 1px 9px; border-radius: 999px; font-size: 12px; border: 1px solid var(--line2); color: var(--muted); background: var(--panel); white-space: nowrap; }
   .pill.running, .pill.allow, .pill.allowed, .pill.closed { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
   .pill.paused, .pill.waiting, .pill.pending, .pill.starting, .pill.ask, .pill.escalated, .pill.stopping { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
@@ -80,7 +79,8 @@
   nav.tabs button.on { color: var(--text); border-bottom-color: var(--accent); }
   nav.tabs button:hover, nav.tabs a:hover { color: var(--text); }
   nav.tabs .right { margin-left: auto; }
-  .replaybar { display:flex; align-items:center; gap: 10px; padding: 8px 24px; background: var(--accent-soft); border-top: 1px solid var(--line); flex-wrap: wrap; }
+  .replaybar { display:flex; align-items:center; gap: 10px; padding: 8px 24px; background: var(--accent-soft); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  .replaybar .close { margin-left: 4px; font-size: 16px; line-height: 1; padding: 4px 10px; }
   .replaybar .title { font-family: var(--serif); font-size: 15px; }
   .replaybar input[type=range] { flex: 1; min-width: 200px; accent-color: var(--accent); }
   .seg { display:inline-flex; border: 1px solid var(--line2); border-radius: 9px; overflow: hidden; }
@@ -328,6 +328,28 @@
   .commits .c { display:flex; gap: 10px; padding: 5px 0; border-bottom: 1px dashed var(--line); font-size: 13px; align-items: baseline; }
   .commits .c:last-child { border-bottom: 0; }
 
+  /* a run's config */
+  .cfg { position: fixed; inset: 0; z-index: 60; background: rgba(20,20,19,.35); display:flex; align-items: flex-start; justify-content: center; padding: 40px 24px; }
+  .cfg-card { width: min(1200px, 100%); max-height: calc(100vh - 80px); display:flex; flex-direction: column; padding: 16px 20px; }
+  .cfg-h { display:flex; align-items: baseline; gap: 12px; margin-bottom: 10px; }
+  .cfg-h h2 { margin: 0; font-size: 19px; }
+  .cfg-h .close { margin-left: auto; }
+  .cfg-b { display:grid; grid-template-columns: 220px minmax(0, 1fr); gap: 16px; min-height: 0; flex: 1; }
+  .cfg-nav { overflow: auto; border-right: 1px solid var(--line); padding-right: 8px; }
+  .cfg-i { padding: 4px 8px; border-radius: 6px; cursor: pointer; display:flex; justify-content: space-between; gap: 6px; font-size: 13px; }
+  .cfg-i:hover { background: var(--panel); } .cfg-i.sel { background: var(--accent-soft); }
+  .cfg-r { padding: 10px 8px 2px; text-transform: uppercase; letter-spacing: .5px; }
+  .cfg-main { overflow: auto; min-width: 0; }
+  .cfg-pre { max-height: none; }
+  /* runs */
+  .runs { display:flex; flex-direction: column; gap: 10px; max-width: 980px; }
+  .run { cursor: pointer; padding: 14px 18px; display:flex; flex-direction: column; gap: 6px; }
+  .run:hover { border-color: var(--line2); box-shadow: var(--shadow); }
+  .run.sel { border-color: var(--accent); }
+  .run-h { display:flex; gap: 10px; align-items: center; }
+  .run-t { font-size: 17px; flex: 1; }
+  .run-p { color: var(--text); font-size: 13px; }
+  .run-m { display:flex; gap: 6px; flex-wrap: wrap; }
   /* work: tickets and timeline */
   .tk-board { display:grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; align-items: start; }
   @media (max-width: 1000px) { .tk-board { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
@@ -445,17 +467,17 @@
 </head>
 <body>
 <header>
+  <div class="replaybar hidden" id="replaybar"></div>
   <div class="hrow">
     <div class="brand">
-      <svg class="spark-logo" viewBox="-10 -10 20 20" aria-hidden="true"><g stroke="#D97757" stroke-width="2.2" stroke-linecap="round"><line x1="0" y1="-8" x2="0" y2="-2.5"/><line x1="0" y1="8" x2="0" y2="2.5"/><line x1="-8" y1="0" x2="-2.5" y2="0"/><line x1="8" y1="0" x2="2.5" y2="0"/><line x1="-5.6" y1="-5.6" x2="-1.8" y2="-1.8"/><line x1="5.6" y1="5.6" x2="1.8" y2="1.8"/><line x1="5.6" y1="-5.6" x2="1.8" y2="-1.8"/><line x1="-5.6" y1="5.6" x2="-1.8" y2="1.8"/></g></svg>
+      <!-- The firm's logo, as on the product's landing page (office/facility.rs). -->
+      <svg class="spark-logo" viewBox="0 0 64 64" aria-hidden="true"><g fill="none" stroke="#D97757" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"><circle cx="32" cy="32" r="29"/><path d="M42.16 36.21L36.21 42.16L27.79 42.16L21.84 36.21L21.84 27.79L27.79 21.84L36.21 21.84L42.16 27.79Z"/><path d="M42.16 36.21L42.16 60.23M36.21 42.16L19.23 59.15M27.79 42.16L3.77 42.16M21.84 36.21L4.85 19.23M21.84 27.79L21.84 3.77M27.79 21.84L44.77 4.85M36.21 21.84L60.23 21.84M42.16 27.79L59.15 44.77"/></g></svg>
       <span id="firmpick"></span>
       <h1 id="firmname">office</h1>
       <span class="desc" id="firmdesc"></span>
     </div>
     <div class="hstats" id="hstats"></div>
-    <div class="hctl" id="hctl"></div>
   </div>
-  <div class="replaybar hidden" id="replaybar"></div>
   <nav class="tabs" id="tabs"></nav>
 </header>
 <main>
@@ -467,8 +489,10 @@
   <section class="tab" id="tab-git"></section>
   <section class="tab" id="tab-stats"></section>
   <section class="tab" id="tab-vms"></section>
+  <section class="tab" id="tab-runs"></section>
 </main>
 <footer class="foot" id="foot" aria-label="Run at a glance"></footer>
+<div class="cfg hidden" id="cfg" role="dialog" aria-label="A run's config"></div>
 <aside class="panel" id="panel" aria-label="Worker"></aside>
 <div class="toast hidden" id="toast" role="status"></div>
 <script>
@@ -599,7 +623,7 @@ function completeBytes(text) {
 
 // ────────────────────────────── state ──────────────────────────────
 
-const TABS = [['overview', 'Overview'], ['work', 'Work'], ['messages', 'Messages'], ['security', 'Security'], ['drive', 'Shared drive'], ['git', 'Git'], ['stats', 'Statistics'], ['vms', 'VMs']];
+const TABS = [['overview', 'Overview'], ['work', 'Work'], ['messages', 'Messages'], ['security', 'Security'], ['drive', 'Shared drive'], ['git', 'Git'], ['vms', 'VMs'], ['stats', 'Statistics'], ['runs', 'Runs']];
 const S = {
   firms: [], firm: null, info: null, tab: 'overview',
   mode: 'live',          // 'live' or 'replay'
@@ -2844,6 +2868,108 @@ function gitCommitView(c) {
     diff, c.truncated ? el('div', { class: 'muted small' }, 'Diff cut at 1 MB.') : '');
 }
 
+// ─────────────────────────────── runs ───────────────────────────────
+//
+// The firm's runs that the board kicked off, with what each was asked to
+// build; a run opens in replay. Runs nobody gave a task are left out.
+
+const RUNS = { list: null, at: 0, busy: false, err: null, sig: null };
+
+function mountRuns() {
+  $('tab-runs').replaceChildren(el('div', { class: 'ovhead' }, el('h2', { class: 'sec', style: 'margin:0' }, 'Runs'), el('span', { class: 'muted', id: 'runs-sub' })), el('div', { id: 'runs-body' }, el('div', { class: 'empty card' }, 'Loading…')));
+  RUNS.sig = null;
+}
+async function loadRuns() {
+  if (RUNS.busy || !S.firm) return;
+  RUNS.busy = true;
+  try { RUNS.list = arr(await api(F() + '/runs')); RUNS.err = null; } catch (e) { RUNS.err = e.message; }
+  RUNS.busy = false; RUNS.at = Date.now(); RUNS.sig = null;
+  scheduleRender();
+}
+function updateRuns() {
+  const body = $('runs-body');
+  if (!body) return;
+  if (!RUNS.at || Date.now() - RUNS.at > 15000) loadRuns();
+  const liveRun = S.info && S.info.run ? str(S.info.run.id || S.info.run.run) : '';
+  const sig = [RUNS.at, S.mode, S.run, liveRun].join('|');
+  if (sig === RUNS.sig) return;
+  RUNS.sig = sig;
+  if (RUNS.err) { body.replaceChildren(el('div', { class: 'empty card' }, 'Could not list the runs: ' + RUNS.err)); return; }
+  if (!RUNS.list) return;
+  const shown = RUNS.list.filter((r) => r.kickoff);
+  const hidden = RUNS.list.length - shown.length;
+  $('runs-sub').textContent = shown.length + ' run' + (shown.length === 1 ? '' : 's') + ' of ' + S.firm + (hidden ? ' · ' + hidden + ' never given a task, not listed' : '');
+  if (!shown.length) { body.replaceChildren(el('div', { class: 'empty card' }, 'No runs yet. Start the firm and give the CEO a task; each run is listed here and can be replayed.')); return; }
+  body.replaceChildren(el('div', { class: 'runs' }, ...shown.map((r) => runCard(r, liveRun))));
+}
+function runCard(r, liveRun) {
+  const id = str(r.run), k = r.kickoff || {};
+  const isLive = id === liveRun && !r.ended && (!r.state || !['ended', 'failed'].includes(str(r.state)));
+  const open = S.mode === 'replay' && S.run === id;
+  const started = Number(r.started) || Number(k.ts) || 0, last = Number(r.last) || started;
+  const go = () => { if (isLive) { if (S.mode === 'replay') backToLive(); else showTab(S.prevTab || 'overview'); } else enterReplay(id); };
+  const del = el('button', { class: 'btn small danger', type: 'button', title: isLive ? 'Stop the firm to delete this run' : 'Delete this run: its mail, transcripts, shared drive and git repository',
+    disabled: isLive, onclick: async (ev) => {
+      ev.stopPropagation();
+      if (!confirm('Delete run ' + id + ' ("' + clip(str(k.subject), 60) + '")? Its mail, transcripts, shared drive and git repository are removed for good.')) return;
+      try {
+        await write('DELETE', F() + '/runs/' + enc(id));
+        if (S.mode === 'replay' && S.run === id) backToLive();
+        toast('Deleted run ' + id);
+      } catch (e) { toast(e.message, true); }
+      RUNS.at = 0; loadRuns();
+    } }, 'Delete');
+  const cfg = el('button', { class: 'btn small', type: 'button', title: 'The config and skills this run started with', onclick: (ev) => { ev.stopPropagation(); openRunConfig(id); } }, 'Config');
+  return el('div', { class: 'run card' + (open ? ' sel' : ''), tabindex: 0, role: 'button', title: isLive ? 'The running firm' : 'Replay this run', onclick: go,
+    onkeydown: (ev) => { if (ev.key === 'Enter') go(); } },
+    el('div', { class: 'run-h' }, el('span', { class: 'serif run-t' }, clip(str(k.subject) || '(no subject)', 120)),
+      isLive ? pill('running', 'live') : open ? pill('accent', 'replaying') : '', cfg, del),
+    k.preview ? el('div', { class: 'run-p' }, clip(str(k.preview), 240)) : '',
+    el('div', { class: 'muted small run-m' },
+      el('span', { class: 'mono' }, id), el('span', {}, '· ' + fmtDate(started)), el('span', {}, '· ' + fmtDur(Math.max(0, last - started)) + (isLive ? ' so far' : '')),
+      el('span', {}, '· ' + (Number(r.messages) || 0) + ' messages'), el('span', {}, '· to ' + arr(k.to).map(str).join(', '))));
+}
+
+// A run's config: the whole zapper config it started with (secret values
+// hidden) and every role's skills, as they were.
+const CFG = { run: null, data: null, sel: 'config' };
+async function openRunConfig(run) {
+  const box = $('cfg');
+  CFG.run = run; CFG.data = null; CFG.sel = 'config';
+  box.classList.remove('hidden');
+  renderRunConfig();
+  try { CFG.data = await api(runPath(run) + '/config'); } catch (e) { CFG.data = { error: e.message }; }
+  if (CFG.run === run) renderRunConfig();
+}
+function closeRunConfig() { CFG.run = null; $('cfg').classList.add('hidden'); }
+function renderRunConfig() {
+  const box = $('cfg'), d = CFG.data;
+  const head = el('div', { class: 'cfg-h' }, el('h2', { class: 'serif' }, 'Config of run ', el('span', { class: 'mono' }, CFG.run)),
+    el('span', { class: 'muted small' }, 'as it started: the whole config, secret values hidden, and the skills each role had'),
+    el('button', { class: 'btn ghost close', type: 'button', title: 'Close', 'aria-label': 'Close', onclick: closeRunConfig }, '✕'));
+  if (!d) { box.replaceChildren(el('div', { class: 'cfg-card card' }, head, el('div', { class: 'muted' }, 'Loading…'))); return; }
+  if (d.error) { box.replaceChildren(el('div', { class: 'cfg-card card' }, head, el('div', { class: 'empty' }, d.error))); return; }
+  const skills = arr(d.skills);
+  const item = (key, label, sub) => el('div', { class: 'cfg-i' + (CFG.sel === key ? ' sel' : ''), onclick: () => { CFG.sel = key; renderRunConfig(); } }, label, sub ? el('span', { class: 'muted small' }, sub) : '');
+  const nav = [item('config', 'zapper.yaml', d.config == null ? 'not kept' : '')];
+  let role = null;
+  skills.forEach((x, i) => {
+    if (x.role !== role) { role = str(x.role); nav.push(el('div', { class: 'cfg-r muted small' }, role)); }
+    nav.push(item('s' + i, str(x.skill), ''));
+  });
+  let main;
+  if (CFG.sel === 'config') {
+    main = d.config == null ? el('div', { class: 'empty' }, 'This run started before runs kept their config. Its skills are listed on the left.')
+      : el('pre', { class: 'mono git-pre cfg-pre' }, str(d.config));
+  } else {
+    const x = skills[Number(CFG.sel.slice(1))] || {};
+    main = el('div', {}, el('div', { class: 'muted small', style: 'margin-bottom:8px' }, str(x.role) + ' / ' + str(x.skill) + '/SKILL.md' + (arr(x.files).length ? ' · also ' + arr(x.files).map(str).join(', ') : '')),
+      x.text == null ? el('div', { class: 'empty' }, 'No SKILL.md.') : renderMarkdown(str(x.text)));
+  }
+  box.replaceChildren(el('div', { class: 'cfg-card card' }, head, el('div', { class: 'cfg-b' }, el('div', { class: 'cfg-nav' }, ...nav), el('div', { class: 'cfg-main' }, main))));
+}
+document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && CFG.run) closeRunConfig(); });
+
 // ─────────────────────────────── work ───────────────────────────────
 //
 // Assignments as tickets, derived from the mail: an assignment is a ticket
@@ -3142,30 +3268,15 @@ function updateStats() {
 
 // ───────────────────────────── header ─────────────────────────────
 
-const HDR = { ctl: null, runs: null };
 
 function buildHeader() {
   const nav = $('tabs');
   nav.replaceChildren();
   for (const [t, l] of TABS) {
-    const b = el('button', { type: 'button', onclick: () => showTab(t) }, l, el('span', { class: 'badge warn hidden', id: 'tb-' + t }));
+    const b = el('button', { type: 'button', class: t === 'runs' ? 'right' : null, onclick: () => showTab(t) }, l, el('span', { class: 'badge warn hidden', id: 'tb-' + t }));
     b.dataset.t = t;
     nav.append(b);
   }
-  HDR.ctl = el('span', { style: 'display:flex;gap:8px;align-items:center' });
-  const pop = el('div', { class: 'pop' });
-  HDR.runs = el('details', { class: 'menu', ontoggle: () => { if (HDR.runs.open) loadRuns(pop); } }, el('summary', { class: 'btn' }, 'Runs ▾'), pop);
-  $('hctl').replaceChildren(HDR.ctl, HDR.runs);
-  document.addEventListener('click', (ev) => { if (HDR.runs.open && !HDR.runs.contains(ev.target)) HDR.runs.open = false; });
-}
-async function loadRuns(pop) {
-  pop.replaceChildren(el('div', { class: 'muted', style: 'padding:8px' }, 'Loading…'));
-  try {
-    const runs = arr(await api(F() + '/runs'));
-    pop.replaceChildren(...(runs.length ? runs.map((r) => el('div', { class: 'item', onclick: () => { HDR.runs.open = false; enterReplay(str(r.run)); } },
-      el('span', {}, el('span', { class: 'mono' }, str(r.run)), el('div', { class: 'muted small' }, r.started ? fmtDate(Number(r.started)) : '', ' · ', fmtBytes(r.journal_bytes))),
-      r.state ? pill(str(r.state), str(r.state)) : el('span', { class: 'muted small' }, 'replay'))) : [el('div', { class: 'muted', style: 'padding:8px' }, 'No runs yet.')]));
-  } catch (e) { pop.replaceChildren(el('div', { class: 'muted', style: 'padding:8px' }, e.message)); }
 }
 function renderHeader() {
   const M = S.M;
@@ -3182,27 +3293,30 @@ function renderHeader() {
   $('firmdesc').textContent = (S.info && S.info.description) || (M && M.description) || '';
   document.title = (S.firm ? S.firm + ' · ' : '') + 'zapper office';
   const st = live() ? (S.info && S.info.run ? str(S.info.run.state) : 'off') : (M && M.runState) || 'starting';
-  const stats = [pill(st, st)];
+  // The firm controls sit where its state is: Start instead of "off",
+  // the state with Pause and Stop while it runs.
+  const stats = [];
+  if (live() && S.firm) {
+    const rs = S.info && S.info.run ? str(S.info.run.state) : null;
+    const active = rs && !['ended', 'failed'].includes(rs);
+    if (!active) stats.push(el('button', { class: 'btn primary small', type: 'button', title: S.firm + ' is off: start a fresh run', onclick: () => firmOp('up') }, 'Start'));
+    else stats.push(pill(st, st));
+    if (rs === 'running') stats.push(el('button', { class: 'btn small', type: 'button', onclick: () => firmOp('pause', { paused: true }) }, 'Pause'));
+    if (rs === 'paused') stats.push(el('button', { class: 'btn small', type: 'button', onclick: () => firmOp('pause', { paused: false }) }, 'Resume'));
+    if (active) stats.push(el('button', { class: 'btn danger small', type: 'button', onclick: () => { if (confirm('Stop ' + S.firm + '? Workers stop and the run ends; it can be replayed from Runs, and the next Start begins a fresh run.')) firmOp('down'); } }, 'Stop'));
+  } else stats.push(pill(st, st));
   if (M && M.overBudget && (S.mode === 'replay' || (S.info && S.info.run))) stats.push(pill('error', 'budget reached'));
   const esc = M ? escalationsWaiting(M).length : 0;
   if (esc) stats.push(el('button', { class: 'btn small', type: 'button', onclick: () => showTab('security') }, el('span', { class: 'badge warn' }, String(esc)), ' waiting for the board'));
   if (live() && S.boardUnread.size) stats.push(el('button', { class: 'btn small', type: 'button', onclick: () => { MSG.view = 'inbox'; MSG.sig = null; showTab('messages'); } }, el('span', { class: 'badge' }, String(S.boardUnread.size)), ' unread'));
-  $('hstats').replaceChildren(...stats);
+  // Rebuilt only when something in it changes, so a click isn't lost to a
+  // render between press and release.
+  const hsig = [S.mode, S.firm, st, live() && S.info && S.info.run ? str(S.info.run.state) : '', M && M.overBudget, esc, live() ? S.boardUnread.size : 0].join('|');
+  if ($('hstats').dataset.sig !== hsig) { $('hstats').dataset.sig = hsig; $('hstats').replaceChildren(...stats); }
   const tbSec = $('tb-security');
   if (tbSec) { tbSec.textContent = String(esc); tbSec.classList.toggle('hidden', !esc); }
   const tbMsg = $('tb-messages');
   if (tbMsg) { const n = live() ? S.boardUnread.size : 0; tbMsg.textContent = String(n); tbMsg.className = 'badge' + (n ? '' : ' hidden'); }
-  // Controls.
-  const ctl = [];
-  if (live() && S.firm) {
-    const rs = S.info && S.info.run ? str(S.info.run.state) : null;
-    const active = rs && !['ended', 'failed'].includes(rs);
-    if (!active) ctl.push(el('button', { class: 'btn primary', type: 'button', onclick: () => firmOp('up') }, 'Up'));
-    if (rs === 'running') ctl.push(el('button', { class: 'btn', type: 'button', onclick: () => firmOp('pause', { paused: true }) }, 'Pause'));
-    if (rs === 'paused') ctl.push(el('button', { class: 'btn', type: 'button', onclick: () => firmOp('pause', { paused: false }) }, 'Resume'));
-    if (active) ctl.push(el('button', { class: 'btn danger', type: 'button', onclick: () => { if (confirm('Take ' + S.firm + ' down? Workers stop and the run ends; the next Up starts a fresh run.')) firmOp('down'); } }, 'Down'));
-  }
-  HDR.ctl.replaceChildren(...ctl);
 }
 // ────────────────────────────── footer ──────────────────────────────
 //
@@ -3272,7 +3386,7 @@ async function footCommits() {
 async function firmOp(op, body) {
   try {
     await write('POST', F() + '/' + op, body === undefined ? {} : body);
-    toast(op === 'up' ? 'Starting ' + S.firm + '…' : op === 'down' ? S.firm + ' is going down' : body && body.paused ? 'Paused' : 'Resumed');
+    toast(op === 'up' ? 'Starting ' + S.firm + '…' : op === 'down' ? 'Stopping ' + S.firm + '…' : body && body.paused ? 'Paused' : 'Resumed');
   } catch (e) { toast(e.message, true); }
   loadFirm();
 }
@@ -3281,6 +3395,7 @@ async function firmOp(op, body) {
 
 function showTab(t) {
   if (!TABS.some(([x]) => x === t)) t = 'overview';
+  if (t === 'runs' && S.tab !== 'runs') { S.prevTab = S.tab; RUNS.at = 0; }
   S.tab = t;
   for (const s of document.querySelectorAll('section.tab')) s.classList.toggle('on', s.id === 'tab-' + t);
   for (const b of $('tabs').querySelectorAll('button')) b.classList.toggle('on', b.dataset.t === t);
@@ -3292,7 +3407,7 @@ function showTab(t) {
   if (t === 'overview') requestAnimationFrame(fitOverview);
 }
 function mountAll() {
-  mountOverview(); mountWork(); mountMessages(); mountSecurity(); mountDrive(); mountGit(); mountStats(); mountVms();
+  mountOverview(); mountWork(); mountRuns(); mountMessages(); mountSecurity(); mountDrive(); mountGit(); mountStats(); mountVms();
   MSG.thread = null; MSG.treeRoot = null; MSG.compose = false; MSG.reply = null;
   DRV.sel = null; SEC.traffic = []; SEC.trafficAt = 0; S.security = null;
 }
@@ -3311,6 +3426,7 @@ function render() {
   try {
     if (S.tab === 'overview') updateOverview();
     else if (S.tab === 'work') updateWork();
+    else if (S.tab === 'runs') updateRuns();
     else if (S.tab === 'messages') updateMessages();
     else if (S.tab === 'security') updateSecurity();
     else if (S.tab === 'drive') updateDrive();
@@ -3439,11 +3555,14 @@ function stopReplay() {
   if (S.rp) S.rp.timer = null;
 }
 async function enterReplay(run) {
+  // Where ✕ returns to: the tab before Runs (or before this replay).
+  if (S.mode !== 'replay') S.returnTab = S.tab === 'runs' ? S.prevTab || 'overview' : S.tab;
   stopLive(); stopReplay();
   const gen = ++S.gen;
   closePanel();
   S.mode = 'replay'; S.run = run; S.M = newModel(); S.seen = new Set(); S.rp = null;
   mountAll();
+  if (S.tab === 'runs') showTab('overview');
   setHash();
   let text;
   try { text = await api(runPath(run) + '/journal'); } catch (e) { toast('Can\'t open run ' + run + ': ' + e.message, true); if (gen === S.gen) backToLive(); return; }
@@ -3451,7 +3570,7 @@ async function enterReplay(run) {
   const events = parseLines(typeof text === 'string' ? text : '').filter((e) => isFinite(Number(e.ts)))
     .map((e, i) => [e, i]).sort((a, b) => Number(a[0].ts) - Number(b[0].ts) || a[1] - b[1]).map(([e]) => Object.assign(e, { ts: Number(e.ts) }));
   if (!events.length) { toast('Run ' + run + ' has no events.', true); backToLive(); return; }
-  S.rp = { events, idx: 0, t0: events[0].ts, t1: events[events.length - 1].ts, pos: events[0].ts, playing: false, speed: 10, timer: null, skip: true, last: 0 };
+  S.rp = { events, idx: 0, t0: events[0].ts, t1: events[events.length - 1].ts, pos: events[0].ts, playing: false, speed: 10, timer: null, skip: false, last: 0 };
   buildReplayBar();
   seek(S.rp.t0, false);
 }
@@ -3462,7 +3581,8 @@ function backToLive() {
   closePanel();
   $('replaybar').classList.add('hidden');
   mountAll();
-  setHash();
+  showTab(S.returnTab || 'overview');
+  S.returnTab = null;
   loadFirm();
 }
 function seek(t, animate) {
@@ -3505,7 +3625,7 @@ function buildReplayBar() {
   const rp = S.rp, bar = $('replaybar');
   const playBtn = el('button', { class: 'btn primary', type: 'button', id: 'rp-play', onclick: () => play(!rp.playing) }, 'Play');
   const speeds = el('div', { class: 'seg' });
-  for (const s of [1, 10, 60]) {
+  for (const s of [1, 10, 60, 120]) {
     const b = el('button', { type: 'button', onclick: () => { rp.speed = s; updateReplayBar(); } }, s + '×');
     b.dataset.s = String(s);
     speeds.append(b);
@@ -3518,8 +3638,9 @@ function buildReplayBar() {
     el('button', { class: 'btn', type: 'button', title: 'Jump to the next event', onclick: () => { const n = rp.events[rp.idx]; if (n) seek(n.ts, true); } }, 'Next event ⏭'),
     slider,
     el('span', { class: 'mono small', id: 'rp-time' }),
-    el('label', { class: 'small muted', style: 'display:flex;gap:4px;align-items:center' }, el('input', { type: 'checkbox', checked: true, onchange: (ev) => { rp.skip = ev.target.checked; } }), 'skip quiet stretches'),
-    el('button', { class: 'btn', type: 'button', onclick: backToLive }, 'Back to live'));
+    el('label', { class: 'small muted', style: 'display:flex;gap:4px;align-items:center' }, el('input', { type: 'checkbox', checked: rp.skip, onchange: (ev) => { rp.skip = ev.target.checked; } }), 'skip quiet stretches'),
+    el('button', { class: 'btn small', type: 'button', title: 'The config and skills this run started with', onclick: () => openRunConfig(S.run) }, 'Config'),
+    el('button', { class: 'btn ghost close', type: 'button', title: 'Close the replay', 'aria-label': 'Close the replay', onclick: backToLive }, '✕'));
   bar.classList.remove('hidden');
   updateReplayBar();
 }
