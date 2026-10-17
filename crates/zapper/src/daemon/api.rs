@@ -130,7 +130,6 @@ pub fn ui(daemon: Arc<Daemon>, port: u16) -> Router {
             "/api",
             read_routes()
                 .route("/approvals/{id}", post(answer))
-                .route("/ui/events", post(ui_events))
                 .merge(super::office::http::board_routes()),
         )
         .layer(middleware::from_fn_with_state(
@@ -488,26 +487,6 @@ async fn list_sessions(State(d): D) -> Json<Vec<session::SessionInfo>> {
 
 async fn get_session(State(d): D, Path(id): Path<String>) -> R<Json<session::SessionInfo>> {
     Ok(Json(d.session(&id)?.info()))
-}
-
-/// The UI's events (clicks), from the pages, to the configured sinks.
-async fn ui_events(State(d): D, text: String) -> R<Json<Value>> {
-    if d.ui_events.is_empty() {
-        return Ok(Json(json!({ "taken": 0 })));
-    }
-    if text.len() > 256 << 10 {
-        return Err(ApiError(
-            StatusCode::PAYLOAD_TOO_LARGE,
-            "too many events at once".into(),
-        ));
-    }
-    let v: Value = serde_json::from_str(&text)
-        .map_err(|e| ApiError(StatusCode::BAD_REQUEST, format!("body: {e}")))?;
-    let n = d
-        .ui_events
-        .take(&v)
-        .map_err(|e| ApiError(StatusCode::BAD_REQUEST, format!("{e:#}")))?;
-    Ok(Json(json!({ "taken": n })))
 }
 
 /// Who keeps the record, and whether it is being written.

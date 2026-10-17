@@ -396,33 +396,6 @@ es.onmessage = (m) => {
 
 show('sessions');
 setInterval(refresh, 3000);
-
-// ─────────────────────────── UI events ───────────────────────────
-//
-// Every click goes to the daemon in small batches, which hands it to its
-// event sinks (stdout by default; see daemon.ui_events). What was clicked
-// is described by its tag, id, classes, text and label, with the page's
-// context.
-const UIEV = { queue: [], timer: null };
-function describeClick(t) {
-  const e = t.closest('button, a, summary, input, select, textarea, label, [role=button], tr.click, .node, .li, .tk, .run, .gc, .git-row, .vrow, .chip, .fi') || t;
-  const label = e.getAttribute('aria-label') || e.getAttribute('title') || '';
-  const data = Object.entries(e.dataset || {}).map(([k, v]) => k + '=' + v).join(' ');
-  return { tag: e.tagName.toLowerCase(), id: e.id || '', class: String(e.className && e.className.baseVal != null ? e.className.baseVal : e.className || '').split(/\s+/).slice(0, 4).join(' '),
-    text: (e.type === 'password' ? '' : (e.innerText || e.value || e.textContent || '')).replace(/\s+/g, ' ').trim().slice(0, 120), label: label.slice(0, 120), role: e.getAttribute('role') || '', data: data.slice(0, 120) };
-}
-function flushUiEvents(final) {
-  if (!UIEV.queue.length) return;
-  const batch = UIEV.queue.splice(0, 100);
-  fetch('/api/ui/events', { method: 'POST', keepalive: !!final, headers: { 'X-Zapper-UI': '1', 'content-type': 'application/json' }, body: JSON.stringify(batch) }).catch(() => {});
-}
-document.addEventListener('click', (ev) => {
-  if (!(ev.target instanceof Element)) return;
-  UIEV.queue.push(Object.assign({ kind: 'click', ts: Date.now() / 1000, target: describeClick(ev.target) }, { page: 'sessions', tab: (document.querySelector('#nav button.on') || {}).textContent || '' }));
-  if (UIEV.queue.length >= 20) flushUiEvents(false);
-  else if (!UIEV.timer) UIEV.timer = setTimeout(() => { UIEV.timer = null; flushUiEvents(false); }, 2000);
-}, true);
-document.addEventListener('visibilitychange', () => { if (document.hidden) flushUiEvents(true); });
 </script>
 </body>
 </html>

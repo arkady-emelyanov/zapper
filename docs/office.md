@@ -59,14 +59,13 @@ firms:
       security-officer:
         profile: office-security           # wide network, no secrets
         skills: { work: security-review }
+        officer: true                      # hired, they take security over once cleared
         avatar: { figure: shield, color: "#788C5D" }
       # product-manager (hires designers, researchers, analysts), manager (hires engineers …), researcher, analyst …
-    workers:                               # the founders; everyone else is hired during the run
+    workers:                               # the founder; everyone else is hired during the run
       - { name: barbara,  role: ceo }
-      - { name: radia,    role: security-officer, reports_to: barbara }
     names: [dennis, margaret, ada, grace, iris, ken]   # for hires whose hirer doesn't name them
     security:
-      officers: [radia]
       digest_every: { minutes: 10, requests: 200 }
       answer_within: 15m                   # then the board is asked too
 ```
@@ -101,11 +100,11 @@ Each worker is a VM sized by its role's profile. `firm up` checks the founders a
 
 ## The workforce: hiring and budgets
 
-A firm with `budget.seed` starts with its **founders** (the CEO, and the security officers unless the board lets the CEO hold security) and grows to fit the task.
+A company starts with its **CEO** alone, who also holds security until they hire a security officer, and grows to fit the task.
 
 ### The charter
 
-Every run has a charter: the company's law, which the office enforces and every worker reads in their preamble. Its articles are fixed (the board, money, hiring, security, internal names, mail, the record); the board sets the terms when it starts the company (the seed, security's share of every grant, who holds security at the start, workers in a turn at once, turns a day) and may add its own articles, which bind everyone in the firm. The start form in Kickoff shows the charter with those terms in place; `zapper firm up` takes them as flags. The terms and the board's articles are in the run's journal and `run.json`.
+Every run has a charter: the company's law, which the office enforces and every worker reads in their preamble. Its articles are fixed (the board, money, hiring, security, security's money, internal names, mail, the record); the board sets the terms when it starts the company (the seed, security's share of every grant, agent parallelism, turns a day) and may add its own articles, which bind everyone in the firm. The start form in Kickoff shows the charter with those terms in place; `zapper firm up` takes them as flags. The terms and the board's articles are in the run's journal and `run.json`.
 
 ### Contractors
 
@@ -121,11 +120,11 @@ Not negotiable: access (the role's profile), authority, and the hirer's own bala
 
 ### Who holds security
 
-Security is never unheld. The board starts the company either with a founding security officer, or with the CEO holding security alone (the start form's choice, `--ceo-holds-security`). While the CEO holds it, colleagues' access requests and background checks go to the CEO, who works by the security-review skill too; the CEO's own requests, and background checks on the CEO's own hires, go to the board, since nobody decides their own. When the firm needs a dedicated officer, the CEO hires one (a role with `officer: true`, like `security-officer` in the example). Once their background check clears they join the officers, the CEO stops holding security, and what the CEO had waiting moves to them, as do all pending background checks (including those on the CEO's own hires, which went to the board) and access requests that went to the board only for want of an officer; the board can still decide any of them. If the last officer leaves, security returns to the CEO. Each change is a `security` event in the journal, and the board is told when an officer leaves. Founding officers are the board's appointees: only the board lets them go; a hired officer's managers can, and the board is told.
+Security is never unheld. A company starts with the CEO holding it. While the CEO holds it, colleagues' access requests and background checks go to the CEO, who works by the security-review skill too; the CEO's own requests, and background checks on the CEO's own hires, go to the board, since nobody decides their own. When the firm needs a dedicated officer, the CEO hires one (a role with `officer: true`, like `security-officer` in the example). Once their background check clears they join the officers, the CEO stops holding security, and what the CEO had waiting moves to them, as do all pending background checks (including those on the CEO's own hires, which went to the board) and access requests that went to the board only for want of an officer; the board can still decide any of them. If the last officer leaves, security returns to the CEO. Each change is a `security` event in the journal, and the board is told when an officer leaves. A hired officer's managers can let them go, and the board is told. (A config can still list founding officers in `security.officers`, which the e2e tests use; only the board lets them go.)
 
 ### The deal with the board
 
-1. **The board gives the task** to the CEO, in the Kickoff tab or with `zapper mail send`. The CEO has the seed (the security officers get their share of it too): enough to scope the task, not to build it, and before a budget is approved nobody can hire.
+1. **The board gives the task** to the CEO, in the Kickoff tab or with `zapper mail send`. The CEO has the seed: enough to scope the task, not to build it, and before a budget is approved nobody can hire.
 2. **The CEO asks for a budget**: `budget_request(total, plan, reason)` mails the board a request (`b-1`, …) with one total in tokens, a short plan and a reason.
 3. **The board approves or declines** in the Kickoff tab, or with `zapper firm budget acme approve b-1` / `decline b-1 --note "…"`. Its answer is a reply in the request's thread, so the whole negotiation is in Messages. A decline sends the CEO back to revise.
 4. **Approval funds the run**: `security_share` of it goes to the officers, the rest to the CEO (all of it while the CEO holds security alone). Later requests for more work the same way.
@@ -405,7 +404,7 @@ A facility VM running k3s on one node, booted first by `firm up`. Workers boot o
 - **Inbound**: the agent in the cluster VM forwards vsock ports to `127.0.0.1:6443`, `:80` and `:443`. Only the host (CID 2) can connect, as with terminals; the daemon connects when a worker's allowed connection to a facility name arrives.
 - **Egress**: the cluster pulls images through the proxy like any session. The example profile allows the common registries on port 443 (`registry-1.docker.io`, `auth.docker.io`, Docker's blob host, `ghcr.io` and its blob host, `quay.io`); anything else asks the officers. The air-gap bundle includes busybox, which needs no pull. The request names the facility instead of a worker. Kubernetes retries pulls by itself, so an approval takes effect without anyone being woken.
 - **No shell for workers**: engineers get the API and the ingress, nothing on the node. The board can `zapper exec --system` into the cluster VM.
-- **A dashboard for the board**: with `dashboard_port: 127.0.0.1:8081`, Headlamp (pinned in the k3s image, no pull) runs in namespace `dashboard` on a NodePort that only that local port reaches; workers can't. The UI's Overview and the cluster's card in the VMs tab show a **Kubernetes dashboard** button and **Copy token**, a cluster-admin service-account token of this run to sign in with.
+- **A dashboard for the board**: with `dashboard_port: 127.0.0.1:8081`, Headlamp (pinned in the k3s image, no pull) runs in namespace `dashboard` on a NodePort that only that local port reaches; workers can't. The UI's Organization tab and the cluster's card in the VMs tab show a **Kubernetes dashboard** button and **Copy token**, a cluster-admin service-account token of this run to sign in with.
 - **A landing page from the start**: with `landing: { name: "Acme Inc.", motto: "Building digital worlds!" }`, the cluster serves a static page about the firm as soon as Traefik is up, so the product port shows something before anyone has built anything. It runs in namespace `landing` from the air-gap images (no pull), behind an Ingress on `/` at Traefik's lowest priority: any Ingress the engineers add on `/` takes over without removing it. The name defaults to the firm's name with "Inc.".
 
 ### Credentials
@@ -452,7 +451,7 @@ The UI has a tab bar for the office. zapper's own views of sessions (network, te
 | Tab | For |
 |---|---|
 | Kickoff | The board's deal with the CEO: the task, their conversation, budget requests to approve or decline, and the run in numbers |
-| Overview | The firm at a glance, and writing to any worker |
+| Organization | The firm at a glance, and writing to any worker |
 | Work | Assignments as tickets: a board by status and a timeline of who worked on what |
 | Messages | All mail in the firm |
 | Security | What officers approved, what they decided, and why |
@@ -472,14 +471,14 @@ The UI's state is built by folding the run's journal in the browser: live, it fo
 
 The first tab, where the UI opens. The board talks only with the CEO here:
 
-- **Start a company**: while none is running, the tab is only a form in the middle: the company's name, the CEO (name, and an optional extra prompt), the security officer (the same), and the [charter](#the-charter): its articles, with the terms in place (the seed and security's share under Money, who holds security under Security, the pace) and a box for the board's own articles. They apply to that run only; the config stays as it is. An extra prompt goes into that founder's preamble as the board's instructions, taking precedence over their skill, and is part of the run's record. Once running, the tab is headed by the company's name, its CEO, who holds security and the run's charter, with **Start a new company** (which ends the current run, after confirming).
+- **Start a company**: while none is running, the tab is only a form in the middle: the company's name, the CEO (name, and an optional extra prompt), and the [charter](#the-charter): its articles, with the terms in place (the seed and security's share under Money, the pace) and a box for the board's own articles. The company starts with the CEO alone. They apply to that run only; the config stays as it is. The extra prompt goes into the CEO's preamble as the board's instructions, taking precedence over their skill, and is part of the run's record. Once running, the tab is headed by the company's name, its CEO, who holds security and the run's charter, with **Start a new company** (which ends the current run, after confirming).
 - **Give the CEO the task**: the conversation with the CEO, oldest first, and a form to write to them (a new thread or a reply), with attachments.
 - **A budget request** is the CEO's message in the conversation (and in Messages): its header has **Approve** and **Decline** while it waits (a decline asks for a note to the CEO), and its state once decided. The header shows "Budget 32k · 31k left" and a badge while a request waits.
 - **The run in numbers**: budget (seed and approved), spent, left, burn rate and runway, team (hired, left), assignments closed; spending by team (the CEO, each direct report's whole team, security); and the history of budget requests, each linked to its thread.
 
-### Overview
+### Organization
 
-While no company is running, Overview shows nothing but a pointer to Kickoff.
+While no company is running, Organization shows nothing but a pointer to Kickoff.
 
 - **Org chart**: the live tree, top to bottom: the founders, and each hire as they join (a node fades in under the hirer); someone let go leaves it. With a run budget, each node has a bar of what they spent of what they were given. Each node is the worker's animated avatar, name, title and a one-line status ("drafting pricing.md", "waiting for ada", "overdue: 1"). Envelopes animate along the edges as mail is sent, also between workers who aren't directly connected; a badge shows unread mail. The board sits above the CEO as its own node.
 - **Click a worker** to open a side panel:
@@ -494,7 +493,7 @@ While no company is running, Overview shows nothing but a pointer to Kickoff.
 
 Every assignment is a ticket, derived from the mail, so workers have nothing extra to maintain. An assignment to several workers is a ticket for each. A report closes the ticket, and an assignment sent while working on another is its sub-task.
 
-- **Board**: columns **To do** (not read yet), **In progress**, **Waiting on others** (it has open sub-tasks) and **Done**. Each card shows the subject, who owes it to whom, how long it has been open or how long it took, sub-tasks done, the due date (overdue in red), and a pulsing dot while its owner is in a turn on it. A card opens its thread.
+- **Kanban**: columns **To do** (not read yet), **In progress**, **Waiting on others** (it has open sub-tasks) and **Done**. Each card shows the subject, who owes it to whom, how long it has been open or how long it took, sub-tasks done, the due date (overdue in red), and a pulsing dot while its owner is in a turn on it. A card opens its thread.
 - **Timeline**: a Gantt chart with a bar per assignment from sent to reported, nested under the assignment it was delegated from, coloured by status, with due dates and a line for now. Inside each bar, marks show the owner's turns on that thread: when the work actually happened, as opposed to when it was merely open. A row opens its thread.
 - Filter by owner. In replay both views follow the timeline.
 

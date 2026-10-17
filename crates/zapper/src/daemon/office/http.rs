@@ -148,7 +148,6 @@ fn start_terms(firm: &zapper_policy::Firm) -> Value {
     let root = firm.root();
     json!({
         "ceo": root,
-        "officer": firm.security.officers.iter().find(|o| Some(o.as_str()) != root),
         "officer_role": firm.roles.values().any(|r| r.officer),
         "seed": firm.budget.seed,
         "security_share": firm.budget.security_share,

@@ -18,7 +18,6 @@ pub mod session;
 mod spec;
 pub mod tls;
 mod ui;
-pub mod uievents;
 pub mod vm;
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
@@ -182,8 +181,6 @@ pub struct Daemon {
     seq: AtomicU64,
     approvals: Mutex<HashMap<String, Pending>>,
     pub ui_token: String,
-    /// Where the UI's events go.
-    pub ui_events: uievents::UiEvents,
     pub office: office::Office,
 }
 
@@ -291,7 +288,6 @@ impl Daemon {
         }
         let addrs = addr::AddressPolicy::new(&d.private_networks)?;
         let (events, _) = broadcast::channel(1024);
-        let ui_events = uievents::UiEvents::from_config(&config.daemon.ui_events)?;
         Ok(Arc::new(Daemon {
             config: RwLock::new(config),
             startup_path,
@@ -303,7 +299,6 @@ impl Daemon {
             seq: AtomicU64::new(1),
             approvals: Mutex::new(HashMap::new()),
             ui_token: random_id(24),
-            ui_events,
             office: office::Office::default(),
         }))
     }

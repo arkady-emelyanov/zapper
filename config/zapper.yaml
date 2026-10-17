@@ -264,13 +264,12 @@ firms:
         skills: { work: security-review }
         officer: true                    # hired, they join the officers once cleared
         avatar: { figure: shield, color: "#788C5D" }
-    # The founders; the CEO hires the rest during the run.
+    # The founder: a company starts with its CEO, who holds security until
+    # they hire a security officer, and hires the rest during the run.
     workers:
       - { name: barbara, role: ceo }
-      - { name: radia, role: security-officer, reports_to: barbara }
     # Names for hires whose hirer doesn't pick one.
     names: [dennis, margaret, ada, grace, iris, ken, hedy, alan, frances, edsger, joan, niklaus]
     security:
-      officers: [radia]
       digest_every: { minutes: 10, requests: 200 }
       answer_within: 15m

@@ -516,17 +516,9 @@ pub struct StartOptions {
     pub ceo: Option<String>,
     /// The seed budget, in tokens or text like `500k`.
     pub seed: Option<serde_json::Value>,
-    /// The security officer's name (the config's first officer), instead
-    /// of the config's.
-    pub officer: Option<String>,
-    /// Extra instructions for the CEO and the officer, in their preamble,
-    /// taking precedence over their skills.
+    /// Extra instructions for the CEO, in their preamble, taking
+    /// precedence over their skill.
     pub ceo_prompt: Option<String>,
-    pub officer_prompt: Option<String>,
-    /// Who holds security at the start: `officer` (the config's founding
-    /// officers, the default) or `ceo` (the CEO alone, until they hire an
-    /// officer).
-    pub security: Option<String>,
     /// The board's own articles for the charter: every worker reads them.
     pub articles: Option<String>,
     /// The charter's terms, instead of the config's.
@@ -613,49 +605,29 @@ fn with_options(name: &str, mut firm: Firm, config: &Config, o: &StartOptions) -
             .ok_or_else(|| anyhow!("the firm has no CEO"))?;
         rename(&mut firm, &old, &ceo)?;
     }
-    match o.security.as_deref().map(str::trim).unwrap_or("officer") {
-        "officer" | "" => {
-            if let Some(officer) = o
-                .officer
-                .as_deref()
-                .map(|c| c.trim().to_ascii_lowercase())
-                .filter(|c| !c.is_empty())
-            {
-                let old = firm
-                    .security
-                    .officers
-                    .first()
-                    .cloned()
-                    .ok_or_else(|| anyhow!("the firm has no security officer to name"))?;
-                rename(&mut firm, &old, &officer)?;
-            }
-        }
-        "ceo" => {
-            if o.officer.as_deref().is_some_and(|x| !x.trim().is_empty())
-                || o.officer_prompt
-                    .as_deref()
-                    .is_some_and(|x| !x.trim().is_empty())
-            {
-                bail!("the CEO holds security: there is no officer to name or instruct");
-            }
-            ceo_holds_security(&mut firm)?;
-        }
-        other => bail!("security: {other:?}; `officer` or `ceo`"),
+    // A company starts with its CEO, who holds security until they hire an
+    // officer; only a config's own founding officers (for tests) do it
+    // otherwise.
+    if firm.security.officers.is_empty() {
+        let root = firm
+            .root()
+            .map(str::to_string)
+            .ok_or_else(|| anyhow!("the firm has no CEO"))?;
+        firm.security.officers = vec![root];
     }
-    // The board's extra instructions for the founders.
+    // The board's extra instructions for the CEO.
     let mut prompts = BTreeMap::new();
-    for (who, text) in [
-        (firm.root().map(str::to_string), &o.ceo_prompt),
-        (firm.security.officers.first().cloned(), &o.officer_prompt),
-    ] {
-        let Some(text) = text.as_deref().map(str::trim).filter(|t| !t.is_empty()) else {
-            continue;
-        };
-        let who = who.ok_or_else(|| anyhow!("no founder for that prompt"))?;
+    if let Some(text) = o
+        .ceo_prompt
+        .as_deref()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+    {
         if text.len() > MAX_PROMPT {
-            bail!("keep a founder's extra prompt under {MAX_PROMPT} bytes");
+            bail!("keep the CEO's extra prompt under {MAX_PROMPT} bytes");
         }
-        prompts.insert(who, text.to_string());
+        let root = firm.root().ok_or_else(|| anyhow!("the firm has no CEO"))?;
+        prompts.insert(root.to_string(), text.to_string());
     }
     let articles = o
         .articles
@@ -695,36 +667,6 @@ fn with_options(name: &str, mut firm: Firm, config: &Config, o: &StartOptions) -
         prompts,
         articles,
     })
-}
-
-/// The founding officers stay out of the run and the CEO holds security,
-/// until they hire an officer.
-fn ceo_holds_security(firm: &mut Firm) -> Result<()> {
-    let root = firm
-        .root()
-        .map(str::to_string)
-        .ok_or_else(|| anyhow!("the firm has no CEO"))?;
-    let out: Vec<String> = firm
-        .security
-        .officers
-        .iter()
-        .filter(|o| **o != root)
-        .cloned()
-        .collect();
-    for o in &out {
-        let manager = firm.manager_of(o).unwrap_or(&root).to_string();
-        firm.workers.retain(|w| w.name != *o);
-        for w in firm.workers.iter_mut() {
-            if w.reports_to.as_deref() == Some(o) {
-                w.reports_to = Some(manager.clone());
-            }
-        }
-        if !firm.names.contains(o) {
-            firm.names.push(o.clone());
-        }
-    }
-    firm.security.officers = vec![root];
-    Ok(())
 }
 
 pub async fn up_with(d: &Arc<Daemon>, name: &str, opts: &StartOptions) -> Result<Arc<FirmRun>> {
@@ -1308,14 +1250,13 @@ mod tests {
     #[test]
     fn start_options() {
         let c = zapper_policy::Config::from_yaml(
-            "profiles: { w: {} }\nfirms:\n  acme:\n    budget: { seed: 1000 }\n    landing: {}\n    facilities: { cluster: { kind: k3s, profile: w } }\n    roles: { ceo: { profile: w, skills: { work: ceo }, hires: [sec] }, sec: { profile: w, skills: { work: security-review } } }\n    workers:\n      - { name: barbara, role: ceo }\n      - { name: radia, role: sec, reports_to: barbara }\n    security: { officers: [radia] }\n    names: [alice, grace]\n",
+            "profiles: { w: {} }\nfirms:\n  acme:\n    budget: { seed: 1000 }\n    landing: {}\n    facilities: { cluster: { kind: k3s, profile: w } }\n    roles: { ceo: { profile: w, skills: { work: ceo }, hires: [sec] }, sec: { profile: w, skills: { work: security-review }, officer: true } }\n    workers:\n      - { name: barbara, role: ceo }\n    names: [alice, grace]\n",
         )
         .unwrap();
         let firm = c.firms["acme"].clone();
         let o = super::StartOptions {
             company: Some("Widgets Ltd".into()),
             ceo: Some("Alice".into()),
-            officer: Some("sam".into()),
             seed: Some(serde_json::json!("2k")),
             ceo_prompt: Some("Ship in a day.".into()),
             articles: Some("No crypto.".into()),
@@ -1333,8 +1274,8 @@ mod tests {
         assert_eq!(company, "Widgets Ltd");
         assert_eq!(f.landing.as_ref().unwrap().name, "Widgets Ltd");
         assert_eq!(f.root(), Some("alice"));
-        assert_eq!(f.security.officers, vec!["sam"]);
-        assert_eq!(f.manager_of("sam"), Some("alice"));
+        assert_eq!(f.workers.len(), 1, "a company starts with its CEO");
+        assert_eq!(f.security.officers, vec!["alice"], "who holds security");
         assert_eq!(f.budget.seed, 2000);
         assert!(
             !f.names.contains(&"alice".to_string()),
@@ -1344,38 +1285,15 @@ mod tests {
             prompts.get("alice").map(String::as_str),
             Some("Ship in a day.")
         );
-        // Defaults, a clash and a bad name.
+        // Defaults, no officer to name, bad terms and a bad name.
         let s = super::with_options("acme", firm.clone(), &c, &Default::default()).unwrap();
         assert_eq!(s.company, "Acme Inc.");
-        // The CEO alone holds security: the founding officer stays out.
-        let ceo = super::StartOptions {
-            security: Some("ceo".into()),
-            ..Default::default()
-        };
-        let f = super::with_options("acme", firm.clone(), &c, &ceo)
-            .unwrap()
-            .firm;
-        assert_eq!(f.security.officers, vec!["barbara"]);
-        assert!(f.worker("radia").is_none() && f.names.contains(&"radia".to_string()));
-        let both = super::StartOptions {
-            security: Some("ceo".into()),
-            officer: Some("sam".into()),
-            ..Default::default()
-        };
-        assert!(super::with_options("acme", firm.clone(), &c, &both).is_err());
+        assert!(serde_json::from_str::<super::StartOptions>(r#"{"officer":"sam"}"#).is_err());
         let share = super::StartOptions {
             security_share: Some(1.5),
             ..Default::default()
         };
         assert!(super::with_options("acme", firm.clone(), &c, &share).is_err());
-        let clash = super::StartOptions {
-            officer: Some("barbara".into()),
-            ..Default::default()
-        };
-        assert!(super::with_options("acme", firm.clone(), &c, &clash)
-            .unwrap_err()
-            .to_string()
-            .contains("already in the firm"));
         let bad = super::StartOptions {
             ceo: Some("9 lives".into()),
             ..Default::default()

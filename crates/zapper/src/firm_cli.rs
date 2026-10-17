@@ -28,19 +28,9 @@ pub enum FirmCmd {
         /// The seed budget, like 500k.
         #[arg(long)]
         seed: Option<String>,
-        /// The security officer's name for this run.
-        #[arg(long)]
-        officer: Option<String>,
         /// A file with extra instructions for the CEO, over their skill.
         #[arg(long, value_name = "FILE")]
         ceo_prompt: Option<std::path::PathBuf>,
-        /// A file with extra instructions for the security officer.
-        #[arg(long, value_name = "FILE")]
-        officer_prompt: Option<std::path::PathBuf>,
-        /// No founding security officer: the CEO holds security until they
-        /// hire one.
-        #[arg(long, conflicts_with_all = ["officer", "officer_prompt"])]
-        ceo_holds_security: bool,
         /// A file with the board's own articles for the charter, which every
         /// worker reads.
         #[arg(long, value_name = "FILE")]
@@ -494,10 +484,7 @@ pub async fn firm(c: &Client, cmd: FirmCmd, json_out: bool) -> Result<i32> {
             company,
             ceo,
             seed,
-            officer,
             ceo_prompt,
-            officer_prompt,
-            ceo_holds_security,
             articles,
             security_share,
             max_concurrent,
@@ -513,8 +500,7 @@ pub async fn firm(c: &Client, cmd: FirmCmd, json_out: bool) -> Result<i32> {
                 }
             };
             let body = json!({
-                "company": company, "ceo": ceo, "seed": seed, "officer": officer, "ceo_prompt": read(&ceo_prompt)?, "officer_prompt": read(&officer_prompt)?,
-                "security": if ceo_holds_security { "ceo" } else { "officer" }, "articles": read(&articles)?,
+                "company": company, "ceo": ceo, "seed": seed, "ceo_prompt": read(&ceo_prompt)?, "articles": read(&articles)?,
                 "security_share": security_share, "max_concurrent": max_concurrent, "daily_turns": daily_turns,
             });
             let v = c

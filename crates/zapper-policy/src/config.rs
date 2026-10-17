@@ -56,9 +56,6 @@ pub struct DaemonConfig {
     /// is written under `state`, by the daemon's own user.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub keeper: Option<KeeperConfig>,
-    /// Where the UI's events (every click) go: `stdout` prints a JSON line
-    /// per event. Empty: they aren't sent at all.
-    pub ui_events: Vec<String>,
 }
 
 /// Where the keeper listens and where its files are.
@@ -85,7 +82,6 @@ impl Default for DaemonConfig {
             max_sessions: 16,
             private_networks: Vec::new(),
             keeper: None,
-            ui_events: vec!["stdout".into()],
         }
     }
 }

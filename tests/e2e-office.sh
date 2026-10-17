@@ -259,11 +259,9 @@ firms:
       boss: { profile: worker, skills: { work: ceo }, fake: $T/fake/solo-ceo.yaml, hires: [dev, officer], avatar: { figure: ceo } }
       dev: { profile: worker, skills: { work: software-engineer }, fake: $T/fake/solo-dev.yaml }
       officer: { profile: worker, skills: { work: security-review }, fake: $T/fake/solo-sec.yaml, officer: true }
-      sec: { profile: worker, skills: { work: security-review }, fake: $T/fake/none.yaml }
     workers:
       - { name: ceo, role: boss }
-      - { name: sec-1, role: sec, reports_to: ceo }
-    security: { officers: [sec-1], digest_every: { minutes: 60, requests: 0 } }
+    security: { digest_every: { minutes: 60, requests: 0 } }
   lab:
     git: {}
     product_port: 127.0.0.1:$PORT
@@ -477,11 +475,11 @@ swait_for() {
     return 1
 }
 officers() { "$Z" --json firm status solo | python3 -c 'import sys,json; print(",".join(json.load(sys.stdin)["officers"]))'; }
-expect "an officer can't be named when the CEO holds security" "$("$Z" firm up solo --ceo-holds-security --officer bob 2>&1)" "cannot be used with"
-out=$("$Z" firm up solo --ceo-holds-security --articles "$T/board-articles.md" --max-concurrent 2 2>&1)
+expect "a company starts with its CEO only: no officer to name" "$("$Z" firm up solo --officer bob 2>&1)" "unexpected argument"
+out=$("$Z" firm up solo --articles "$T/board-articles.md" --max-concurrent 2 2>&1)
 expect "solo boots with the CEO alone" "$out" "is running"
 st=$("$Z" --json firm status solo)
-refute "the founding officer stays out" "$(echo "$st" | python3 -c 'import sys,json; print([w["name"] for w in json.load(sys.stdin)["run"]["workers"]])')" "sec-1"
+expect "with the CEO alone" "$(echo "$st" | python3 -c 'import sys,json; print([w["name"] for w in json.load(sys.stdin)["run"]["workers"]])')" "['ceo']"
 expect "the CEO holds security" "$(officers)" "ceo"
 expect "the terms are the board's" "$(echo "$st" | python3 -c 'import sys,json; print(json.load(sys.stdin)["run"]["budget"]["max_concurrent"])')" "2"
 sceo=$(echo "$st" | python3 -c 'import sys,json; print([w["session"] for w in json.load(sys.stdin)["run"]["workers"] if w["name"]=="ceo"][0])')

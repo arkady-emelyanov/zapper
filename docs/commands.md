@@ -34,7 +34,7 @@ The office ([office](office.md)), as the board:
 |---|---|
 | `zapper firm ls` | Firms and their runs' states |
 | `zapper firm contracts FIRM` | The run's contracts: hirer, contractor, state, offered, quoted and agreed budgets, how each ended |
-| `zapper firm up FIRM [--company NAME] [--ceo NAME] [--officer NAME] [--seed TOKENS] [--ceo-prompt FILE] [--officer-prompt FILE] [--ceo-holds-security] [--articles FILE] [--security-share F] [--max-concurrent N] [--daily-turns N]` / `zapper firm down FIRM` | Start a fresh run (facilities, then the founders, idle), with the board's parameters and charter terms for this run / stop it; the run stays on disk |
+| `zapper firm up FIRM [--company NAME] [--ceo NAME] [--seed TOKENS] [--ceo-prompt FILE] [--articles FILE] [--security-share F] [--max-concurrent N] [--daily-turns N]` / `zapper firm down FIRM` | Start a fresh run (facilities, then the CEO, idle; the CEO holds security until they hire an officer), with the board's parameters and charter terms for this run / stop it; the run stays on disk |
 | `zapper firm pause FIRM` / `zapper firm resume FIRM` | Stop starting turns / start again |
 | `zapper firm status FIRM` | Workers' states, what they are doing, mail and desks, turns and tokens today |
 | `zapper firm journal FIRM [--run RUN] [-f]` | The run's journal: mail, states, turns, access, publishes |

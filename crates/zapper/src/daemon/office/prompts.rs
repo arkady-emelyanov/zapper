@@ -77,22 +77,27 @@ pub const CHARTER: &[Article] = &[
     Article {
         id: "board",
         title: "The board",
-        text: "The board owns the company. It sets the task, appoints the founders, approves the run's budget and has the last word on everything below.",
+        text: "The board owns the company. It sets the task, appoints the CEO, approves the run's budget and has the last word on everything below.",
     },
     Article {
         id: "budget",
         title: "Money",
-        text: "The CEO starts with a seed to scope the task, then asks the board for one budget, with a plan and a reason; the board approves or declines it. Every turn spends tokens from the worker's own balance. Budgets flow down the chart, and whoever runs out stops until their manager funds them. The security officers get a share of every grant.",
+        text: "The CEO starts with a seed to scope the task, then asks the board for one budget, with a plan and a reason; the board approves or declines it. Every turn spends tokens from the worker's own balance. Budgets flow down the chart, and whoever runs out stops until their manager funds them. The security officers get their share of every grant (see Security's money).",
     },
     Article {
         id: "hiring",
         title: "Hiring",
-        text: "Managers hire from their own budget, each hire with a brief and a reason. Before a hire takes a turn, a security officer other than the hirer does a background check (the board does when no other officer can); an objection cancels the hire and returns the budget. Managers may let their people go; only the board lets founders go.",
+        text: "Managers hire from their own budget, each hire with a brief and a reason. Before a hire takes a turn, a security officer other than the hirer does a background check (the board does when no other officer can); an objection cancels the hire and returns the budget. Managers may let their people go; only the board lets the CEO go.",
     },
     Article {
         id: "security",
         title: "Security",
         text: "Every connection leaving the firm goes through policy. Access requests are decided by a security officer, never by the one asking: an officer's own requests go to another officer or the board. While the firm has no security officer, the CEO holds security; once the CEO hires one and they are cleared, it passes to them, and it comes back to the CEO if the firm has none again. Officers never hand out credentials or the inspection CA.",
+    },
+    Article {
+        id: "security-money",
+        title: "Security's money",
+        text: "Security is funded by the board, not by the CEO: a share of every grant the board approves goes straight to the security officers. They decide colleagues' access, so the CEO can't starve security by not paying for it, and officers keep working however the CEO spends. While the CEO holds security alone, the CEO keeps that share.",
     },
     Article {
         id: "names",

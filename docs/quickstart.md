@@ -94,11 +94,11 @@ The session and its VM are removed when you exit. `zapper events --history` show
 ## 8. Start the firm
 
 ```
-zapper firm up acme                     # boots the cluster, then the founders (the CEO and a security officer), idle
+zapper firm up acme                     # boots the cluster, then the CEO, idle
 zapper firm status acme                 # workers' states, mail, turns and tokens today
 ```
 
-Or start it in the UI's Kickoff tab: the company's name, the founders, and the [charter](office.md#the-charter), the company's law, with the terms you set (the seed, security's share, whether the CEO holds security until they hire an officer, the pace) and your own articles. `zapper firm up acme --ceo-holds-security --articles law.md` does the same from the command line.
+Or start it in the UI's Kickoff tab: the company's name, its CEO (who holds security until they hire an officer), and the [charter](office.md#the-charter), the company's law, with the terms you set (the seed, security's share, the pace) and your own articles. `zapper firm up acme --articles law.md` does the same from the command line.
 
 `firm up` checks the firm's memory against the host's before booting anything. In the UI, the org chart fills in as workers boot, and the product port, `http://127.0.0.1:8080`, shows the firm's landing page.
 

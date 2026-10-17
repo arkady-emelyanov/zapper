@@ -363,10 +363,15 @@
   .bud-act { display: inline-flex; gap: 6px; }
   .ko-center { display:flex; justify-content: center; padding: 40px 0; }
   .ko-center .card { width: min(640px, 100%); padding: 22px 26px; }
+  .ko-center .card.ko-start { width: min(1120px, 100%); display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 28px; align-items: start; }
+  .ko-rules { border-left: 1px solid var(--line); padding-left: 24px; display: flex; flex-direction: column; gap: 8px; }
+  @media (max-width: 900px) { .ko-center .card.ko-start { grid-template-columns: minmax(0, 1fr); } .ko-rules { border-left: 0; padding-left: 0; border-top: 1px solid var(--line); padding-top: 16px; } }
   .ko-center h2 { margin: 0 0 6px; font-size: 24px; }
   .ko-founder { border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px 10px; margin: 4px 0 10px; }
   .ko-founder legend { padding: 0 6px; font-weight: 600; font-size: 13px; }
   .ko-founder textarea { width: 100%; margin-top: 6px; }
+  .dice-row { display: flex; gap: 6px; } .dice-row > input { flex: 1; min-width: 0; }
+  .btn.dice { padding: 2px 10px; font-size: 16px; }
   .ko-ch { margin: 10px 0 0; font-size: 16px; }
   .sprite { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 10px; }
   .sprite figure { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); }
@@ -377,8 +382,6 @@
   .ko-art-h { font-weight: 600; font-size: 13px; }
   .ko-art textarea { width: 100%; }
   .ko-terms { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 4px; }
-  .ko-sec { grid-template-columns: 1fr; gap: 4px; }
-  .ko-radio { display: flex; gap: 8px; align-items: baseline; font-size: 13px; }
   .ko-head { display:flex; align-items: center; gap: 16px; margin-bottom: 14px; }
   .ko-head .ko-co { font-size: 28px; line-height: 1.2; }
   .ko-head > button { margin-left: auto; }
@@ -564,6 +567,10 @@ const SVGNS = 'http://www.w3.org/2000/svg';
 const REDUCED = window.matchMedia('(prefers-reduced-motion: reduce)');
 
 // el('div', {class: 'x', onclick: fn, title: 't'}, 'text', child, [more])
+// A worker's name as people read it: "barbara" is Barbara. Names stay
+// lowercase as addresses (mail, tools); only what is shown is capitalised.
+const cap = (n) => (typeof n === 'string' && /^[a-z]/.test(n) ? n[0].toUpperCase() + n.slice(1) : n);
+const caps = (list) => list.map((n) => (n === BOARD ? boardName() : cap(n))).join(', ');
 function el(tag, props, ...kids) {
   const e = document.createElement(tag);
   setProps(e, props);
@@ -675,7 +682,7 @@ function completeBytes(text) {
 
 // ────────────────────────────── state ──────────────────────────────
 
-const TABS = [['kickoff', 'Kickoff'], ['overview', 'Overview'], ['work', 'Work'], ['messages', 'Messages'], ['security', 'Security'], ['drive', 'Shared drive'], ['git', 'Git'], ['vms', 'VMs'], ['stats', 'Statistics'], ['runs', 'Runs']];
+const TABS = [['kickoff', 'Kickoff'], ['overview', 'Organization'], ['work', 'Work'], ['messages', 'Messages'], ['security', 'Security'], ['drive', 'Shared drive'], ['git', 'Git'], ['vms', 'VMs'], ['stats', 'Statistics'], ['runs', 'Runs']];
 const S = {
   firms: [], firm: null, info: null, tab: 'overview',
   mode: 'live',          // 'live' or 'replay'
@@ -1255,7 +1262,7 @@ function layoutTree(workers) {
 
 const OV = { sig: null, nodes: new Map(), lay: null, scale: 1, built: false };
 
-// No company running: Overview has nothing to show yet.
+// No company running: Organization has nothing to show yet.
 const companyOff = () => live() && !(S.info && S.info.run && !['ended', 'failed'].includes(str(S.info.run.state)));
 function syncOverviewOff() {
   const empty = $('ov-empty'), body = $('ov-body');
@@ -1271,7 +1278,7 @@ function mountOverview() {
   root.replaceChildren(
     el('div', { class: 'ko-center hidden', id: 'ov-empty' }, el('div', { class: 'card', style: 'text-align:center' },
       el('h2', { class: 'serif' }, 'No company yet'),
-      el('p', { class: 'muted' }, 'The organization appears here once a company is running: start one in Kickoff, with its name, its CEO and its security officer.'),
+      el('p', { class: 'muted' }, 'The organization appears here once a company is running: start one in Kickoff, with its name and its CEO.'),
       el('button', { class: 'btn primary', type: 'button', onclick: () => showTab('kickoff') }, 'Go to Kickoff'))),
     el('div', { id: 'ov-body' }));
   $('ov-body').append(
@@ -1327,7 +1334,7 @@ function buildOverview() {
     const fresh = w.hiredAt != null && T() - w.hiredAt < 8;
     const node = el('div', { class: 'node' + (fresh ? ' joined' : '') + (w.contract ? ' contractor' : ''), style: `left:${p.x}px;top:${p.y}px`, tabindex: 0, role: 'button', onclick: () => openPanel(w.name),
       onkeydown: (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); openPanel(w.name); } } },
-    av, el('div', { class: 'nm' }, w.name), el('div', { class: 'tt', title: w.model ? 'model ' + w.model : '' }, (w.contract ? 'contractor · ' : '') + (w.title || w.role) + (w.model ? ' · ' + modelName(w.model) : '')), st, rm, bar, bdg);
+    av, el('div', { class: 'nm' }, cap(w.name)), el('div', { class: 'tt', title: w.model ? 'model ' + w.model : '' }, (w.contract ? 'contractor · ' : '') + (w.title || w.role) + (w.model ? ' · ' + modelName(w.model) : '')), st, rm, bar, bdg);
     stage.append(node);
     OV.nodes.set(w.name, { el: node, av, st, rm, bdg, bar, fill });
   }
@@ -1458,7 +1465,7 @@ function openPanel(name, opts) {
   PANEL.earlier = el('button', { class: 'btn small ghost', onclick: () => { if (PANEL.tr) { PANEL.tr.all = !PANEL.tr.all; renderFeed(); } } }, 'Show earlier turns');
   p.replaceChildren(
     el('div', { class: 'ph' }, PANEL.av,
-      el('div', {}, el('h2', {}, name), el('div', { class: 'muted' }, [w.title, w.role !== w.title ? w.role : '', w.officer ? 'security officer' : '', w.model ? modelName(w.model) : ''].filter(Boolean).join(' · '))),
+      el('div', {}, el('h2', {}, cap(name)), el('div', { class: 'muted' }, [w.title, w.role !== w.title ? w.role : '', w.officer ? 'security officer' : '', w.model ? modelName(w.model) : ''].filter(Boolean).join(' · '))),
       el('button', { class: 'btn ghost close', title: 'Close', onclick: closePanel }, '✕')),
     PANEL.state,
     opts.kickoff ? el('div', { class: 'hint', style: 'margin-top:12px' }, 'Give ' + name + ' the firm\'s first task.') : '',
@@ -1541,7 +1548,7 @@ function mailItem(m, unread) {
   const t = S.M.threads.get(m.thread);
   return el('div', { class: 'li', onclick: () => openThread(m.thread, m.id) },
     el('div', { class: 'top' }, el('span', { class: 'subj' }, unread ? el('span', { class: 'dot', title: 'not read yet' }) : '', unread ? ' ' : '', clip((t && t.subject) || m.subject || '(no subject)', 70)), pill(m.kind, m.kind)),
-    el('div', { class: 'meta' }, m.from + ' → ' + m.to.join(', '), el('span', {}, '· ' + ago(m.ts))));
+    el('div', { class: 'meta' }, (m.from === BOARD ? boardName() : cap(m.from)) + ' → ' + caps(m.to), el('span', {}, '· ' + ago(m.ts))));
 }
 function artifactItem(a) {
   const v = a.versions[a.versions.length - 1];
@@ -2343,8 +2350,8 @@ function messageCard(M, m, now) {
   return el('div', { class: 'msg' + (auto ? ' auto' : '') + (m.from === BOARD ? ' board' : '') + (MSG.focus === m.id ? ' focus' : '') + (MSG.view !== 'tree' && mailFilter() && mailFilter()(m) ? ' hit' : ''), 'data-mid': m.id },
     el('div', { class: 'mh' },
       miniAvatar(m.from),
-      el('span', { class: 'who' }, m.from === BOARD ? boardName() + ' (board)' : m.from === 'office' ? 'post office' : m.from),
-      el('span', { class: 'to' }, '→ ' + m.to.join(', ') + (m.cc.length ? ' · cc ' + m.cc.join(', ') : '')),
+      el('span', { class: 'who' }, m.from === BOARD ? boardName() + ' (board)' : m.from === 'office' ? 'post office' : cap(m.from)),
+      el('span', { class: 'to' }, '→ ' + caps(m.to) + (m.cc.length ? ' · cc ' + caps(m.cc) : '')),
       pill(m.kind, m.kind),
       // While the message waits for an answer; gone once it came.
       waitPill(obls, now),
@@ -3145,8 +3152,8 @@ const companyName = (M) => (live() ? S.info && S.info.company : M && M.company) 
 function securityHolder(M, root) {
   const officers = M ? [...M.workers.values()].filter((w) => w.inChart && w.officer).map((w) => w.name) : [];
   if (!officers.length) return 'the board';
-  if (officers.length === 1 && officers[0] === root) return root + ' (the CEO, until they hire an officer)';
-  return officers.join(', ');
+  if (officers.length === 1 && officers[0] === root) return cap(root) + ' (the CEO, until they hire an officer)';
+  return caps(officers);
 }
 
 // The run's charter, folded: the articles, the terms and the board's own.
@@ -3155,11 +3162,25 @@ function charterView(M) {
   if (!ch.length) return '';
   const b = (M && M.budget) || {};
   const terms = [b.seed ? 'seed ' + fmtTok(b.seed) + ' tokens' : '', b.seed ? 'security\'s share ' + Math.round(Number(b.security_share || 0) * 100) + '%' : '',
-    b.max_concurrent ? b.max_concurrent + ' workers in a turn at once' : '', b.daily_turns ? b.daily_turns + ' turns a day' : ''].filter(Boolean).join(' · ');
+    b.max_concurrent ? 'agent parallelism ' + b.max_concurrent : '', b.daily_turns ? b.daily_turns + ' turns a day' : ''].filter(Boolean).join(' · ');
   return el('details', { class: 'ko-charter', open: !!KO.charterOpen, ontoggle: (ev) => { KO.charterOpen = ev.target.open; } }, el('summary', { class: 'muted small' }, 'Charter'),
     ...ch.map((a, i) => el('div', { class: 'small', style: 'margin:4px 0' }, el('b', {}, (i + 1) + '. ' + str(a.title) + '. '), str(a.text))),
     terms ? el('div', { class: 'small', style: 'margin:4px 0' }, el('b', {}, 'Terms: '), terms) : '',
     M && M.articles ? el('div', { class: 'small', style: 'margin:4px 0' }, el('b', {}, 'The board\'s own articles:'), renderMarkdown(M.articles)) : '');
+}
+
+// A name input with a die that fills in a random one.
+function dice(input, gen) {
+  const roll = el('button', { class: 'btn dice', type: 'button', title: 'A random name', 'aria-label': 'A random name', onclick: () => { input.value = gen(); input.focus(); } }, '🎲');
+  return el('span', { class: 'dice-row' }, input, roll);
+}
+const pick = (list) => list[Math.floor(Math.random() * list.length)];
+function randomCompany() {
+  return pick(['Northwind', 'Cobalt', 'Lumen', 'Brightline', 'Quill', 'Harbor', 'Juniper', 'Orbit', 'Pioneer', 'Saffron', 'Tidal', 'Vertex', 'Kestrel', 'Meridian', 'Aster', 'Fathom'])
+    + ' ' + pick(['Labs', 'Works', 'Systems', '& Co.', 'Studio', 'Industries', 'Collective', 'Analytics', 'Dynamics', 'Foundry', 'Inc.', 'Ltd']);
+}
+function randomPerson() {
+  return cap(pick(['ada', 'grace', 'alan', 'linus', 'margaret', 'barbara', 'dennis', 'hedy', 'katherine', 'edsger', 'donald', 'frances', 'radia', 'sophie', 'vint', 'guido', 'anders', 'bjarne', 'annie', 'ellen', 'mary', 'john', 'niklaus', 'tim']));
 }
 
 // Starting a company: its name, its founders, and its charter (the rules
@@ -3168,58 +3189,39 @@ function startForm(running) {
   const info = S.info || {};
   const st = info.start || {};
   const company = el('input', { value: str(info.company), maxlength: 80, placeholder: 'Acme Inc.' });
-  const ceo = el('input', { value: str(st.ceo), maxlength: 32, placeholder: 'barbara' });
-  const officer = el('input', { value: str(st.officer), maxlength: 32, placeholder: 'radia' });
-  // Extra prompts: the board's own instructions to each founder for this
-  // run, over their skills.
+  const ceo = el('input', { value: cap(str(st.ceo)), maxlength: 32, placeholder: 'Barbara' });
+  // An extra prompt: the board's own instructions to the CEO for this run,
+  // over their skill.
   const ceoPrompt = el('textarea', { rows: 4, maxlength: 20000, placeholder: 'Optional: instructions for the CEO for this run, e.g. "Keep the team small; ship a first version within an hour."' });
-  const officerPrompt = el('textarea', { rows: 4, maxlength: 20000, placeholder: 'Optional: instructions for the security officer, e.g. "No package registries outside npm and PyPI."' });
   const founder = (title, nameInput, promptInput, hint) => el('fieldset', { class: 'ko-founder' }, el('legend', {}, title),
-    el('label', { class: 'f' }, 'Name', nameInput),
+    el('label', { class: 'f' }, 'Name', dice(nameInput, randomPerson)),
     el('details', {}, el('summary', { class: 'muted small' }, 'Extra prompt (optional): ' + hint), promptInput));
-  // Who holds security at the start: a founding officer, or the CEO until
-  // they hire one.
-  const hasOfficer = !!st.officer;
-  const secChoice = (value, label, checked) => el('label', { class: 'ko-radio' }, el('input', { type: 'radio', name: 'ko-sec', value, checked }), label);
-  const secOfficer = secChoice('officer', 'A founding security officer', hasOfficer);
-  const secCeo = secChoice('ceo', 'The CEO, until they hire a security officer' + (st.officer_role ? '' : ' (no role in the config is an officer role, so the CEO keeps it)'), !hasOfficer);
-  const officerBox = founder('Security officer', officer, officerPrompt, 'takes precedence over the security skill');
-  const security = () => (hasOfficer && secOfficer.querySelector('input').checked ? 'officer' : 'ceo');
-  if (!hasOfficer) secOfficer.classList.add('hidden');
-  const syncSec = () => officerBox.classList.toggle('hidden', security() !== 'officer');
-  for (const r of [secOfficer, secCeo]) r.querySelector('input').addEventListener('change', syncSec);
-  syncSec();
   // The terms.
   const seed = el('input', { value: st.seed ? fmtTok(st.seed) : '', maxlength: 12, placeholder: '1.2M' });
   const share = el('input', { type: 'number', min: 0, max: 100, step: 1, value: st.security_share != null ? String(Math.round(Number(st.security_share) * 100)) : '10' });
   const conc = el('input', { type: 'number', min: 1, max: 64, step: 1, value: String(st.max_concurrent || 3) });
   const turns = el('input', { type: 'number', min: 0, step: 10, value: String(st.daily_turns != null ? st.daily_turns : 400) });
   const articles = el('textarea', { rows: 4, maxlength: 20000, placeholder: 'Optional: your own articles, binding on everyone, e.g. "No paid services without the board\'s approval." "Everything we ship is open source."' });
-  const terms = {
-    budget: el('div', { class: 'ko-terms' }, el('label', { class: 'f' }, 'Seed (tokens, to scope the task)', seed), el('label', { class: 'f' }, 'Security\'s share of every grant (%)', share)),
-    security: el('div', { class: 'ko-terms ko-sec' }, el('div', { class: 'muted small' }, 'Who holds security at the start'), secOfficer, secCeo),
-  };
+  // The rules, on the right: the charter's articles, which the terms on
+  // the left fill in.
   const charter = arr(st.charter).map((a, i) => el('div', { class: 'ko-art' },
     el('div', { class: 'ko-art-h' }, 'Article ' + (i + 1) + '. ' + str(a.title)),
-    el('div', { class: 'small' }, str(a.text)),
-    terms[a.id] || ''));
+    el('div', { class: 'small' }, str(a.text))));
   const go = el('button', { class: 'btn primary', type: 'submit' }, running ? 'Stop this one and start' : 'Start');
   const note = el('div', { class: 'muted small' });
   const form = el('form', { class: 'form ko-new', onsubmit: async (ev) => {
     ev.preventDefault();
     if (running && !confirm('Start a new company? ' + companyName(S.M) + '\'s run ends: workers stop, and it stays replayable under Runs.')) return;
-    const sec = security();
     const pct = Number(share.value);
     if (!(pct >= 0 && pct <= 100)) { toast('Security\'s share: a percentage from 0 to 100', true); return; }
     go.disabled = true;
     KO.busy = true;
     try {
       if (running) { note.textContent = 'Stopping ' + companyName(S.M) + '…'; await write('POST', F() + '/down', {}); }
-      note.textContent = 'Starting ' + company.value.trim() + '… (the founders\' VMs boot in about half a minute)';
+      note.textContent = 'Starting ' + company.value.trim() + '… (the CEO\'s VM boots in about half a minute)';
       await write('POST', F() + '/up', {
         company: company.value.trim() || null, ceo: ceo.value.trim() || null,
-        security: sec, officer: sec === 'officer' ? officer.value.trim() || null : null,
-        ceo_prompt: ceoPrompt.value.trim() || null, officer_prompt: sec === 'officer' ? officerPrompt.value.trim() || null : null,
+        ceo_prompt: ceoPrompt.value.trim() || null,
         seed: seed.value.trim() || null, security_share: pct / 100,
         max_concurrent: Number(conc.value) || null, daily_turns: turns.value === '' ? null : Number(turns.value),
         articles: articles.value.trim() || null,
@@ -3234,18 +3236,20 @@ function startForm(running) {
     loadFirm();
   } },
     el('h2', { class: 'serif' }, running ? 'Start a new company' : 'Start a company'),
-    el('p', { class: 'muted' }, 'It starts with its founders. You give the CEO the task; they scope it on the seed, ask you for the budget it needs, and hire the team. The charter below is the company\'s law: the office enforces it, and every worker reads it.'),
-    el('label', { class: 'f' }, 'Company name', company),
+    el('p', { class: 'muted' }, 'It starts with its CEO, who also holds security until they hire a security officer. You give the CEO the task; they scope it on the seed, ask you for the budget it needs, and hire the team, under the charter on the right.'),
+    el('label', { class: 'f' }, 'Company name', dice(company, randomCompany)),
     founder('CEO', ceo, ceoPrompt, 'takes precedence over the CEO\'s skill'),
-    officerBox,
-    el('h3', { class: 'ko-ch' }, 'Charter'),
-    ...charter,
-    el('div', { class: 'ko-art' }, el('div', { class: 'ko-art-h' }, 'Pace'),
-      el('div', { class: 'ko-terms' }, el('label', { class: 'f' }, 'Workers in a turn at once', conc), el('label', { class: 'f' }, 'Turns a day, whole firm (0: no limit)', turns))),
-    el('div', { class: 'ko-art' }, el('div', { class: 'ko-art-h' }, 'Your own articles'), articles),
+    el('h3', { class: 'ko-ch' }, 'Terms'),
+    el('div', { class: 'ko-terms' }, el('label', { class: 'f' }, 'Seed (tokens, to scope the task)', seed), el('label', { class: 'f' }, 'Security\'s share of every grant (%)', share)),
+    el('div', { class: 'ko-terms' }, el('label', { class: 'f' }, 'Agent parallelism', conc), el('label', { class: 'f' }, 'Turns a day, whole firm (0: no limit)', turns)),
+    el('label', { class: 'f' }, 'Your own articles, added to the charter', articles),
     el('div', { style: 'display:flex;gap:10px;align-items:center' }, go,
       running ? el('button', { class: 'btn', type: 'button', onclick: () => { KO.starting = false; KO.sig = null; KO.startEl = null; updateKickoff(); } }, 'Cancel') : '', note));
-  return el('div', { class: 'ko-center' }, el('div', { class: 'card' }, form));
+  const rules = el('div', { class: 'ko-rules' },
+    el('h3', { class: 'ko-ch' }, 'Charter'),
+    el('p', { class: 'muted small' }, 'The company\'s law: the office enforces it, and every worker reads it, with the terms and your own articles.'),
+    ...charter);
+  return el('div', { class: 'ko-center' }, el('div', { class: 'card ko-start' }, form, rules));
 }
 
 // The board's conversation with the CEO: mail between them, oldest first.
@@ -3290,7 +3294,7 @@ function updateKickoff() {
   const started = M && M.started;
   $('ko-start').replaceChildren(el('div', { class: 'ko-head' },
     el('div', {}, el('div', { class: 'serif ko-co' }, companyName(M)),
-      el('div', { class: 'muted' }, root ? 'CEO ' + root + (started ? ' · started ' + fmtDate(started) : '') + ' · security: ' + securityHolder(M, root) : ''),
+      el('div', { class: 'muted' }, root ? 'CEO ' + cap(root) + (started ? ' · started ' + fmtDate(started) : '') + ' · security: ' + securityHolder(M, root) : ''),
       charterView(M)),
     live() && canWrite() ? el('button', { class: 'btn', type: 'button', onclick: () => { KO.starting = true; KO.sig = null; updateKickoff(); } }, 'Start a new company') : ''));
   if (!M || !root) { $('ko-conv').replaceChildren(); $('ko-write').replaceChildren(); $('ko-side').replaceChildren(); return; }
@@ -3518,7 +3522,7 @@ function tickets(M, now) {
 
 function mountWork() {
   const seg = el('div', { class: 'seg', id: 'wk-view' });
-  for (const [v, l] of [['board', 'Board'], ['timeline', 'Timeline']]) {
+  for (const [v, l] of [['board', 'Kanban'], ['timeline', 'Timeline']]) {
     const b = el('button', { type: 'button', onclick: () => { WORK.view = v; WORK.sig = null; updateWork(); } }, l);
     b.dataset.v = v; seg.append(b);
   }
@@ -3722,12 +3726,12 @@ function contractLine(M, w) {
     el('b', {}, 'Contractor'), ' for ' + k.by + ', contract ' + k.id + ' (' + k.title + '): ' + k.state + (t ? ' · ' + termsText(t) : '') + (k.rounds ? ' · ' + k.rounds + ' counter' + (k.rounds > 1 ? 's' : '') : '') + ' · ',
     threadLink(k.thread));
 }
-// "barbara · CEO": a name with the worker's title, for tables and charts.
+// "Barbara · CEO": a name with the worker's title, for tables and charts.
 function who(M, n) {
   if (n === BOARD) return boardName() + ' · board';
   const w = M.workers.get(n);
   const t = w && (w.title || w.role);
-  return t ? n + ' · ' + t : n;
+  return t ? cap(n) + ' · ' + t : cap(n);
 }
 function updateStats() {
   const M = S.M;
@@ -3791,7 +3795,7 @@ function updateStats() {
     kpi('Tokens', fmtNum(totTokens), b.daily_tokens ? 'daily budget ' + fmtNum(b.daily_tokens) : ''),
     usage ? kpi('Today (budget day)', usage.turns + (b.daily_turns ? ' / ' + b.daily_turns : ''), fmtNum(usage.tokens) + ' tokens' + (b.daily_tokens ? ' / ' + fmtNum(b.daily_tokens) : '')) : '',
     kpi('Rate-limit retries', String(rl), intr ? intr + ' interrupted turns' : ''),
-    kpi('Over budget', M.overBudget ? 'yes' : 'no', b.max_concurrent ? 'max ' + b.max_concurrent + ' in a turn at once' : '')));
+    kpi('Over budget', M.overBudget ? 'yes' : 'no', b.max_concurrent ? 'agent parallelism ' + b.max_concurrent : '')));
   const urows = [...per.entries()].map(([n, p]) => ({ label: who(M, n), value: p.turns }));
   body.push(el('div', { class: 'grid2' },
     el('div', { class: 'card' }, el('h3', { style: 'margin:0 0 6px' }, 'Turns per worker'), hbars(urows, { label: 'turns per worker' })),
@@ -4285,33 +4289,6 @@ document.addEventListener('keydown', (ev) => {
   if (S.mode !== 'replay' || !S.rp || ev.target.closest('input,textarea,select,.slides')) return;
   if (ev.key === ' ') { ev.preventDefault(); play(!S.rp.playing); }
 });
-
-// ─────────────────────────── UI events ───────────────────────────
-//
-// Every click goes to the daemon in small batches, which hands it to its
-// event sinks (stdout by default; see daemon.ui_events). What was clicked
-// is described by its tag, id, classes, text and label, with the page's
-// context.
-const UIEV = { queue: [], timer: null };
-function describeClick(t) {
-  const e = t.closest('button, a, summary, input, select, textarea, label, [role=button], tr.click, .node, .li, .tk, .run, .gc, .git-row, .vrow, .chip, .fi') || t;
-  const label = e.getAttribute('aria-label') || e.getAttribute('title') || '';
-  const data = Object.entries(e.dataset || {}).map(([k, v]) => k + '=' + v).join(' ');
-  return { tag: e.tagName.toLowerCase(), id: e.id || '', class: String(e.className && e.className.baseVal != null ? e.className.baseVal : e.className || '').split(/\s+/).slice(0, 4).join(' '),
-    text: (e.type === 'password' ? '' : (e.innerText || e.value || e.textContent || '')).replace(/\s+/g, ' ').trim().slice(0, 120), label: label.slice(0, 120), role: e.getAttribute('role') || '', data: data.slice(0, 120) };
-}
-function flushUiEvents(final) {
-  if (!UIEV.queue.length) return;
-  const batch = UIEV.queue.splice(0, 100);
-  fetch('/api/ui/events', { method: 'POST', keepalive: !!final, headers: { 'X-Zapper-UI': '1', 'content-type': 'application/json' }, body: JSON.stringify(batch) }).catch(() => {});
-}
-document.addEventListener('click', (ev) => {
-  if (!(ev.target instanceof Element)) return;
-  UIEV.queue.push(Object.assign({ kind: 'click', ts: Date.now() / 1000, target: describeClick(ev.target) }, { page: 'office', tab: S.tab, firm: S.firm || '', run: S.run || '', mode: S.mode, view: S.tab === 'messages' ? MSG.view : '' }));
-  if (UIEV.queue.length >= 20) flushUiEvents(false);
-  else if (!UIEV.timer) UIEV.timer = setTimeout(() => { UIEV.timer = null; flushUiEvents(false); }, 2000);
-}, true);
-document.addEventListener('visibilitychange', () => { if (document.hidden) flushUiEvents(true); });
 
 // ───────────────────────────── start ─────────────────────────────
 

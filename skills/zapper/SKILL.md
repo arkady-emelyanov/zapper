@@ -32,7 +32,7 @@ A firm is an org chart of AI workers, each Claude Code in its own session ([docs
 ```
 zapper firm ls ; zapper firm status acme          # before anything: is a run going, what are workers doing
 zapper firm up acme                               # a fresh, idle run (the cluster first, if the firm has one)
-zapper firm up acme --ceo-holds-security --articles law.md   # the CEO holds security until they hire an officer; the board's own articles
+zapper firm up acme --articles law.md               # with the board's own articles; the CEO holds security until they hire an officer
 zapper mail send acme --to barbara --kind assignment --subject "…" --body "…"
 zapper firm journal acme -f                        # mail, states, turns, access requests, publishes
 zapper firm transcript acme ada                    # what a worker's Claude did
