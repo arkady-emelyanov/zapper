@@ -513,8 +513,8 @@ pub fn wake(
                 "This is an assignment. When it is done, publish the result to the shared drive\nand mail_reply to {} with kind=report and close=true. If something is unclear, ask\n{} with kind=question and end your turn.",
                 m.id, m.from
             ),
-            (Kind::FollowUp, _) => format!("{} is waiting for your answer; reply in this thread (mail_reply to {}).", m.from, m.id),
-            (_, Expects::Reply) => format!("{} asked you a question and expects a reply (mail_reply to {}).", m.from, m.id),
+            (Kind::FollowUp, _) => format!("{} is waiting for your answer: send it with mail_reply(message: \"{}\"). Text you write\noutside the office tools reaches no one.", m.from, m.id),
+            (_, Expects::Reply) => format!("{} asked you a question and expects a reply: send it with\nmail_reply(message: \"{}\"). Text you write outside the office tools reaches no one.", m.from, m.id),
             _ => "This is for your information; no reply is expected.".into(),
         };
         let _ = writeln!(s, "{expectation}\n");

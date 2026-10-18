@@ -241,6 +241,8 @@
   .legend .ic.mail { background: var(--accent); color: #fff; border-color: var(--accent); }
   .legend .ic.lock { color: var(--warn); }
   .legend .ic.clock { color: var(--bad); }
+  .postoffice { position: absolute; display:flex; align-items:center; gap: 4px; font-size: 11px; color: var(--muted); white-space: nowrap; }
+  .postoffice .ic { display:inline-flex; width: 14px; height: 14px; color: var(--accent-ink); }
   .legend .dashed { display:inline-block; width: 14px; height: 10px; border: 1.5px dashed var(--line2); border-radius: 3px; flex: none; }
   @media (max-width: 900px) { .ovrow { flex-direction: column; } .legend.side { width: auto; } }
   /* VMs */
@@ -1402,7 +1404,7 @@ function mountOverview() {
     row(el('span', { class: 'ic clock' }, ICONS.clock(), '1'), 'overdue work'),
     row(el('span', { class: 'dashed' }), 'contractor'),
     row(el('span', { class: 'agentsw' }), 'on another agent (pi); its name and model under the title'),
-    el('div', { class: 'muted small' }, 'Envelopes fly as mail is sent; click a worker to write to them.'));
+    el('div', { class: 'muted small' }, 'Envelopes fly as mail is sent; those from the post office box at the top right are its automatic notices. Click a worker to write to them.'));
   OV.sig = null;
   syncOverviewOff();
 }
@@ -1433,6 +1435,10 @@ function buildOverview() {
     podium(), el('div', { class: 'nm' }, boardName()), el('div', { class: 'tt' }, 'the board'), el('div', { class: 'st', id: 'ov-board-st' }, ''), bBadge);
   stage.append(bnode);
   OV.nodes.set(BOARD, { el: bnode, bdg: bBadge });
+  // The post office: where its automatic notices (access decisions,
+  // follow-ups, welcomes) fly from.
+  stage.append(el('div', { class: 'postoffice', style: `left:${lay.width - 92}px;top:2px`, title: 'The post office: automatic notices (access decisions, follow-ups, budget notices) come from here' },
+    el('span', { class: 'ic' }, ICONS.mail()), 'post office'));
   for (const w of ws) {
     const p = lay.pos.get(w.name);
     const av = avatar((w.avatar && w.avatar.figure) || 'plain', w.avatar && w.avatar.color, w.state);
@@ -1520,7 +1526,9 @@ function flyMail(m) {
   const stage = $('stage');
   if (!stage || stage.querySelectorAll('.env').length > 30) return;
   const centre = (n) => { const p = OV.lay.pos.get(n); return p ? { x: p.x + NW / 2, y: p.y + 38 } : null; };
-  const from = centre(m.from) || { x: OV.lay.width - 12, y: -10 };
+  // Mail from no one in the chart (the post office's notices) comes from
+  // its box at the top right.
+  const from = centre(m.from) || { x: OV.lay.width - 60, y: 8 };
   const targets = [...new Set([...m.to, ...m.cc])].filter((r) => r !== m.from);
   targets.forEach((r, i) => {
     const to = centre(r);

@@ -75,9 +75,11 @@ This is an assignment. When it is done, publish the result to the shared drive
 and mail_reply to {{id}} with kind=report and close=true. If something is unclear, ask
 {{from}} with kind=question and end your turn.
 
-{{from}} is waiting for your answer; reply in this thread (mail_reply to {{id}}).
+{{from}} is waiting for your answer: send it with mail_reply(message: "{{id}}"). Text you write
+outside the office tools reaches no one.
 
-{{from}} asked you a question and expects a reply (mail_reply to {{id}}).
+{{from}} asked you a question and expects a reply: send it with
+mail_reply(message: "{{id}}"). Text you write outside the office tools reaches no one.
 
 This is for your information; no reply is expected.
 
