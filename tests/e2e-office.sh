@@ -150,7 +150,8 @@ rules:
 EOF
 # scen: a scenario. The board's scripted mail and kill fire on their own;
 # the first plain hire gets the board's instructions (ben doesn't); a
-# contractor in the red slot may mail the board. The first contractor
+# contractor in the red slot, on pi (the slot's own profile), may mail the
+# board. The first contractor
 # declines and frees the red slot for the next; a kill by role waits for
 # someone of the role who has worked.
 cat > "$T/fake/scen-ceo.yaml" <<'EOF'
@@ -342,7 +343,7 @@ firms:
         description: Scripted hires and board actions
         articles: The drill's article.
         hires:
-          - { role: dev, count: 1, contract: true, board_line: true, prompt: "SCENARIO-RED instructions" }
+          - { role: dev, count: 1, contract: true, board_line: true, prompt: "SCENARIO-RED instructions", profile: pi-worker }
           - { role: dev, count: 1, prompt: "SCENARIO-CUSTOM instructions" }
         script:
           - { after: 5s, mail: { to: boss, kind: fyi, subject: "Pivot-X", body: "The requirements changed." } }
@@ -822,9 +823,12 @@ scwait_for "left cat" 180 && pass "the scripted kill takes the worker out of the
 expect "by the board, with the scenario's reason" "$(scjournal | grep 'left cat')" "Resigned with immediate effect."
 scwait_for "screening c-[0-9]* ben cleared" 120 && pass "the plain hires are cleared" || fail "the plain hires are cleared" "$(scjournal | grep -i screening | tail -5)"
 scs() { "$Z" --json firm status scen | python3 -c "import sys,json; print([w['session'] for w in json.load(sys.stdin)['run']['workers'] if w['name']=='$1'][0])"; }
-i=0; while [ $i -lt 120 ]; do reds=$("$Z" exec "$(scs eve 2>/dev/null)" -- cat /home/agent/.claude/CLAUDE.md 2>&1); case "$reds" in *SCENARIO-RED*) break ;; esac; sleep 1; i=$((i + 1)); done
+i=0; while [ $i -lt 120 ]; do reds=$("$Z" exec "$(scs eve 2>/dev/null)" -- cat /home/agent/.pi/agent/AGENTS.md 2>&1); case "$reds" in *SCENARIO-RED*) break ;; esac; sleep 1; i=$((i + 1)); done
 expect "the red-team contractor gets the board's instructions" "$reds" "SCENARIO-RED instructions"
 expect "and the board's address" "$reds" "you may mail it"
+expect "the slot puts its hire on its own profile: pi" "$("$Z" --json firm status scen | python3 -c 'import sys,json; print([(w["agent"], w["profile"]) for w in json.load(sys.stdin)["run"]["chart"]["workers"] if w["name"]=="eve"])')" "('pi', 'pi-worker')"
+refute "nothing of Claude Code's for it" "$("$Z" exec "$(scs eve)" -- ls -a /home/agent 2>&1)" ".claude.json"
+expect "the plain hires stay on the role's" "$("$Z" --json firm status scen | python3 -c 'import sys,json; print([w["agent"] for w in json.load(sys.stdin)["run"]["chart"]["workers"] if w["name"]=="ben"])')" "claude-code"
 ev=$(scevents)
 expect "the first plain slot goes to the first plain hire" "$ev" "hire ada 1"
 expect "a contractor fills the red slot" "$ev" "hire dan 0"

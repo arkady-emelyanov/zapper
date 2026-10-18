@@ -370,6 +370,9 @@
   .node .nbud.low i { background: var(--warn); } .node .nbud.out i { background: var(--bad); }
   .node.joined { animation: joined 1.6s ease-out; }
   .node.contractor { outline: 1.5px dashed var(--line2); outline-offset: -3px; }
+  /* a worker on another agent than Claude Code (pi): a coloured frame */
+  .node.agent-other { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--info) 55%, transparent); }
+  .legend .agentsw { display:inline-block; width: 14px; height: 10px; border-radius: 3px; flex: none; box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--info) 55%, transparent); }
   .node.quoting { opacity: .55; }
   @keyframes joined { from { opacity: 0; transform: translateY(-14px) scale(.9); } to { opacity: 1; transform: none; } }
   @media (prefers-reduced-motion: reduce) { .node.joined { animation: none; } }
@@ -766,7 +769,7 @@ function setChart(M, chart) {
   for (const c of arr(chart.workers)) {
     if (!c || typeof c.name !== 'string') continue;
     const w = worker(M, c.name);
-    Object.assign(w, { role: str(c.role), title: str(c.title), reports_to: c.reports_to || null, officer: !!c.officer, avatar: c.avatar || null, model: c.model || null, inChart: true });
+    Object.assign(w, { role: str(c.role), title: str(c.title), reports_to: c.reports_to || null, officer: !!c.officer, avatar: c.avatar || null, model: c.model || null, agent: str(c.agent) || 'claude-code', profile: str(c.profile), inChart: true });
   }
 }
 function worker(M, name) {
@@ -820,7 +823,7 @@ function apply(M, e) {
       const x = e.worker;
       if (!x || typeof x !== 'object' || typeof x.name !== 'string') break;
       const w = worker(M, x.name);
-      Object.assign(w, { role: str(x.role), title: str(x.title), reports_to: x.reports_to ? str(x.reports_to) : null, officer: false, avatar: x.avatar || null, model: x.model || null, inChart: true,
+      Object.assign(w, { role: str(x.role), title: str(x.title), reports_to: x.reports_to ? str(x.reports_to) : null, officer: false, avatar: x.avatar || null, model: x.model || null, agent: str(x.agent) || 'claude-code', profile: str(x.profile), inChart: true,
         hiredBy: str(e.by), hiredAt: ts, hireReason: str(e.reason), hireBudget: Number(e.budget) || 0, left: null, contract: e.contract ? str(e.contract) : null });
       M.hires.push({ name: w.name, by: w.hiredBy, ts, budget: w.hireBudget, reason: w.hireReason });
       break;
@@ -1133,7 +1136,17 @@ const checksWaiting = (M) => [...M.screenings.values()].filter((c) => c.state ==
 // `claude-opus-5-5` → `Opus 5.5`; other names as they are.
 function modelName(m) {
   const x = /^claude-([a-z]+)-(\d+)-(\d+)/.exec(str(m));
-  return x ? x[1][0].toUpperCase() + x[1].slice(1) + ' ' + x[2] + '.' + x[3] : str(m);
+  // Other providers' ids often name their organization first.
+  return x ? x[1][0].toUpperCase() + x[1].slice(1) + ' ' + x[2] + '.' + x[3] : str(m).split('/').pop();
+}
+// The agent a worker runs, by name.
+const AGENT_NAMES = { 'claude-code': 'Claude Code', pi: 'pi' };
+const agentName = (a) => AGENT_NAMES[a] || str(a);
+// The agent and model, as a worker's label shows them: the agent only when
+// it isn't Claude Code, which most workers run.
+function agentLabel(w) {
+  const m = w.model ? modelName(w.model) : '';
+  return w.agent && w.agent !== 'claude-code' ? agentName(w.agent) + (m ? ' · ' + m : '') : m;
 }
 function chartWorkers() {
   const M = S.M;
@@ -1386,13 +1399,14 @@ function mountOverview() {
     row(el('span', { class: 'ic lock' }, ICONS.lock()), 'access request pending'),
     row(el('span', { class: 'ic clock' }, ICONS.clock(), '1'), 'overdue work'),
     row(el('span', { class: 'dashed' }), 'contractor'),
+    row(el('span', { class: 'agentsw' }), 'on another agent (pi); its name and model under the title'),
     el('div', { class: 'muted small' }, 'Envelopes fly as mail is sent; click a worker to write to them.'));
   OV.sig = null;
   syncOverviewOff();
 }
 function buildOverview() {
   const ws = chartWorkers();
-  const sig = JSON.stringify([boardName(), ws.map((w) => [w.name, w.reports_to, w.title, w.avatar, w.contract])]);
+  const sig = JSON.stringify([boardName(), ws.map((w) => [w.name, w.reports_to, w.title, w.avatar, w.contract, w.agent, w.model])]);
   if (sig === OV.sig) return;
   OV.sig = sig;
   const stage = $('stage');
@@ -1427,9 +1441,9 @@ function buildOverview() {
     const fill = el('i');
     const bar = el('div', { class: 'nbud' + (fundsOn(S.M) ? '' : ' hidden') }, fill);
     const fresh = w.hiredAt != null && T() - w.hiredAt < 8;
-    const node = el('div', { class: 'node' + (fresh ? ' joined' : '') + (w.contract ? ' contractor' : ''), style: `left:${p.x}px;top:${p.y}px`, tabindex: 0, role: 'button', onclick: () => openPanel(w.name),
+    const node = el('div', { class: 'node' + (fresh ? ' joined' : '') + (w.contract ? ' contractor' : '') + (w.agent && w.agent !== 'claude-code' ? ' agent-other' : ''), style: `left:${p.x}px;top:${p.y}px`, tabindex: 0, role: 'button', onclick: () => openPanel(w.name),
       onkeydown: (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); openPanel(w.name); } } },
-    av, el('div', { class: 'nm' }, cap(w.name)), el('div', { class: 'tt', title: w.model ? 'model ' + w.model : '' }, (w.contract ? 'contractor · ' : '') + (w.title || w.role) + (w.model ? ' · ' + modelName(w.model) : '')), st, rm, bar, bdg);
+    av, el('div', { class: 'nm' }, cap(w.name)), el('div', { class: 'tt', title: agentName(w.agent) + (w.model ? ', model ' + w.model : '') + (w.profile ? ', profile ' + w.profile : '') }, (w.contract ? 'contractor · ' : '') + (w.title || w.role) + (agentLabel(w) ? ' · ' + agentLabel(w) : '')), st, rm, bar, bdg);
     stage.append(node);
     OV.nodes.set(w.name, { el: node, av, st, rm, bdg, bar, fill });
   }
@@ -1552,7 +1566,7 @@ function openPanel(name, opts) {
   PANEL.earlier = el('button', { class: 'btn small ghost', onclick: () => { if (PANEL.tr) { PANEL.tr.all = !PANEL.tr.all; renderFeed(); } } }, 'Show earlier turns');
   p.replaceChildren(
     el('div', { class: 'ph' }, PANEL.av,
-      el('div', {}, el('h2', {}, cap(name)), el('div', { class: 'muted' }, [w.title, w.role !== w.title ? w.role : '', w.officer ? 'security officer' : '', w.model ? modelName(w.model) : ''].filter(Boolean).join(' · '))),
+      el('div', {}, el('h2', {}, cap(name)), el('div', { class: 'muted' }, [w.title, w.role !== w.title ? w.role : '', w.officer ? 'security officer' : '', agentName(w.agent), w.model ? modelName(w.model) : ''].filter(Boolean).join(' · '))),
       el('button', { class: 'btn ghost close', title: 'Close', onclick: closePanel }, '✕')),
     PANEL.state,
     opts.kickoff ? el('div', { class: 'hint', style: 'margin-top:12px' }, 'Give ' + name + ' the firm\'s first task.') : '',
@@ -1894,6 +1908,29 @@ function feedNodes(e) {
       out.push(el('div', { class: 'tx turn' + (e.is_error ? ' err' : '') }, t, bits.join(' · '), e.is_error && e.result ? el('pre', {}, clip(str(e.result), 4000)) : ''));
       break;
     }
+    // pi's events (agent.kind: pi).
+    case 'tool_execution_start': {
+      const [n, arg] = toolLine(str(e.toolName), e.args || {});
+      out.push(el('details', { class: 'tx tool' }, el('summary', {}, '▸ ', el('b', {}, n), arg ? ' ' + arg : ''), el('pre', {}, clip(JSON.stringify(e.args || {}, null, 2), 20000))));
+      break;
+    }
+    case 'tool_execution_end': {
+      const text = resultText(e.result && e.result.content);
+      out.push(el('details', { class: 'tx res' + (e.isError ? ' err' : '') }, el('summary', {}, e.isError ? 'error: ' + clip(firstLine(text), 120) : 'result (' + fmtNum(text.length) + ' chars)'), el('pre', {}, clip(text, 20000))));
+      break;
+    }
+    case 'message_end': {
+      const m = e.message || {};
+      if (m.role !== 'assistant') break;
+      for (const c of Array.isArray(m.content) ? m.content : []) {
+        if (!c || typeof c !== 'object') continue;
+        if (c.type === 'text' && str(c.text).trim()) out.push(el('div', { class: 'tx text' }, renderMarkdown(clip(c.text, 30000), {})));
+        else if (c.type === 'thinking') out.push(el('div', { class: 'tx res' }, 'thinking…'));
+      }
+      if (m.stopReason === 'error') out.push(el('div', { class: 'tx turn err' }, t, 'Model request failed', el('pre', {}, clip(str(m.errorMessage), 4000))));
+      break;
+    }
+    case 'agent_settled': out.push(el('div', { class: 'tx turn' + (e.aborted ? ' err' : '') }, t, e.aborted ? 'Turn aborted' : 'Turn finished')); break;
     case 'stderr': out.push(el('details', { class: 'tx err' }, el('summary', {}, 'stderr: ' + clip(firstLine(e.text), 120)), el('pre', {}, clip(e.text, 8000)))); break;
     case 'raw': out.push(el('details', { class: 'tx res' }, el('summary', {}, 'output: ' + clip(firstLine(e.text), 120)), el('pre', {}, clip(e.text, 8000)))); break;
     default: break;
@@ -2865,7 +2902,7 @@ function vmCard(x) {
       : el('div', { class: 'vm-icon' + (facility ? ' fac' : '') }, facility ? '⎈' : '▣'),
     el('div', { class: 'vm-name' },
       el('div', { class: 'serif' }, x.member || x.id),
-      el('div', { class: 'muted small' }, chart ? (chart.title || chart.role) + (chart.model ? ' · ' + modelName(chart.model) : '') + ' · firm ' + x.firm : facility ? 'facility · firm ' + x.firm : 'profile ' + x.profile)),
+      el('div', { class: 'muted small' }, chart ? (chart.title || chart.role) + (agentLabel(chart) ? ' · ' + agentLabel(chart) : '') + ' · firm ' + x.firm : facility ? 'facility · firm ' + x.firm : 'profile ' + x.profile)),
     pill(x.state, x.state));
   const spec = el('div', { class: 'vm-spec small' },
     el('span', {}, x.vcpus + ' vCPU'), el('span', {}, mib(Number(x.memory_mib) || 0)), el('span', {}, x.image), el('span', {}, x.kernel),
@@ -3376,12 +3413,16 @@ function startForm(running) {
     const count = el('input', { type: 'number', min: 1, max: 20, value: String(h.count || 1) });
     const kind = el('select', {}, el('option', { value: '', selected: h.contract == null }, 'staff or contractor'), el('option', { value: 'staff', selected: h.contract === false }, 'staff only'), el('option', { value: 'contract', selected: h.contract === true }, 'contractor only'));
     const line = el('input', { type: 'checkbox', checked: !!h.board_line });
+    // Another agent or model for these hires: a profile of their own.
+    const profile = el('select', { title: 'The profile these hires run on: the role\'s, or another agent or model' }, el('option', { value: '', selected: !h.profile }, 'role\'s profile'),
+      ...arr(st.profiles).map((p) => el('option', { value: str(p.name), selected: str(p.name) === str(h.profile) }, str(p.name) + ' · ' + agentName(p.agent) + (p.model ? ' · ' + modelName(p.model) : ''))));
+    if (h.profile && !arr(st.profiles).some((p) => str(p.name) === str(h.profile))) profile.append(el('option', { value: str(h.profile), selected: true }, str(h.profile)));
     const prompt = el('textarea', { rows: 6, maxlength: 20000, placeholder: 'The board\'s instructions for these hires' });
     prompt.value = str(h.prompt);
     const box = el('div', { class: 'ko-slot' });
-    const row = { role, count, kind, line, prompt, box };
+    const row = { role, count, kind, line, profile, prompt, box };
     slotRows.push(row);
-    box.append(el('div', { class: 'row' }, role, el('label', {}, '× ', count), kind, el('label', { class: 'small' }, line, ' may mail the board'),
+    box.append(el('div', { class: 'row' }, role, el('label', {}, '× ', count), kind, profile, el('label', { class: 'small' }, line, ' may mail the board'),
       el('button', { class: 'btn', type: 'button', onclick: () => { slotRows.splice(slotRows.indexOf(row), 1); box.remove(); } }, 'Remove')), prompt);
     slotsBox.append(box);
   };
@@ -3416,7 +3457,7 @@ function startForm(running) {
   // The scenario as the board shaped it, for the start request.
   const scenarioBody = () => {
     if (!scSel.value) return {};
-    const hires = slotRows.map((r) => ({ role: r.role.value, count: Number(r.count.value) || 1, contract: r.kind.value === '' ? null : r.kind.value === 'contract', prompt: r.prompt.value.trim(), board_line: r.line.checked }));
+    const hires = slotRows.map((r) => ({ role: r.role.value, count: Number(r.count.value) || 1, contract: r.kind.value === '' ? null : r.kind.value === 'contract', prompt: r.prompt.value.trim(), board_line: r.line.checked, ...(r.profile.value ? { profile: r.profile.value } : {}) }));
     const script = stepRows.filter((r) => r.on.checked).map((r) => {
       const x = JSON.parse(JSON.stringify(r.x));
       x.after = r.after.value.trim() || null;
@@ -4119,6 +4160,18 @@ function updateStats() {
   const roles = new Map();
   for (const [n, p] of per) { const r = (M.workers.get(n) || {}).role || '?'; const x = roles.get(r) || 0; roles.set(r, x + p.turns); }
   if (roles.size > 1) body.push(el('div', { class: 'card', style: 'margin-top:16px' }, el('h3', { style: 'margin:0 0 6px' }, 'Turns per role'), hbars([...roles].map(([r, v]) => ({ label: r, value: v })), { label: 'turns per role' })));
+  // Agents and models side by side: turns, tokens and tokens per turn.
+  const byAgent = new Map();
+  for (const [n, p] of per) {
+    const w = M.workers.get(n) || {};
+    const k = agentName(w.agent || 'claude-code') + (w.model ? ' · ' + modelName(w.model) : '');
+    const a = byAgent.get(k) || { workers: 0, turns: 0, tokens: 0 };
+    a.workers++; a.turns += p.turns; a.tokens += p.tokens;
+    byAgent.set(k, a);
+  }
+  if (byAgent.size > 1) body.push(el('div', { class: 'card', style: 'margin-top:16px' }, el('h3', { style: 'margin:0 0 6px' }, 'By agent and model'),
+    el('table', { class: 't' }, el('thead', {}, el('tr', {}, ['agent · model', 'workers', 'turns', 'tokens', 'tokens per turn'].map((h) => el('th', {}, h)))),
+      el('tbody', {}, [...byAgent].map(([k, a]) => el('tr', {}, el('td', {}, k), el('td', {}, String(a.workers)), el('td', {}, String(a.turns)), el('td', {}, fmtNum(a.tokens)), el('td', {}, a.turns ? fmtNum(a.tokens / a.turns) : '—')))))));
 
   // Mail.
   const mails = [...M.mails.values()].filter((m) => inR(m.ts));

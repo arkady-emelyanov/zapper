@@ -131,7 +131,9 @@ async fn start(
             }
             match serde_json::from_str::<Value>(text) {
                 Ok(v) if v.is_object() => {
-                    transcript.write(v.clone());
+                    if reader.lock().unwrap().transcribe(&v) {
+                        transcript.write(v.clone());
+                    }
                     Some(v)
                 }
                 _ => {

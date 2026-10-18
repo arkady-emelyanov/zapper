@@ -1061,6 +1061,7 @@ pub(super) fn join(
         title: title
             .map(|t| t.trim().chars().take(80).collect())
             .filter(|t: &String| !t.is_empty()),
+        profile: None,
     };
     {
         let mut c = run.chart.write().unwrap();
@@ -1069,9 +1070,23 @@ pub(super) fn join(
         }
         c.workers.push(w.clone());
     }
+    // A scenario's slot for this hire gives them the board's instructions,
+    // and maybe a profile of its own (another agent or model).
+    let mut w = w;
+    if let Some(p) = super::scenario::claim(run, role, contract.is_some(), &name) {
+        w.profile = Some(p.clone());
+        if let Some(x) = run
+            .chart
+            .write()
+            .unwrap()
+            .workers
+            .iter_mut()
+            .find(|x| x.name == name)
+        {
+            x.profile = Some(p);
+        }
+    }
     let firm = run.chart();
-    // A scenario's slot for this hire gives them the board's instructions.
-    super::scenario::claim(run, role, contract.is_some(), &name);
     let rt = Arc::new(WorkerRt::new(&firm, &w));
     run.workers
         .write()
@@ -1081,7 +1096,7 @@ pub(super) fn join(
         .lock()
         .unwrap()
         .transfer(Some(by), &name, budget as u64);
-    let mut worker = super::worker_json(&firm, &run.models, &w);
+    let mut worker = super::worker_json(&firm, &run.models, &run.agents, &w);
     if let Some(c) = contract {
         worker["contract"] = json!(c);
     }

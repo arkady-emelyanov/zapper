@@ -176,6 +176,9 @@ pub struct FirmRun {
     pub ledger: Mutex<workforce::Ledger>,
     /// The model each role's workers run, as the run started.
     pub models: BTreeMap<String, Option<String>>,
+    /// Each office profile's agent and model, for workers on their own
+    /// profile (a founder's, or a scenario slot's).
+    pub agents: Agents,
     /// The company's name for this run.
     pub company: String,
     /// The board's extra instructions for founders, by name.
@@ -408,7 +411,7 @@ impl FirmRun {
                 })
             })
             .collect();
-        let chart = chart(&self.firm, &self.chart(), &self.models);
+        let chart = chart(&self.firm, &self.chart(), &self.models, &self.agents);
         let u = self.usage.lock().unwrap();
         json!({
             "firm": self.firm, "company": self.company, "run": self.id, "state": *self.state.lock().unwrap(), "started": self.started,
@@ -423,12 +426,31 @@ impl FirmRun {
     }
 }
 
+/// Each profile's agent kind and model, by profile name.
+pub type Agents = BTreeMap<String, (String, Option<String>)>;
+
+fn profile_agents(config: &Config) -> Agents {
+    config
+        .profiles
+        .keys()
+        .filter_map(|n| {
+            let p = config.resolve(n).ok()?;
+            Some((n.clone(), (p.agent.kind, p.agent.model)))
+        })
+        .collect()
+}
+
 /// The chart as the UI draws it: at the start of a run, and live.
-fn chart(name: &str, firm: &Firm, models: &BTreeMap<String, Option<String>>) -> Value {
+fn chart(
+    name: &str,
+    firm: &Firm,
+    models: &BTreeMap<String, Option<String>>,
+    agents: &Agents,
+) -> Value {
     let workers: Vec<Value> = firm
         .workers
         .iter()
-        .map(|w| worker_json(firm, models, w))
+        .map(|w| worker_json(firm, models, agents, w))
         .collect();
     json!({ "firm": name, "description": firm.description, "board": firm.board.name, "domain": firm.domain(name), "workers": workers })
 }
@@ -437,13 +459,27 @@ fn chart(name: &str, firm: &Firm, models: &BTreeMap<String, Option<String>>) -> 
 pub(super) fn worker_json(
     firm: &Firm,
     models: &BTreeMap<String, Option<String>>,
+    agents: &Agents,
     w: &zapper_policy::Worker,
 ) -> Value {
     let role = firm.roles.get(&w.role);
+    // On their own profile, its agent and model; else the role's.
+    let profile = w
+        .profile
+        .clone()
+        .or_else(|| role.map(|r| r.profile.clone()))
+        .unwrap_or_default();
+    let (agent, own_model) = agents.get(&profile).cloned().unwrap_or_default();
+    let model = if w.profile.is_some() {
+        own_model
+    } else {
+        models.get(&w.role).cloned().flatten()
+    };
     json!({
         "name": w.name, "role": w.role, "title": firm.title_of(&w.name),
         "reports_to": w.reports_to, "officer": firm.is_officer(&w.name),
-        "avatar": role.map(|r| json!(r.avatar)), "model": models.get(&w.role).cloned().flatten(),
+        "avatar": role.map(|r| json!(r.avatar)), "model": model,
+        "agent": agent, "profile": profile,
     })
 }
 
@@ -664,7 +700,8 @@ fn with_options(name: &str, mut firm: Firm, config: &Config, o: &StartOptions) -
             if let Some(x) = &o.script {
                 sc.script = x.clone();
             }
-            let problems = sc.problems(&firm);
+            let mut problems = sc.problems(&firm);
+            problems.extend(sc.profile_problems(config));
             if !problems.is_empty() {
                 bail!("scenario {n}: {}", problems.join("; "));
             }
@@ -766,6 +803,7 @@ pub async fn up_with(d: &Arc<Daemon>, name: &str, opts: &StartOptions) -> Result
         .collect();
     let started = now();
     let models = role_models(&firm, &config);
+    let agents = profile_agents(&config);
     let live = Arc::new(RwLock::new(firm.clone()));
     let (boots, boot_rx) = tokio::sync::mpsc::unbounded_channel();
     let run = Arc::new(FirmRun {
@@ -777,6 +815,7 @@ pub async fn up_with(d: &Arc<Daemon>, name: &str, opts: &StartOptions) -> Result
         chart: live,
         ledger: Mutex::new(workforce::Ledger::new(&firm)),
         models: models.clone(),
+        agents: agents.clone(),
         company: company.clone(),
         prompts: prompts.clone(),
         articles: articles.clone(),
@@ -801,7 +840,7 @@ pub async fn up_with(d: &Arc<Daemon>, name: &str, opts: &StartOptions) -> Result
         workers: RwLock::new(workers),
         stopping: Notify::new(),
     });
-    let info = json!({ "firm": name, "company": company, "prompts": prompts, "articles": articles, "scenario": scenario.as_ref().map(|(n, sc)| json!({ "name": n, "scenario": sc })), "run": id, "started": started, "chart": chart(name, &firm, &models), "budget": firm.budget, "agent_version": env!("CARGO_PKG_VERSION") });
+    let info = json!({ "firm": name, "company": company, "prompts": prompts, "articles": articles, "scenario": scenario.as_ref().map(|(n, sc)| json!({ "name": n, "scenario": sc })), "run": id, "started": started, "chart": chart(name, &firm, &models, &agents), "budget": firm.budget, "agent_version": env!("CARGO_PKG_VERSION") });
     super::write_private(
         &dir.join("run.json"),
         serde_json::to_string_pretty(&info)?.as_bytes(),
@@ -812,7 +851,7 @@ pub async fn up_with(d: &Arc<Daemon>, name: &str, opts: &StartOptions) -> Result
         &dir.join(RUN_CONFIG),
         super::redact(config.clone()).to_yaml().as_bytes(),
     )?;
-    run.journal.append("run", json!({ "state": "starting", "company": company, "prompts": prompts, "articles": articles, "scenario": scenario.as_ref().map(|(n, sc)| json!({ "name": n, "scenario": sc })), "chart": chart(name, &firm, &models), "budget": firm.budget }));
+    run.journal.append("run", json!({ "state": "starting", "company": company, "prompts": prompts, "articles": articles, "scenario": scenario.as_ref().map(|(n, sc)| json!({ "name": n, "scenario": sc })), "chart": chart(name, &firm, &models, &agents), "budget": firm.budget }));
     workforce::seed(&run);
     // The policy owners (the CEO, any founding officers) hold admin on
     // everything; everyone else starts with nothing.
@@ -922,7 +961,11 @@ pub(super) async fn boot_worker(
     w: &Arc<WorkerRt>,
     role: &zapper_policy::Role,
 ) -> Result<()> {
-    let profile = config.resolve(&role.profile)?;
+    // The worker's own profile (a founder's, a scenario slot's), or the
+    // role's.
+    let own = run.chart().worker(&w.name).and_then(|x| x.profile.clone());
+    let profile_name = own.clone().unwrap_or_else(|| role.profile.clone());
+    let profile = config.resolve(&profile_name)?;
     harness_driver(&profile)?;
     let user = profile.agent.user.clone();
     let home = format!("/home/{user}");
@@ -976,7 +1019,9 @@ pub(super) async fn boot_worker(
         "mcp_servers": { "office": { "command": ops::AGENT_PATH, "args": ["office", "mcp"] } },
         "turn_end": format!("{} office stop-hook", ops::AGENT_PATH),
     });
-    if let Some(m) = &role.model {
+    // The role's model, unless the worker runs on a profile of their own,
+    // which brings its model.
+    if let (Some(m), None) = (&role.model, &own) {
         overlay["model"] = json!(m);
     }
     let link = FirmLink {
@@ -987,7 +1032,7 @@ pub(super) async fn boot_worker(
         role: Some((w.role.clone(), run.roles[&w.role].clone())),
     };
     let new = NewSession {
-        profile: role.profile.clone(),
+        profile: profile_name,
         workdir: run.dir.join("empty"),
         policy: Policy::default(),
         firm: Some(link),

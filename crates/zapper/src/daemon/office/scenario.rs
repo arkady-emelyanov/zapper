@@ -120,17 +120,15 @@ impl Play {
 }
 
 /// A hire or a contractor joins: if a slot of the scenario has room for
-/// them, they get its instructions.
-pub fn claim(run: &FirmRun, role: &str, contract: bool, worker: &str) {
-    let Some(play) = &run.scenario else {
-        return;
-    };
-    if let Some((i, slot)) = play.claim(role, contract, worker) {
-        run.journal.append(
-            "scenario",
-            json!({ "event": "hire", "scenario": play.name, "slot": i, "worker": worker, "role": role, "contract": contract, "board_line": slot.board_line }),
-        );
-    }
+/// them, they get its instructions. The slot's own profile, if it has one.
+pub fn claim(run: &FirmRun, role: &str, contract: bool, worker: &str) -> Option<String> {
+    let play = run.scenario.as_ref()?;
+    let (i, slot) = play.claim(role, contract, worker)?;
+    run.journal.append(
+        "scenario",
+        json!({ "event": "hire", "scenario": play.name, "slot": i, "worker": worker, "role": role, "contract": contract, "board_line": slot.board_line, "profile": slot.profile }),
+    );
+    slot.profile
 }
 
 /// A worker who filled a slot leaves before their job started: the next
@@ -426,6 +424,7 @@ mod tests {
             contract,
             prompt: prompt.into(),
             board_line: contract == Some(true),
+            profile: None,
         }
     }
 

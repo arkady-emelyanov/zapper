@@ -96,6 +96,11 @@ pub trait Conversation: Send {
     fn steers(&self) -> bool {
         false
     }
+    /// Whether an output line goes into the worker's transcript: not
+    /// streaming deltas that a later line repeats whole.
+    fn transcribe(&self, _line: &Value) -> bool {
+        true
+    }
     /// A line that hands the agent a message while it works, for harnesses
     /// that take one natively (pi's `follow_up`, opencode's `queue`
     /// delivery); `None` where the turn-end command does it (Claude Code).
@@ -575,6 +580,11 @@ impl Conversation for PiConversation {
 
     fn steers(&self) -> bool {
         true
+    }
+
+    /// `message_update` carries deltas; `message_end` has the message whole.
+    fn transcribe(&self, line: &Value) -> bool {
+        line["type"] != "message_update"
     }
 
     /// Delivered when the agent would otherwise stop, like Claude Code's

@@ -142,7 +142,7 @@ async fn status(State(d): D, Path(f): Path<String>) -> R<Json<Value>> {
         "officer": firm.security.officers.iter().find(|o| Some(o.as_str()) != firm.root()),
         "officers": firm.security.officers,
         "seed": config.firms.get(&f).map(|x| x.budget.seed).unwrap_or(firm.budget.seed),
-        "start": config.firms.get(&f).map(start_terms),
+        "start": config.firms.get(&f).map(|x| start_terms(x, &config)),
         "articles": live.map(|r| r.articles.clone()),
         "description": firm.description,
         "board": firm.board.name,
@@ -169,7 +169,18 @@ async fn scenarios(State(d): D, Path(f): Path<String>) -> R<Json<Value>> {
 
 /// What the board's start form offers: the config's founders and terms,
 /// and the charter.
-fn start_terms(firm: &zapper_policy::Firm) -> Value {
+fn start_terms(firm: &zapper_policy::Firm, config: &zapper_policy::Config) -> Value {
+    // Profiles a scenario's hire slot may put hires on: those an office
+    // worker can run on, with their agent and model.
+    let profiles: Vec<Value> = config
+        .profiles
+        .keys()
+        .filter(|n| zapper_policy::office_profile_problem(config, n).is_none())
+        .filter_map(|n| {
+            let p = config.resolve(n).ok()?;
+            Some(json!({ "name": n, "agent": p.agent.kind, "model": p.agent.model, "description": config.profiles[n].description }))
+        })
+        .collect();
     let root = firm.root();
     json!({
         "ceo": root,
@@ -179,6 +190,7 @@ fn start_terms(firm: &zapper_policy::Firm) -> Value {
         "max_concurrent": firm.budget.max_concurrent,
         "daily_turns": firm.budget.daily_turns,
         "scenarios": firm.scenarios,
+        "profiles": profiles,
         "roles": firm.roles.iter().map(|(n, r)| json!({ "name": n, "title": r.title, "officer": r.officer })).collect::<Vec<_>>(),
         "charter": super::prompts::CHARTER.iter().map(|a| json!({ "id": a.id, "title": a.title, "text": a.text })).collect::<Vec<_>>(),
     })

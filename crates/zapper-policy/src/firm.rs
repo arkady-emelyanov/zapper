@@ -99,6 +99,10 @@ pub struct HireSlot {
     /// The worker may mail the board directly, even as a contractor.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub board_line: bool,
+    /// The profile these hires run on instead of the role's: another agent
+    /// or model for them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
 }
 
 impl Default for HireSlot {
@@ -109,6 +113,7 @@ impl Default for HireSlot {
             contract: None,
             prompt: String::new(),
             board_line: false,
+            profile: None,
         }
     }
 }
@@ -183,6 +188,18 @@ impl Default for StepMail {
 }
 
 impl Scenario {
+    /// Hire slots whose profile can't run an office worker.
+    pub fn profile_problems(&self, config: &Config) -> Vec<String> {
+        self.hires
+            .iter()
+            .enumerate()
+            .filter_map(|(i, h)| {
+                let p = h.profile.as_deref()?;
+                office_profile_problem(config, p).map(|e| format!("hires[{i}]: {e}"))
+            })
+            .collect()
+    }
+
     /// What is wrong with the scenario in `firm`, one line each.
     pub fn problems(&self, firm: &Firm) -> Vec<String> {
         let mut out = Vec::new();
@@ -474,6 +491,23 @@ pub struct Worker {
     pub reports_to: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// The worker's own profile instead of the role's: another agent or
+    /// model for this one (a founder's, or a hire's from a scenario slot).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
+}
+
+/// Why `profile` can't run an office worker, if it can't: it must resolve,
+/// and its agent must be one the office drives.
+pub fn office_profile_problem(config: &Config, profile: &str) -> Option<String> {
+    match config.resolve(profile) {
+        Err(e) => Some(format!("profile {profile}: {e:#}")),
+        Ok(p) if !["claude-code", "pi"].contains(&p.agent.kind.as_str()) => Some(format!(
+            "profile {profile}: agent kind {} can't run an office worker (claude-code, pi)",
+            p.agent.kind
+        )),
+        Ok(_) => None,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -848,6 +882,13 @@ impl Firm {
                 }
             }
         }
+        for w in &self.workers {
+            if let Some(p) = &w.profile {
+                if let Some(e) = office_profile_problem(config, p) {
+                    err(format!("worker {}: {e}", w.name));
+                }
+            }
+        }
         for (fname, f) in &self.facilities {
             if f.kind != "k3s" {
                 err(format!("facility {fname}: unknown kind {} (k3s)", f.kind));
@@ -914,6 +955,9 @@ impl Firm {
             for p in sc.problems(self) {
                 err(format!("scenario {sname}: {p}"));
             }
+            for p in sc.profile_problems(config) {
+                err(format!("scenario {sname}: {p}"));
+            }
         }
         errors
     }
@@ -939,6 +983,8 @@ mod tests {
     const BASE: &str = "
 profiles:
   w: { agent: { kind: claude-code } }
+  p: { agent: { kind: pi, model: qwen } }
+  plain: { agent: { kind: generic } }
   asks: { policy: { exec: [{ action: ask, path: ssh }] } }
 firms:
   acme:
@@ -962,6 +1008,21 @@ firms:
         let ok = with("      rt:\n        hires: [{ role: eng, count: 2, contract: true, board_line: true, prompt: be sneaky }]\n        script:\n          - { after: 30m, kill: { role: eng, reason: quit } }\n          - { spent: 0.5, mail: { to: ceo, subject: Pivot, body: Change it } }\n").unwrap();
         let sc = &ok.firms["acme"].scenarios["rt"];
         assert_eq!(sc.hires[0].count, 2);
+        // A slot may put its hires on another agent.
+        let pi = with("      p:\n        hires: [{ role: eng, prompt: p, profile: p }]\n").unwrap();
+        assert_eq!(
+            pi.firms["acme"].scenarios["p"].hires[0].profile.as_deref(),
+            Some("p")
+        );
+        // So may a founder.
+        let f = firm(&BASE.replace(
+            "{ name: ada, role: eng, reports_to: cto }",
+            "{ name: ada, role: eng, reports_to: cto, profile: nope }",
+        ));
+        assert!(f
+            .unwrap_err()
+            .to_string()
+            .contains("worker ada: profile nope"));
         assert_eq!(sc.script.len(), 2);
         for (yaml, want) in [
             (
@@ -979,6 +1040,14 @@ firms:
             (
                 "      x: { hires: [{ role: ceo, prompt: p }] }\n",
                 "CEO is a founder",
+            ),
+            (
+                "      x: { hires: [{ role: eng, prompt: p, profile: nope }] }\n",
+                "profile nope",
+            ),
+            (
+                "      x: { hires: [{ role: eng, prompt: p, profile: plain }] }\n",
+                "can't run an office worker",
             ),
             (
                 "      x: { hires: [{ role: eng, prompt: p, board_line: true }] }\n",
