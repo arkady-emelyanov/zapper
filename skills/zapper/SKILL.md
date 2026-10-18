@@ -34,6 +34,7 @@ zapper firm ls ; zapper firm status acme          # before anything: is a run go
 zapper firm up acme                               # a fresh, idle run (the cluster first, if the firm has one)
 zapper firm scenarios acme                        # simulations: hires with extra instructions, scripted board actions
 zapper firm up acme --scenario red-team           # play one (Kickoff lets the board change its hires and steps first)
+zapper firm up acme --task task.md                # with the board's task (first line the subject), sent to the CEO once it's up
 zapper firm up acme --articles law.md               # with the board's own articles; the CEO holds security until they hire an officer
 zapper mail send acme --to barbara --kind assignment --subject "…" --body "…"
 zapper firm journal acme -f                        # mail, states, turns, access requests, publishes

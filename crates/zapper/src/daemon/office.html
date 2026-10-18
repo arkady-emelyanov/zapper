@@ -2873,6 +2873,10 @@ const SESSION_ID = /^[a-z2-9]{6}$/;
 function mountVms() {
   $('tab-vms').replaceChildren(
     el('div', { class: 'ovhead' }, el('h2', { class: 'sec', style: 'margin:0' }, 'VMs'), el('span', { class: 'muted', id: 'vm-sub' }, 'every running session of this daemon')),
+    // With no company running, the way to start one; the daemon's VMs are
+    // listed all the same.
+    el('div', { id: 'vm-off', class: 'hint hidden', style: 'display:flex;gap:10px;align-items:center' }, el('span', {}, 'No company is running.'),
+      el('button', { class: 'btn primary small', type: 'button', onclick: () => showTab('kickoff') }, 'Go to Kickoff')),
     el('div', { id: 'vm-body' }, el('div', { class: 'empty card' }, 'Loading…')));
   VM.sig = null;
 }
@@ -2948,6 +2952,7 @@ function vmCard(x) {
 function updateVms() {
   const body = $('vm-body');
   if (!body) return;
+  if ($('vm-off')) $('vm-off').classList.toggle('hidden', !(S.firm && companyOff()));
   const sig = String(VM.at) + S.firm + (S.M ? S.M.seq || 0 : 0) + dashboardSig();
   if (sig === VM.sig) return;
   VM.sig = sig;
@@ -3281,15 +3286,9 @@ const OFF_TABS = ['overview', 'people', 'work', 'messages', 'security', 'drive',
 function offView() {
   const v = el('div', { class: 'card git-empty-card' },
     el('h2', { class: 'serif' }, 'The firm is off'),
-    el('p', { class: 'muted' }, 'Each run is a company of its own, with its people, mail, drive and repository, all starting empty. Start one in Kickoff, or open a past run to see what it did.'),
+    el('p', { class: 'muted' }, 'Each run is a company of its own, with its people, mail, drive and repository, all starting empty. Start one in Kickoff; past runs are in Runs.'),
     el('div', { style: 'display:flex;gap:10px;justify-content:center' },
-      el('button', { class: 'btn primary', type: 'button', onclick: () => showTab('kickoff') }, 'Go to Kickoff'),
-      el('button', { class: 'btn', type: 'button', onclick: async () => {
-        try {
-          const runs = arr(await api(F() + '/runs')).map((r) => str(r.run)).sort();
-          if (runs.length) enterReplay(runs[runs.length - 1]); else toast('No runs yet');
-        } catch (e) { toast(e.message); }
-      } }, 'Open the last run')));
+      el('button', { class: 'btn primary', type: 'button', onclick: () => showTab('kickoff') }, 'Go to Kickoff')));
   return v;
 }
 function syncOff() {
@@ -3428,6 +3427,9 @@ function startForm(running) {
   const conc = el('input', { type: 'number', min: 1, max: 64, step: 1, value: String(st.max_concurrent || 3) });
   const turns = el('input', { type: 'number', min: 0, step: 10, value: String(st.daily_turns != null ? st.daily_turns : 400) });
   const articles = el('textarea', { rows: 4, maxlength: 20000, placeholder: 'Optional: your own articles, binding on everyone, e.g. "No paid services without the board\'s approval." "Everything we ship is open source."' });
+  // The task: sent by the board as the CEO's first assignment once the
+  // company is up. First line the subject, as Copy task in Runs gives it.
+  const task = el('textarea', { rows: 6, maxlength: 60000, placeholder: 'Optional: the task for the CEO, sent by the board as soon as the company is up. First line: the subject; then the message. Paste one from Runs (Copy task) to repeat it.' });
   // A scenario: hires with extra instructions and board actions during the
   // run, from the config's presets, all editable here.
   const scenarios = st.scenarios || {};
@@ -3528,6 +3530,7 @@ function startForm(running) {
         seed: seed.value.trim() || null, security_share: pct / 100,
         max_concurrent: Number(conc.value) || null, daily_turns: turns.value === '' ? null : Number(turns.value),
         articles: articles.value.trim() || null,
+        task: task.value.trim() || null,
         ...scenarioBody(),
       });
       KO.starting = false; KO.sig = null; KO.startEl = null;
@@ -3543,6 +3546,7 @@ function startForm(running) {
     el('p', { class: 'muted' }, 'It starts with its CEO, who also holds security until they hire a security officer. You give the CEO the task; they scope it on the seed, ask you for the budget it needs, and hire the team, under the charter on the right.'),
     el('label', { class: 'f' }, 'Company name', dice(company, randomCompany)),
     founder('CEO', ceo, ceoPrompt, 'takes precedence over the CEO\'s skill'),
+    el('label', { class: 'f' }, 'The task (the board\'s first assignment to the CEO)', task),
     el('h3', { class: 'ko-ch' }, 'Terms'),
     el('div', { class: 'ko-terms' }, el('label', { class: 'f' }, 'Seed (tokens, to scope the task)', seed), el('label', { class: 'f' }, 'Security\'s share of every grant (%)', share)),
     el('div', { class: 'ko-terms' }, el('label', { class: 'f' }, 'Agent parallelism', conc), el('label', { class: 'f' }, 'Turns a day, whole firm (0: no limit)', turns)),

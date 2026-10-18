@@ -654,6 +654,32 @@ pub struct StartOptions {
     /// Hire slots and script steps instead of the scenario's own.
     pub hires: Option<Vec<zapper_policy::HireSlot>>,
     pub script: Option<Vec<zapper_policy::Step>>,
+    /// The board's task for the CEO, sent as the run's first assignment
+    /// once it is up: its first line is the subject, the rest the message.
+    pub task: Option<String>,
+}
+
+/// A task's subject (its first line) and message (the rest, or the subject
+/// when there is no more).
+fn task_parts(task: &str) -> Option<(String, String)> {
+    let t = task.trim();
+    if t.is_empty() {
+        return None;
+    }
+    let (first, rest) = t.split_once('\n').unwrap_or((t, ""));
+    let subject: String = first
+        .trim()
+        .trim_start_matches('#')
+        .trim()
+        .chars()
+        .take(120)
+        .collect();
+    let body = if rest.trim().is_empty() {
+        t
+    } else {
+        rest.trim()
+    };
+    Some((subject, body.to_string()))
 }
 
 /// A run's firm as the board started it.
@@ -836,6 +862,12 @@ fn with_options(name: &str, mut firm: Firm, config: &Config, o: &StartOptions) -
 }
 
 pub async fn up_with(d: &Arc<Daemon>, name: &str, opts: &StartOptions) -> Result<Arc<FirmRun>> {
+    let task = opts.task.as_deref().and_then(task_parts);
+    if let Some((_, body)) = &task {
+        if body.len() > mail::MAX_BODY {
+            bail!("the task is too long: at most {} bytes", mail::MAX_BODY);
+        }
+    }
     if let Ok(r) = d.office.run(name) {
         if !r.ended() {
             bail!("firm {name} is already running (run {})", r.id);
@@ -953,6 +985,19 @@ pub async fn up_with(d: &Arc<Daemon>, name: &str, opts: &StartOptions) -> Result
     }
     tokio::spawn(ticker(d.clone(), run.clone()));
     tokio::spawn(booter(d.clone(), run.clone(), boot_rx));
+    // The board's task, if it gave one: the CEO's first assignment.
+    if let (Some((subject, body)), Some(ceo)) = (task, run.chart().root().map(str::to_string)) {
+        if let Err(e) = board_send(
+            &run,
+            &json!({ "to": [ceo], "kind": "assignment", "subject": subject, "body": body }),
+        ) {
+            tracing::warn!(firm = %name, "the board's task: {e:#}");
+            run.journal.append(
+                "op_error",
+                json!({ "op": "task", "error": format!("{e:#}") }),
+            );
+        }
+    }
     Ok(run)
 }
 
@@ -1479,6 +1524,23 @@ pub fn prune(d: &Daemon, firm: &str, run: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn task_parts() {
+        assert_eq!(super::task_parts("  "), None);
+        assert_eq!(
+            super::task_parts("Build a news portal\n\nRSS feeds, ads, a launch plan."),
+            Some((
+                "Build a news portal".into(),
+                "RSS feeds, ads, a launch plan.".into()
+            ))
+        );
+        // One line is both the subject and the message.
+        assert_eq!(
+            super::task_parts("# Build it"),
+            Some(("Build it".into(), "# Build it".into()))
+        );
+    }
+
     #[test]
     fn start_options() {
         let c = zapper_policy::Config::from_yaml(

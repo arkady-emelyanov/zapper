@@ -205,7 +205,11 @@ pub async fn start(spec: VmSpec<'_>) -> Result<Child> {
         initrd: spec.initrd.to_path_buf(),
         nic: spec.nic,
     };
-    let mut cmd = Command::new(std::env::current_exe()?);
+    // The daemon's own binary as it runs: /proc/self/exe stays valid when
+    // the file on disk is replaced (a rebuild, `make install`), where the
+    // path from current_exe() then names a deleted file and every VM after
+    // it would fail to start.
+    let mut cmd = Command::new("/proc/self/exe");
     cmd.args(shim.to_args());
     // The VMM dies with the daemon, even if the daemon crashes.
     unsafe {
@@ -221,7 +225,12 @@ pub async fn start(spec: VmSpec<'_>) -> Result<Child> {
         .stderr(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
-        .with_context(|| format!("starting {}", spec.firecracker.display()))?;
+        .with_context(|| {
+            format!(
+                "starting the VMM (zapper __vmm) for {}",
+                spec.firecracker.display()
+            )
+        })?;
     let console = spec.dir.join("console.log");
     for stream in [
         child

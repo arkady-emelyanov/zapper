@@ -35,7 +35,7 @@ firms:
   acme:
     description: A small product company
     board: { name: Board }                 # the operator; mail to `board` lands in the UI
-    budget: { daily_turns: 400, max_concurrent: 3, seed: 1200000, security_share: 0.2 }   # a run budget: see the workforce
+    budget: { daily_turns: 400, max_concurrent: 3, seed: 1000000, security_share: 0.2 }   # a run budget: see the workforce
     git: {}                                # an empty repository per run at https://git.acme.internal/product.git
     product_port: 0.0.0.0:8080             # browsers on the LAN → the cluster's ingress; 127.0.0.1:8080 for this machine only
     facilities:
@@ -141,7 +141,7 @@ Security is never unheld. A company starts with the CEO holding it. While the CE
 ### The deal with the board
 
 1. **The board gives the task** to the CEO, in the Kickoff tab or with `zapper mail send`. The CEO has the seed: enough to scope the task, not to build it, and before a budget is approved nobody can hire.
-2. **The CEO asks for a budget**: `budget_request(total, plan, reason)` mails the board a request (`b-1`, …) with one total in tokens, a short plan and a reason. The total is the run's whole budget and includes the seed: approving 1.3M with a 1.2M seed grants 0.1M more.
+2. **The CEO asks for a budget**: `budget_request(total, plan, reason)` mails the board a request (`b-1`, …) with one total in tokens, a short plan and a reason. The total is the run's whole budget and includes the seed: approving 1.3M with a 1M seed grants 0.3M more.
 3. **The board approves or declines** in the Kickoff tab, or with `zapper firm budget acme approve b-1` / `decline b-1 --note "…"`. Its answer is a reply in the request's thread, so the whole negotiation is in Messages. A decline sends the CEO back to revise.
 4. **Approval funds the run**: `security_share` of it goes to the officers, the rest to the CEO (all of it while the CEO holds security alone). A later request names a new, larger total and grants the difference. What a turn costs depends on the model, so the CEO's `budget()` shows `observed_cost` (per role: its model, turns taken and tokens per turn) and the CEO skill sizes the plan in turns priced from it, not from fixed token amounts.
 
@@ -527,13 +527,14 @@ The UI's state is built by folding the run's journal in the browser: live, it fo
 The first tab, where the UI opens. The board talks only with the CEO here:
 
 - **Start a company**: while none is running, the tab is only a form in the middle: the company's name, the CEO (name, and an optional extra prompt), and the [charter](#the-charter): its articles, with the terms in place (the seed and security's share under Money, the pace) and a box for the board's own articles. The company starts with the CEO alone. They apply to that run only; the config stays as it is. The extra prompt goes into the CEO's preamble as the board's instructions, taking precedence over their skill, and is part of the run's record. Once running, the tab is headed by the company's name, its CEO, who holds security and the run's charter, with **Start a new company** (which ends the current run, after confirming).
+- **The task**: the start form's task (its first line the subject, the rest the message; **Copy task** in Runs gives exactly that) goes to the CEO from the board as the run's first assignment, the objective, as soon as the company is up. Left empty, the board writes to the CEO in the conversation below once the company runs.
 - **Give the CEO the task**: the conversation with the CEO, oldest first, and a form to write to them (a new thread or a reply), with attachments.
 - **A budget request** is the CEO's message in the conversation (and in Messages): its header has **Approve** and **Decline** while it waits (a decline asks for a note to the CEO), and its state once decided. The header shows "Budget 32k · 31k left" and a badge while a request waits.
 - **The run in numbers**: budget (seed and approved), spent, left, burn rate and runway, team (hired, left), assignments closed; spending by team (the CEO, each direct report's whole team, security); and the history of budget requests, each linked to its thread.
 
 ### Organization
 
-While no company is running, every firm tab (Organization, People, Work, Messages, Security, Shared drive, Git, Statistics) shows one page, "The firm is off", with **Go to Kickoff** and **Open the last run**; Kickoff, Runs and VMs work as always.
+While no company is running, every firm tab (Organization, People, Work, Messages, Security, Shared drive, Git, Statistics) shows one page, "The firm is off", with **Go to Kickoff**; Kickoff and Runs work as always, and VMs lists the daemon's VMs under a "No company is running" line with **Go to Kickoff**.
 
 - **Org chart**: the live tree, top to bottom: the founders, and each hire as they join (a node fades in under the hirer); someone let go leaves it. With a run budget, each node has a bar of what they spent of what they were given (amber under 15% left, red when out). Envelopes fly from sender to recipients as mail is sent; the post office's automatic notices fly from its box at the top right. A legend at the right lists the states' colors, the budget bar and the marks on a node (unread mail, a pending access request, overdue work, a contractor's dashed outline, a coloured frame for a worker on another agent than Claude Code). Under each title is the worker's model, and its agent when it isn't Claude Code ("pi · Qwen3.8-27B-NVFP4"); Statistics compares agents and models (workers, turns, tokens, tokens per turn) when a run has more than one. Each node is the worker's animated avatar, name, title and a one-line status ("drafting pricing.md", "waiting for ada", "overdue: 1"). Envelopes animate along the edges as mail is sent, also between workers who aren't directly connected; a badge shows unread mail. The board sits above the CEO as its own node.
 - **People**: the log of hiring and firing, newest first (hires with who hired them, the budget and the reason; background checks; contract steps; departures with who let them go and why; a scenario's actions), and below it a card for everyone who was in the firm, including those who left, with a Communication list of every message they sent or received. Live and in replay.

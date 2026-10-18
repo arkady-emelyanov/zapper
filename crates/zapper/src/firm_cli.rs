@@ -48,6 +48,10 @@ pub enum FirmCmd {
         /// instructions and board actions (`zapper firm scenarios`).
         #[arg(long)]
         scenario: Option<String>,
+        /// A file with the board's task for the CEO, sent as the first
+        /// assignment once the firm is up: its first line is the subject.
+        #[arg(long, value_name = "FILE")]
+        task: Option<std::path::PathBuf>,
     },
     /// The firm's scenarios, with their hire slots and script.
     Scenarios {
@@ -693,6 +697,7 @@ pub async fn firm(c: &Client, cmd: FirmCmd, json_out: bool) -> Result<i32> {
             max_concurrent,
             daily_turns,
             scenario,
+            task,
         } => {
             eprintln!("zapper: starting firm {firm}…");
             let read = |p: &Option<std::path::PathBuf>| -> Result<Option<String>> {
@@ -706,7 +711,7 @@ pub async fn firm(c: &Client, cmd: FirmCmd, json_out: bool) -> Result<i32> {
             let body = json!({
                 "company": company, "ceo": ceo, "seed": seed, "ceo_prompt": read(&ceo_prompt)?, "articles": read(&articles)?,
                 "security_share": security_share, "max_concurrent": max_concurrent, "daily_turns": daily_turns,
-                "scenario": scenario,
+                "scenario": scenario, "task": read(&task)?,
             });
             let v = c
                 .json(
