@@ -26,6 +26,9 @@ daemon:
   # Private networks sessions may reach, when a rule allows the host.
   # Loopback, link-local and this host's addresses stay unreachable.
   private_networks: ["192.168.0.0/24"]
+  # Services on this machine sessions may reach by name, where a rule
+  # allows it: Bonsai (llama-server) as bonsai.host.internal:11435.
+  host_services: { bonsai: "127.0.0.1:11435" }
 
 # Secrets. With `mode: proxy` (the default) the session sees the placeholder
 # `zapper-secret-<name>`, and the proxy puts the value into requests that a
@@ -188,6 +191,32 @@ profiles:
     agent: *pi-agent
     policy:
       net: *pi-net
+
+  # Office workers on pi with Bonsai 27B served on this machine by
+  # llama-server (Bonsai Studio's "agent-2000" workload: reasoning budget
+  # 2000, temp 0.6, top-p 0.85, top-k 20, 100k context): a host service,
+  # reached as bonsai.host.internal. No key, no cloud.
+  office-bonsai:
+    extends: office
+    description: An office worker on pi with Bonsai 27B, on this machine
+    agent: &bonsai-agent
+      kind: pi
+      model: bonsai-27b
+      settings: { defaultProvider: bonsai }
+      config_files:
+        models.json: |
+          {"providers": {"bonsai": {"baseUrl": "http://bonsai.host.internal:11435/v1", "api": "openai-completions",
+            "apiKey": "none", "models": [{"id": "bonsai-27b", "contextWindow": 102400}]}}}
+    policy:
+      net: &bonsai-net
+        - { action: allow, host: bonsai.host.internal, ports: [11435], comment: the model }
+
+  office-bonsai-engineer:
+    extends: office-engineer
+    description: An office engineer on pi with Bonsai 27B, on this machine
+    agent: *bonsai-agent
+    policy:
+      net: *bonsai-net
 
   # The firm's cluster: k3s on one node, with the k8s kernel.
   office-k3s:
