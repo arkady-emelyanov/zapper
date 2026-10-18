@@ -50,6 +50,12 @@ pub struct DaemonConfig {
     /// never reachable; other private and unique-local addresses only if
     /// listed here.
     pub private_networks: Vec<String>,
+    /// Services on this host that sessions may reach by name, the one
+    /// exception to the host being unreachable: `{name: "127.0.0.1:11435"}`
+    /// is `<name>.host.internal` at that port, and only that address and
+    /// port, where a rule allows the name (a local model server, say).
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub host_services: BTreeMap<String, String>,
     /// The record (firms' journals and transcripts, sessions' audit logs
     /// and terminal recordings) kept by `zapper-keeper`, a separate user:
     /// the daemon can append to it and never change it. Unset: the record
@@ -81,6 +87,7 @@ impl Default for DaemonConfig {
             ask_timeout_secs: 60,
             max_sessions: 16,
             private_networks: Vec::new(),
+            host_services: BTreeMap::new(),
             keeper: None,
         }
     }
@@ -474,6 +481,27 @@ impl Default for Engine {
     }
 }
 
+/// The domain of host services (`daemon.host_services`): `<name>.host.internal`.
+pub const HOST_SERVICES_DOMAIN: &str = "host.internal";
+
+impl DaemonConfig {
+    /// The address of a host service named by `host` (`<name>.host.internal`):
+    /// `None` if the name isn't under that domain, `Some(Err)` if no service
+    /// of that name is configured.
+    pub fn host_service(
+        &self,
+        host: &str,
+    ) -> Option<std::result::Result<std::net::SocketAddr, String>> {
+        let name = host.strip_suffix(&format!(".{HOST_SERVICES_DOMAIN}"))?;
+        Some(
+            self.host_services
+                .get(name)
+                .and_then(|a| a.parse().ok())
+                .ok_or_else(|| format!("no host service {name} (daemon.host_services)")),
+        )
+    }
+}
+
 /// Agent harnesses zapper knows (`agent.kind`); each is implemented in the
 /// daemon's `harness` module.
 pub const AGENT_KINDS: &[&str] = &["claude-code", "pi", "generic"];
@@ -796,6 +824,18 @@ impl Config {
 
     pub fn validate(&self) -> Result<()> {
         let mut errors = Vec::new();
+        for (name, addr) in &self.daemon.host_services {
+            if !crate::valid_worker_name(name) {
+                errors.push(format!(
+                    "daemon.host_services: {name:?}: lowercase letters, digits and dashes"
+                ));
+            }
+            if addr.parse::<std::net::SocketAddr>().is_err() {
+                errors.push(format!(
+                    "daemon.host_services.{name}: {addr:?} is not an address and port, like 127.0.0.1:11435"
+                ));
+            }
+        }
         let mut seen = BTreeSet::new();
         let mut layers = vec![(Scope::Global, &self.policy)];
         layers.extend(
@@ -919,6 +959,36 @@ pub fn merge(base: &mut Value, over: &Value) {
 
 #[cfg(test)]
 mod tests {
+    use super::Config;
+
+    #[test]
+    fn host_services() {
+        let c = Config::from_yaml(
+            "daemon: { host_services: { bonsai: \"127.0.0.1:11435\" } }\nprofiles: { p: {} }\n",
+        )
+        .unwrap();
+        let d = &c.daemon;
+        assert_eq!(
+            d.host_service("bonsai.host.internal")
+                .unwrap()
+                .unwrap()
+                .to_string(),
+            "127.0.0.1:11435"
+        );
+        assert!(d.host_service("other.host.internal").unwrap().is_err());
+        assert!(d.host_service("bonsai.example.com").is_none());
+        for bad in [
+            "\"Bonsai\": \"127.0.0.1:1\"",
+            "x: localhost:1",
+            "x: \"127.0.0.1\"",
+        ] {
+            let e = Config::from_yaml(&format!(
+                "daemon: {{ host_services: {{ {bad} }} }}\nprofiles: {{ p: {{}} }}\n"
+            ));
+            assert!(e.is_err(), "{bad}");
+        }
+    }
+
     #[test]
     fn relative_paths_resolve_against_the_config() {
         super::set_config_dir(std::path::Path::new("/repo/config"));

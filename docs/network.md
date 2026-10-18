@@ -77,7 +77,7 @@ The daemon connects only to addresses that pass these checks, whatever the rules
 | Address | Reachable |
 |---|---|
 | Loopback, link-local (including cloud metadata `169.254.169.254`), multicast, unspecified | Never |
-| The host's own addresses | Never |
+| The host's own addresses | Never, except a host service the config names (`daemon.host_services`), reached as `<name>.host.internal` at its one address and port, where a rule allows the name |
 | Private and unique-local ranges (`10/8`, `172.16/12`, `192.168/16`, `100.64/10`, `198.18/15`, `fc00::/7`) | If listed in `daemon.private_networks` |
 | Public addresses | Yes |
 
@@ -108,6 +108,7 @@ From inside a guest, a refused name fails to resolve (`getent hosts` prints noth
 |---|---|---|
 | `engine.network` | profile | `nic` or `vsock` |
 | `daemon.private_networks` | daemon | CIDRs of private networks sessions may reach |
+| `daemon.host_services` | daemon | Services on the host sessions may reach by name: `{bonsai: "127.0.0.1:11435"}` is `bonsai.host.internal:11435` |
 | `net` rules | any policy layer | [policy](policy.md) |
 
 ## Verification

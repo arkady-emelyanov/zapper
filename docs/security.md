@@ -24,7 +24,7 @@ Each office worker runs in a zapper session, and zapper assumes that whatever ru
 | DNS queries are validated (standard query, one question, class IN, a well-formed name) and rate-limited. A name is looked up on the host only if some request to it could be allowed, outright or after an `ask`; others are refused. Answers are never made up. With a broad `allow` or `ask` (`*`, or such a default), any name reaches the host's resolver, so queries could carry data out ([network: DNS](network.md#dns)) | Host resolver | Yes |
 | Host names from the guest (`CONNECT` targets, `Host` headers, TLS server names) are validated before any rule sees them | Host proxy | Yes |
 | Policy for each connection and, when inspected, each request | Host proxy | Yes |
-| Address checks: loopback, link-local, metadata and host addresses are unreachable, private ranges only if listed. The host resolves names and connects to the address it checked | Host proxy | Yes |
+| Address checks: loopback, link-local, metadata and host addresses are unreachable, private ranges only if listed. The host resolves names and connects to the address it checked. A host service the operator names (`daemon.host_services`, such as a local model server) is the one exception: only as `<name>.host.internal`, at its one configured address and port, where a rule allows the name; its name is answered by zapper's DNS, never looked up | Host proxy | Yes |
 | A TLS client's server name must equal the name the connection was decided on | Host proxy | Yes |
 | `proxy` secrets reach the guest as placeholders. Their values go into allowed requests to the secret's `hosts`, over TLS, or over plain HTTP if the secret sets `plaintext: true` | Host proxy | Yes |
 | Each session has its own CA, kept in memory and trusted by that session's guest | Host | Yes |
@@ -108,6 +108,7 @@ From there, the VMM sees none of the daemon user's other files: the config, secr
 - Bind each `proxy` secret to the hosts that need it. A destination that echoes request headers back, such as an echo service, returns the value to the guest; `tests/e2e.sh` shows this with a test secret.
 - Use a `final: true` deny in the global layer for destinations that must stay unreachable from every profile.
 - Leave `daemon.private_networks` empty unless a session needs a private network, and then list that network only.
+- Name a host service only for a service that expects untrusted clients (a model server, say): every session whose rules allow its name reaches it, as anything on that port would be reached.
 - Use inspection rules (`methods`, `path`) when a host-level rule is too broad. A passed-through TLS connection to an allowed CDN host can still carry requests for another site on that CDN in its `Host` header.
 
 ## Verification
