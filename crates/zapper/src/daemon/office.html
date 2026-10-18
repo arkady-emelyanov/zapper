@@ -571,6 +571,8 @@
   <section class="tab" id="tab-security"></section>
   <section class="tab" id="tab-drive"></section>
   <section class="tab" id="tab-git"></section>
+  <!-- Every firm tab while no company runs: one page, as the Git tab had. -->
+  <section class="tab" id="tab-off"></section>
   <section class="tab" id="tab-stats"></section>
   <section class="tab" id="tab-vms"></section>
   <section class="tab" id="tab-runs"></section>
@@ -3261,6 +3263,30 @@ function gitShowEmpty(view) {
   if (view && $('git-empty').dataset.v !== view.dataset.v) $('git-empty').replaceChildren(view);
   $('git-empty').dataset.v = view ? view.dataset.v : '';
 }
+// While no company runs, the firm's tabs all show this page: start one in
+// Kickoff, or open a past run.
+const OFF_TABS = ['overview', 'people', 'work', 'messages', 'security', 'drive', 'git', 'stats'];
+function offView() {
+  const v = el('div', { class: 'card git-empty-card' },
+    el('h2', { class: 'serif' }, 'The firm is off'),
+    el('p', { class: 'muted' }, 'Each run is a company of its own, with its people, mail, drive and repository, all starting empty. Start one in Kickoff, or open a past run to see what it did.'),
+    el('div', { style: 'display:flex;gap:10px;justify-content:center' },
+      el('button', { class: 'btn primary', type: 'button', onclick: () => showTab('kickoff') }, 'Go to Kickoff'),
+      el('button', { class: 'btn', type: 'button', onclick: async () => {
+        try {
+          const runs = arr(await api(F() + '/runs')).map((r) => str(r.run)).sort();
+          if (runs.length) enterReplay(runs[runs.length - 1]); else toast('No runs yet');
+        } catch (e) { toast(e.message); }
+      } }, 'Open the last run')));
+  return v;
+}
+function syncOff() {
+  const off = !!S.firm && companyOff() && OFF_TABS.includes(S.tab);
+  $('tab-off').classList.toggle('on', off);
+  const cur = $('tab-' + S.tab);
+  if (cur) cur.classList.toggle('on', !off);
+  if (off && $('tab-off').dataset.f !== S.firm) { $('tab-off').dataset.f = S.firm; $('tab-off').replaceChildren(offView()); }
+}
 // The firm is off: each run has its own repository, so offer the last one.
 function gitOffView() {
   const v = el('div', { class: 'card git-empty-card' },
@@ -4402,12 +4428,14 @@ function renderHeader() {
   // The product (the cluster's ingress on the host) and the cluster's
   // dashboard, top right on every tab.
   const pp = str(S.info && S.info.product_port);
-  const lsig = (S.firm || '') + '|' + pp + '|' + dashboardSig();
+  const lsig = (S.firm || '') + '|' + pp + '|' + dashboardSig() + '|' + companyOff() + '|' + S.mode;
   const hl = $('hlinks');
   if (hl.dataset.sig !== lsig) {
     hl.dataset.sig = lsig;
-    const a = S.firm ? productLink(pp) : null;
-    hl.replaceChildren(...(a ? [a] : []), ...(S.firm ? dashboardButtons() : []));
+    // Only while a company runs: before, nothing serves the product.
+    const on = S.firm && !companyOff() && S.mode === 'live';
+    const a = on ? productLink(pp) : null;
+    hl.replaceChildren(...(a ? [a] : []), ...(on ? dashboardButtons() : []));
   }
   const tbSec = $('tb-security');
   if (tbSec) { tbSec.textContent = String(esc); tbSec.classList.toggle('hidden', !esc); }
@@ -4520,6 +4548,7 @@ function scheduleRender() {
   requestAnimationFrame(() => { renderQueued = false; render(); });
 }
 function render() {
+  syncOff();
   renderHeader();
   renderFooter();
   if (S.tab === 'overview') syncOverviewOff();
