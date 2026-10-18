@@ -857,6 +857,36 @@ kind: Ingress
 metadata: { name: web }
 spec:
   rules: [{ http: { paths: [{ path: /, pathType: Prefix, backend: { service: { name: web, port: { number: 80 } } } }] } }]
+---
+# Bound to the product's name, as engineers usually write it: the board's
+# port must reach it too.
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: hosted }
+data: { index.html: "hosted page <a href=\"http://apps.lab.internal/hosted/next\">next</a>" }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: hosted }
+spec:
+  selector: { matchLabels: { app: hosted } }
+  template:
+    metadata: { labels: { app: hosted } }
+    spec:
+      containers:
+        - { name: web, image: "rancher/mirrored-library-busybox:1.37.0", command: [httpd, -f, -p, "8080", -h, /www], volumeMounts: [{ name: page, mountPath: /www/hosted }] }
+      volumes: [{ name: page, configMap: { name: hosted } }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: hosted }
+spec: { selector: { app: hosted }, ports: [{ port: 80, targetPort: 8080 }] }
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata: { name: hosted }
+spec:
+  rules: [{ host: apps.lab.internal, http: { paths: [{ path: /hosted, pathType: Prefix, backend: { service: { name: hosted, port: { number: 80 } } } }] } }]
 YAML
     # The operator deploys a test app as root on the cluster VM.
     landing=""; for i in $(seq 60); do landing=$(curl -s -m 3 http://127.0.0.1:$PORT/); case "$landing" in *"digital worlds"*) break ;; esac; sleep 3; done
@@ -865,7 +895,7 @@ YAML
     # Traefik is installed by a Helm job after the API is up.
     "$Z" exec --system "$cl" -- sh -c 'cat > /tmp/web.yaml
 for i in $(seq 90); do k3s kubectl -n kube-system get deploy/traefik >/dev/null 2>&1 && break; sleep 2; done
-k3s kubectl -n kube-system rollout status deploy/traefik --timeout=180s && k3s kubectl apply -f /tmp/web.yaml && k3s kubectl rollout status deploy/web --timeout=120s' < "$T/web.yaml" > "$T/deploy.log" 2>&1
+k3s kubectl -n kube-system rollout status deploy/traefik --timeout=180s && k3s kubectl apply -f /tmp/web.yaml && k3s kubectl rollout status deploy/hosted --timeout=120s && k3s kubectl rollout status deploy/web --timeout=120s' < "$T/web.yaml" > "$T/deploy.log" 2>&1
     expect "the operator deploys a test app" "$(cat "$T/deploy.log")" 'deployment "web" successfully rolled out'
     # ada founded lab: a policy owner, with admin on git and the cluster
     # through her own service account (not cluster-admin).
@@ -914,6 +944,10 @@ echo prod=\$($(api /api/v1/namespaces/prod/pods))" 2>&1)
     expect "revoking removes the kubeconfig" "$out" "kube=1"
     expect "and the network access" "$out" "api=000"
     expect "the board reaches the product on its port" "$(curl -s -m 5 --retry 5 --retry-all-errors http://127.0.0.1:$PORT/)" "hello from the cluster"
+    hosted=$(curl -s -m 5 --retry 5 --retry-all-errors http://127.0.0.1:$PORT/hosted/)
+    expect "the port asks for the product's name, as workers do" "$hosted" "hosted page"
+    expect "and maps the name back in links" "$hosted" "http://127.0.0.1:$PORT/hosted/next"
+    refute "and in redirects" "$(curl -s -m 5 -o /dev/null -D - http://127.0.0.1:$PORT/hosted | tr 'A-Z' 'a-z')" "apps.lab.internal"
     tok=""; for i in $(seq 40); do tok=$(curl -s --unix-socket "$ZAPPER_SOCKET" http://zapper/v1/firms/lab | python3 -c 'import sys,json; print(json.load(sys.stdin)["run"]["facilities"].get("dashboard_token") or "")'); [ -n "$tok" ] && break; sleep 3; done
     [ -n "$tok" ] && pass "the dashboard's sign-in token is ready" || fail "the dashboard's sign-in token is ready" "none"
     expect "the board reaches the dashboard on its port" "$(curl -s -m 5 --retry 10 --retry-all-errors http://127.0.0.1:$((PORT + 1))/)" "Headlamp"

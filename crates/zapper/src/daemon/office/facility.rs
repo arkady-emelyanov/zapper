@@ -646,7 +646,7 @@ pub async fn start(d: &Arc<Daemon>, run: &Arc<FirmRun>, config: &Config) -> Resu
         tokio::spawn(async move { deploy_landing(&run, &s, manifest).await });
     }
     if let Some(addr) = &run.config.product_port {
-        let task = forward_port(run, addr, HTTP_PORT, "product").await?;
+        let task = serve_product(run, addr).await?;
         *run.facility.product.lock().unwrap() = Some(task);
         run.journal.append(
             "facility",
@@ -660,6 +660,24 @@ pub async fn start(d: &Arc<Daemon>, run: &Arc<FirmRun>, config: &Config) -> Resu
         tokio::spawn(async move { deploy_dashboard(&run, &s).await });
     }
     Ok(())
+}
+
+/// The product port: an HTTP proxy to the cluster's ingress, which asks for
+/// `apps.<domain>` as workers do (see `product`).
+async fn serve_product(run: &Arc<FirmRun>, addr: &str) -> Result<JoinHandle<()>> {
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .with_context(|| format!("product_port {addr}"))?;
+    let run = run.clone();
+    Ok(tokio::spawn(async move {
+        loop {
+            let Ok((conn, peer)) = listener.accept().await else {
+                break;
+            };
+            tracing::info!(firm = %run.firm, "product port: connection from {peer}");
+            tokio::spawn(super::product::serve(run.clone(), conn, HTTP_PORT));
+        }
+    }))
 }
 
 /// Forwards a local address to a port of the cluster VM, for the board.

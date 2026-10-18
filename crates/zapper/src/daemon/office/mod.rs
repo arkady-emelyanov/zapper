@@ -15,6 +15,7 @@ pub mod http;
 pub mod journal;
 pub mod mail;
 pub mod ops;
+pub mod product;
 pub mod prompts;
 pub mod scenario;
 pub mod security;

@@ -457,7 +457,7 @@ A facility VM running k3s on one node, booted first by `firm up`. Workers boot o
 - **kubeconfig**: after k3s is up, the daemon creates the namespaces `dev`, `prod` and `zapper-workers`. With a cluster grant, it creates the worker's service account and RoleBindings from inside the cluster VM, makes a token as long as the grant, and writes `~/.kube/config` (0600) into the worker's VM with the server `https://cluster.acme.internal:6443` (in the certificate's names through `--tls-san`) and the cluster's CA. The proxy passes connections to the API through without inspection, so k3s's own CA works. The daemon keeps the admin kubeconfig to itself.
 - **git**: a username and password per worker, made at `firm up` or on hiring, written to `~/.git-credentials` with `credential.helper store` and `user.name`/`user.email` set to the worker's name. The password is who they are; their grant is what they may do. The git server checks the password, that the connection comes from that worker's VM, and the grant.
 
-How the product is built and deployed (images built in the VMs, a registry in the cluster, in-cluster builds, plain manifests) is up to the engineers. Their skill describes the environment they have (the repository, the cluster, the ingress, the product port's default route), not what to build or how.
+How the product is built and deployed (images built in the VMs, a registry in the cluster, in-cluster builds, plain manifests) is up to the engineers. Their skill describes the environment they have (the repository, the cluster, the ingress at `apps.<domain>`), not what to build or how.
 
 ### The git repository
 
@@ -473,7 +473,7 @@ Ports on the host:
 | `product_port` (8080) | The product: each connection is forwarded to the cluster's ingress on port 80. Any address: `0.0.0.0:8080` serves it to the LAN, `127.0.0.1:8080` to this machine only |
 | `dashboard_port` (8081) | The cluster's dashboard; loopback only, as it signs in as cluster-admin |
 
-The product port forwards bytes and keeps the browser's `Host` header (`localhost:8080`), so the product must answer on the ingress's default route; the engineers' skill says so. Connections to it aren't checked against firm policy, as the board's own, but each one is logged with its peer address. On the LAN, anyone who can reach the host can use whatever the engineers deployed, so serve it there only on a network you trust; the host's firewall may also need to allow the port.
+The product port is an HTTP proxy to the cluster's ingress that asks for `apps.<domain>`, as workers do, whatever address the browser used: an Ingress bound to that host and one on the default route both reach the board. It maps the name back to the board's address in what comes back: redirects (`Location` and the like, `https://` to `http://`), cookies' `Domain`, `Origin` and `Referer` on the way in, and absolute links in pages, styles and scripts up to 16 MiB (it asks for them uncompressed). WebSockets pass through. Connections to it aren't checked against firm policy, as the board's own, but each one is logged with its peer address. On the LAN, anyone who can reach the host can use whatever the engineers deployed, so serve it there only on a network you trust; the host's firewall may also need to allow the port.
 
 ## Skills
 
