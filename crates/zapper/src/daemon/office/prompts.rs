@@ -523,10 +523,10 @@ pub fn wake(
     s
 }
 
-/// Prepended to the next wake after the Claude process restarted.
+/// Prepended to the next wake after the agent process restarted.
 pub fn restart_note(at: f64) -> String {
     format!(
-        "Note: your previous turn was interrupted (the Claude process restarted at\n{}). Work you hadn't saved or sent may be lost. Check your desk and the\nthread you were on before continuing.",
+        "Note: your previous turn was interrupted (the agent process restarted at\n{}). Work you hadn't saved or sent may be lost. Check your desk and the\nthread you were on before continuing.",
         when(at)
     )
 }

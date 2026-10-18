@@ -871,6 +871,7 @@ expect "and the role's skills" "$("$Z" exec "$mpat" -- ls /home/agent/.pi/agent/
 refute "nothing of Claude Code's" "$("$Z" exec "$mpat" -- ls -a /home/agent 2>&1)" ".claude.json"
 "$Z" mail send mixed --to ceo --subject "Go" --body "Build it." > /dev/null
 mwait_for 'pat → ceo \[report\]' 90 && pass "a pi worker takes an assignment and reports" || fail "a pi worker takes an assignment and reports" "$(mjournal | tail -6)"
+expect "the transcript command reads pi's events" "$("$Z" firm transcript mixed pat 2>&1)" "→ mcp__office__mail_reply"
 expect "its turn is counted" "$("$Z" --json firm journal mixed | python3 -c '
 import sys, json
 print(sum(e.get("tokens", 0) for e in map(json.loads, sys.stdin) if e.get("type") == "turn" and e.get("worker") == "pat" and e.get("event") == "end"))')" "110"

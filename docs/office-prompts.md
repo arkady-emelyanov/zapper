@@ -190,10 +190,10 @@ explanation. If nothing stands out, end your turn without mail.
 
 ## Restart note
 
-Prepended to the next wake prompt after the foreman restarted a crashed Claude process.
+Prepended to the next wake prompt after the foreman restarted a crashed agent process.
 
 ```
-Note: your previous turn was interrupted (the Claude process restarted at
+Note: your previous turn was interrupted (the agent process restarted at
 {{when}}). Work you hadn't saved or sent may be lost. Check your desk and the
 thread you were on before continuing.
 ```

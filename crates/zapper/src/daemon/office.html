@@ -2926,7 +2926,7 @@ function vmCard(x) {
       el('button', { class: 'btn small', type: 'button', onclick: () => watchTerminal(x.id, t.id) }, 'Watch')));
   }
   const actions = el('div', { class: 'vm-actions' });
-  if (chart) actions.append(el('button', { class: 'btn small', type: 'button', onclick: () => openPanel(x.member) }, 'Claude transcript'));
+  if (chart) actions.append(el('button', { class: 'btn small', type: 'button', onclick: () => openPanel(x.member) }, (chart.agent && chart.agent !== 'claude-code' ? agentName(chart.agent) : 'Claude') + ' transcript'));
   if (facility && x.firm === S.firm) actions.append(el('span', { class: 'vm-dash' }, dashboardButtons()));
   actions.append(el('span', { class: 'mono muted small', title: 'session id; zapper attach ' + x.id }, x.id));
   return el('div', { class: 'vm card' + (facility ? ' facility' : '') }, head, spec, meters, terms.length ? [el('div', { class: 'vm-sub' }, 'Terminals'), tl] : '', actions);

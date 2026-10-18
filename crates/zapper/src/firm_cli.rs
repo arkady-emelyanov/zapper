@@ -92,7 +92,7 @@ pub enum FirmCmd {
         #[arg(short, long)]
         follow: bool,
     },
-    /// A worker's Claude transcript.
+    /// A worker's transcript: what their agent (Claude Code or pi) did.
     Transcript {
         firm: String,
         worker: String,
@@ -532,7 +532,10 @@ async fn follow(
                 if json_out {
                     println!("{}", j.trim());
                 } else if let Ok(v) = serde_json::from_str::<Value>(j.trim()) {
-                    println!("{}", render(&v));
+                    let line = render(&v);
+                    if !line.is_empty() {
+                        println!("{line}");
+                    }
                 }
             }
         }
@@ -571,6 +574,36 @@ fn transcript_line(e: &Value) -> String {
             s(&e["result"]).chars().take(200).collect::<String>()
         ),
         "system" => format!("{t} ({})", s(&e["subtype"])),
+        // pi's events.
+        "tool_execution_start" => format!("{t} → {} {}", s(&e["toolName"]), e["args"]),
+        "tool_execution_end" => format!(
+            "{t} ({}tool result)",
+            if e["isError"] == json!(true) {
+                "failed "
+            } else {
+                ""
+            }
+        ),
+        "message_end" if e["message"]["role"] == "assistant" => {
+            let m = &e["message"];
+            let mut parts: Vec<String> = m["content"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|c| match c["type"].as_str() {
+                    Some("text") => Some(s(&c["text"])).filter(|x| !x.trim().is_empty()),
+                    Some("thinking") => Some("(thinking)".into()),
+                    _ => None,
+                })
+                .collect();
+            if m["stopReason"] == "error" {
+                parts.push(format!("(failed: {})", s(&m["errorMessage"])));
+            }
+            format!("{t} {}", parts.join("\n"))
+        }
+        "message_start" | "message_end" | "turn_start" | "turn_end" | "agent_start"
+        | "agent_end" | "response" => String::new(),
+        "agent_settled" => format!("{t} ── turn ended ──"),
         other => format!("{t} {other} {}", e["text"].as_str().unwrap_or("")),
     }
 }
@@ -1110,7 +1143,12 @@ pub async fn firm(c: &Client, cmd: FirmCmd, json_out: bool) -> Result<i32> {
             } else {
                 for l in c.text(&path).await?.lines() {
                     match (json_out, serde_json::from_str::<Value>(l)) {
-                        (false, Ok(v)) => println!("{}", transcript_line(&v)),
+                        (false, Ok(v)) => {
+                            let line = transcript_line(&v);
+                            if !line.is_empty() {
+                                println!("{line}");
+                            }
+                        }
                         _ => println!("{l}"),
                     }
                 }

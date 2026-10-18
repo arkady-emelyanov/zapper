@@ -345,7 +345,7 @@ pub async fn run(_d: Arc<Daemon>, run: Arc<FirmRun>, w: Arc<WorkerRt>) {
                     run.set_state(
                         &w,
                         WorkerState::Error,
-                        Some(format!("starting Claude: {e:#}")),
+                        Some(format!("starting the agent: {e:#}")),
                     );
                     drop(permit);
                     nap(&run, &w, 30).await;
@@ -546,7 +546,7 @@ pub async fn run(_d: Arc<Daemon>, run: Arc<FirmRun>, w: Arc<WorkerRt>) {
                         &w,
                         WorkerState::Error,
                         Some(format!(
-                            "Claude exited {} times in ten minutes (last code {code:?})",
+                            "the agent exited {} times in ten minutes (last code {code:?})",
                             restarts.len()
                         )),
                     );

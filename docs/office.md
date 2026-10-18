@@ -512,7 +512,7 @@ The UI has a tab bar for the office. zapper's own views of sessions (network, te
 | Security | What officers approved, what they decided, and why |
 | Shared drive | Published work, including board packs |
 | Git | The firm's repository: branches, files and commits |
-| VMs | Every running VM of the daemon, now: the host, each firm's workers and cluster, other sessions; size, usage and counters; terminals to watch read-only, and each worker's Claude transcript |
+| VMs | Every running VM of the daemon, now: the host, each firm's workers and cluster, other sessions; size, usage and counters; terminals to watch read-only, and each worker's transcript (Claude Code's or pi's) |
 | Statistics | Activity, throughput and budgets |
 | Runs | The firm's runs, each with what it was asked to build; opens one in replay, or deletes it |
 
@@ -613,14 +613,14 @@ Schematic, flat and calm, in the spirit of Claude's design: warm off-white backg
 | State | Animation | When (from the journal) |
 |---|---|---|
 | Off | grey, outline only | no session for the worker |
-| Booting | fading in | session started, Claude process not yet ready |
+| Booting | fading in | session started, the agent (Claude Code or pi) not yet ready |
 | Idle | slow breathing, an occasional blink | Claude ready, no turn running, nothing waiting on others |
 | Waiting | small hourglass, slower breathing | no turn running, desk has threads waiting on others |
 | Queued | standing, looking up | mail is ready for it but `max_concurrent` workers are already in a turn |
 | Working | spark rotating above the head, prop animates (typing, bars rising, pages turning) | from the wake prompt to the `result` event |
 | Reviewing | shield pulses, spark rotating | an officer's turn that holds an access request |
 | Over budget | dimmed, a small gauge | the worker's or firm's budget is used up |
-| Error | dimmed, red dot | the Claude process keeps failing, or the VM stopped |
+| Error | dimmed, red dot | the agent process keeps failing, or the VM stopped |
 
 Badges sit on top of any state: unread mail (a count), an access request pending (a padlock), overdue threads (a clock).
 
