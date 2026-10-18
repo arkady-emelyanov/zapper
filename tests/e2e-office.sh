@@ -330,7 +330,7 @@ firms:
     budget: { max_concurrent: 2, seed: 1000, quote_fee: 500, stall_after: 5s }
     roles:
       boss: { profile: worker, skills: { work: ceo }, fake: $T/fake/corp-ceo.yaml, hires: [dev], avatar: { figure: ceo } }
-      dev: { profile: worker, title: Developer, skills: { work: software-engineer }, fake: $T/fake/corp-dev.yaml, avatar: { figure: engineer } }
+      dev: { profile: worker, contract_profile: pi-worker, title: Developer, skills: { work: software-engineer }, fake: $T/fake/corp-dev.yaml, avatar: { figure: engineer } }
       sec: { profile: worker, skills: { work: security-review }, fake: $T/fake/corp-sec.yaml, avatar: { figure: shield } }
     workers:
       - { name: ceo, role: boss }
@@ -557,6 +557,25 @@ cwait_for "hired ken" 60 && pass "the CEO hires after approval" || fail "the CEO
 expect "the approval funds the officers' share" "$("$Z" --json firm budget corp | python3 -c 'import sys,json; f=json.load(sys.stdin); print(f["approved"], f["workers"]["sec-1"]["received"])')" "30000 6000"
 cwait_for "contract k-1 offered by ceo to carl as Auditor (dev)" 30 && pass "the CEO offers a contract" || fail "the CEO offers a contract" "$(cjournal | grep -i contract | tail -5)"
 cwait_for "contract k-1 quoted by carl: 5000 tokens" 120 && pass "the candidate is checked, boots and quotes" || fail "the candidate is checked, boots and quotes" "$(cjournal | grep -i "contract\|carl" | tail -8)"
+expect "a contractor runs on the role's contract profile" "$("$Z" --json firm journal corp | python3 -c '
+import sys, json
+for l in sys.stdin:
+    e = json.loads(l)
+    if e.get("type") == "hired" and e["worker"]["name"] in ("carl", "grace"):
+        print(e["worker"]["name"], e["worker"].get("agent"), e["worker"].get("profile"))')" "carl pi pi-worker"
+expect "staff of the role keep the role's" "$("$Z" --json firm journal corp | python3 -c '
+import sys, json
+for l in sys.stdin:
+    e = json.loads(l)
+    if e.get("type") == "hired" and e["worker"]["name"] == "grace":
+        print(e["worker"].get("agent"))')" "claude-code"
+cwait_for "contract k-1 accepted" 120
+expect "accepting answers the quote: the hirer owes nothing in its thread" "$("$Z" --json firm journal corp | python3 -c '
+import sys, json
+ev = [json.loads(l) for l in sys.stdin]
+quotes = [e["id"] for e in ev if e.get("type") == "mail" and e.get("from") == "carl" and e.get("expects") == "reply"]
+settled = {e["message"] for e in ev if e.get("type") == "settled" and e.get("debtor") == "ceo"}
+print("settled" if quotes and all(q in settled for q in quotes) else "open %s" % [q for q in quotes if q not in settled])')" "settled"
 cwait_for "contract k-1 countered by ceo (round 1): 3000 tokens" 60 && pass "the hirer counters" || fail "the hirer counters" "$(cjournal | grep -i contract | tail -5)"
 cwait_for "contract k-1 accepted by ceo: 3000 tokens" 90 && pass "the candidate quotes again and the hirer accepts" || fail "the candidate quotes again and the hirer accepts" "$(cjournal | grep -i contract | tail -5)"
 cwait_for "contract k-1 completed: delivered" 90 && pass "the contractor delivers and the contract ends" || fail "the contractor delivers and the contract ends" "$(cjournal | grep -i "contract\|carl" | tail -8)"

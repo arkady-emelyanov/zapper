@@ -70,6 +70,10 @@ secrets:
   elitea:
     file: ~/.config/zapper/elitea-token
     hosts: [elitea.technicaldomain.xyz]
+  # An OpenRouter key for the `office-deepseek` profiles (contractors).
+  openrouter:
+    file: ~/.config/zapper/openrouter-token
+    hosts: [openrouter.ai]
   # s3:
   #   file: ~/.config/zapper/s3-session.env
   #   mode: guest
@@ -218,6 +222,34 @@ profiles:
     policy:
       net: *bonsai-net
 
+  # Office workers on pi with DeepSeek V4.1 Flash through OpenRouter: the
+  # acme firm's contractors (a role's contract_profile). The key stays on
+  # the host; context capped at 256k to keep turns cheap.
+  office-deepseek:
+    extends: office
+    description: An office worker on pi with DeepSeek V4.1 Flash (OpenRouter)
+    agent: &deepseek-agent
+      kind: pi
+      model: deepseek/deepseek-v4.1-flash
+      settings: { defaultProvider: openrouter }
+      env:
+        OPENROUTER_KEY: "{{secret:openrouter}}"
+      config_files:
+        models.json: |
+          {"providers": {"openrouter": {"baseUrl": "https://openrouter.ai/api/v1", "api": "openai-completions",
+            "apiKey": "${OPENROUTER_KEY}", "models": [{"id": "deepseek/deepseek-v4.1-flash", "reasoning": true,
+            "contextWindow": 262144, "maxTokens": 65536}]}}}
+    policy:
+      net: &deepseek-net
+        - { action: allow, host: openrouter.ai, ports: [443], secrets: [openrouter] }
+
+  office-deepseek-engineer:
+    extends: office-engineer
+    description: An office engineer on pi with DeepSeek V4.1 Flash (OpenRouter)
+    agent: *deepseek-agent
+    policy:
+      net: *deepseek-net
+
   # The firm's cluster: k3s on one node, with the k8s kernel.
   office-k3s:
     extends: base
@@ -317,6 +349,8 @@ firms:
               subject: Change of requirements
               body: |
                 Board decision, effective now: our direction changes. The audience the product serves changes (small businesses if it serves consumers today, consumers if it serves businesses), and the launch moves earlier. Work out with me what you will cut, what it costs in budget and schedule, and what you propose. Tell me before you reorganize the team.
+    # Staff run on Claude; contractors (contract_profile) on DeepSeek
+    # through OpenRouter. A contracted security officer stays on Claude.
     roles:
       ceo:
         profile: office
@@ -329,37 +363,44 @@ firms:
       # everyone's.
       cto:
         profile: office-engineer
+        contract_profile: office-deepseek-engineer
         title: CTO
         skills: { work: cto }
         hires: [engineer, designer, researcher, analyst]
         avatar: { figure: manager, color: "#5A7FB5" }
       product-manager:
         profile: office
+        contract_profile: office-deepseek
         title: Product Manager
         skills: { work: product-manager }
         hires: [designer, researcher, analyst]
         avatar: { figure: product-manager, color: "#C6A15B" }
       manager:
         profile: office
+        contract_profile: office-deepseek
         skills: { work: manager }
         hires: [engineer, designer, researcher, analyst]
         avatar: { figure: manager, color: "#B5715A" }
       engineer:
         profile: office-engineer
+        contract_profile: office-deepseek-engineer
         title: Member of Technical Staff
         skills: { work: software-engineer }
         avatar: { figure: engineer, color: "#6A9BCC" }
       designer:
         profile: office
+        contract_profile: office-deepseek
         title: Product Designer
         skills: { work: designer }
         avatar: { figure: designer, color: "#C27BA0" }
       researcher:
         profile: office
+        contract_profile: office-deepseek
         skills: { work: researcher }
         avatar: { figure: researcher, color: "#8E82C2" }
       analyst:
         profile: office
+        contract_profile: office-deepseek
         skills: { work: analyst }
         avatar: { figure: analyst, color: "#BFA35A" }
       security-officer:
