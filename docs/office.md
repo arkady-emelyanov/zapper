@@ -163,7 +163,7 @@ A hired security officer reports to the board, not to the CEO or manager who hir
 |---|---|---|
 | `budget_request(total, plan, reason)` | The CEO | Asks the board for budget, as mail; one request at a time |
 | `hire(role, budget, subject, brief, reason, name?, title?, due?, attachments?)` | Roles with `hires` | Adds a worker who reports to the hirer, funded from the hirer's balance; boots their VM; mails the brief as their first assignment. Refused without an approved budget, beyond the hirer's balance, for roles the hirer may not hire, or when the host lacks memory |
-| `fund(worker, tokens, reason)` | Managers | Moves budget to a report (or anyone below), or back with a negative amount |
+| `fund(worker, tokens, reason)` | Managers | Moves budget to a report (or anyone below), or back with a negative amount: not while they are in a turn (its cost isn't charged yet), and leaving them at least two turns at their own turn price (releasing them takes everything) |
 | `release(worker, reason)` | Managers | Lets a worker anywhere below them in the chart go (never a security officer: officers report to the board, which lets them go with `zapper firm release`) (the CEO: anyone but the founders the board appointed), for whatever reason they give: their VM stops; their reports, open work (what they owed and waited for) and unspent budget go to their manager, and mail to them goes there too |
 | `budget()` | Everyone | Their balance, and for managers their team's; for the CEO also `firm.turn_price` (their measured tokens per turn, or `budget.turn_price` before they have one), `firm.sizing` (the common work of a small product, priced at it, with `small_product_total`) and `observed_cost` (per role: model, turns, tokens per turn) |
 

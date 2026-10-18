@@ -442,11 +442,25 @@ pub fn tick(run: &FirmRun) {
     let remind = zapper_policy::parse_duration(&run.config.budget.stall_after)
         .map(|d| d.as_secs_f64())
         .unwrap_or(600.0);
-    let stalled: Vec<(String, f64, u8)> = {
+    // Out of tokens, even with nothing waiting yet: their manager and the
+    // CEO are told now, as on a refused wake, while the plan may still need
+    // them.
+    let silent: Vec<String> = {
         let l = run.ledger.lock().unwrap();
         if !l.enabled {
             return;
         }
+        run.rts()
+            .iter()
+            .map(|r| r.name.clone())
+            .filter(|w| l.balance(w) <= 0 && !l.told.contains_key(w))
+            .collect()
+    };
+    for w in silent {
+        allows(run, &w);
+    }
+    let stalled: Vec<(String, f64, u8)> = {
+        let l = run.ledger.lock().unwrap();
         l.told
             .iter()
             .filter(|(w, _)| l.balance(w) <= 0)
@@ -455,20 +469,25 @@ pub fn tick(run: &FirmRun) {
     };
     let chart = run.chart();
     for (w, since, level) in stalled {
-        let waiting = run.rt(&w).map_or(0, |r| r.queue.lock().unwrap().len());
+        let (mail, owed) = open_work(run, &w);
         // Contracts end when their budget is spent; officers are the board's.
-        if waiting == 0 || super::contracts::of(run, &w).is_some() || chart.is_officer(&w) {
+        if mail + owed == 0 || super::contracts::of(run, &w).is_some() || chart.is_officer(&w) {
             continue;
         }
+        let waiting = match (mail, owed) {
+            (0, o) => format!("{o} open assignment(s)"),
+            (m, 0) => format!("{m} message(s) waiting"),
+            (m, o) => format!("{m} message(s) waiting and {o} open assignment(s)"),
+        };
         let ceo = chart.root().filter(|c| *c != w);
         let mins = ((t - since) / 60.0).round();
         let next = if level == 0 && t - since > remind && ceo.is_some() {
             if let Some(c) = ceo {
-                run.notice(c, &format!("{w} is still out of budget"), &format!("[Automatic notice] {w} ({}) has been out of tokens for {mins} minutes with {waiting} message(s) waiting. Fund them with fund(worker: \"{w}\", tokens: …, reason: …), or take their work back; if the firm's budget is short, ask the board with budget_request.\n", chart.title_of(&w)));
+                run.notice(c, &format!("{w} is still out of budget"), &format!("[Automatic notice] {w} ({}) has been out of tokens for {mins} minutes with {waiting}. Fund them with fund(worker: \"{w}\", tokens: …, reason: …), or take their work back; if the firm's budget is short, ask the board with budget_request.\n", chart.title_of(&w)));
             }
             1
         } else if level <= 1 && t - since > 3.0 * remind {
-            run.notice(BOARD, &format!("{w} is stalled: out of budget"), &format!("[Automatic notice] {w} ({}) has been out of tokens for {mins} minutes with {waiting} message(s) waiting; {} was told and hasn't funded them. Fund them with `zapper firm fund {} {w} TOKENS --reason …`, or tell the CEO.\n", chart.title_of(&w), ceo.unwrap_or("their manager"), run.firm));
+            run.notice(BOARD, &format!("{w} is stalled: out of budget"), &format!("[Automatic notice] {w} ({}) has been out of tokens for {mins} minutes with {waiting}; {} was told and hasn't funded them. Fund them with `zapper firm fund {} {w} TOKENS --reason …`, or tell the CEO.\n", chart.title_of(&w), ceo.unwrap_or("their manager"), run.firm));
             2
         } else {
             continue;
@@ -481,6 +500,21 @@ pub fn tick(run: &FirmRun) {
             e.1 = next;
         }
     }
+}
+
+/// A worker's unread mail waiting for a turn, and the assignments they owe.
+fn open_work(run: &FirmRun, w: &str) -> (usize, usize) {
+    let mail = run.rt(w).map_or(0, |r| r.queue.lock().unwrap().len());
+    let owed = run
+        .post
+        .lock()
+        .unwrap()
+        .desk(w)
+        .owed
+        .iter()
+        .filter(|o| o.kind == super::mail::Kind::Assignment)
+        .count();
+    (mail, owed)
 }
 
 /// The CEO asks the board for a budget: one number, a plan and a reason, in
@@ -661,6 +695,17 @@ pub fn fund(run: &FirmRun, by: &str, worker: &str, tokens: i64, reason: &str) ->
     if reason.trim().is_empty() {
         bail!("give a reason");
     }
+    // A manager doesn't take budget back mid-turn: the turn is charged when
+    // it ends, so the balance shown doesn't hold what it is spending.
+    let busy = run.rt(worker).is_some_and(|w| {
+        matches!(
+            w.state(),
+            WorkerState::Working | WorkerState::Reviewing | WorkerState::Queued
+        )
+    });
+    if tokens < 0 && by != BOARD && busy {
+        bail!("{worker} is in a turn: its cost isn't in their balance yet. Take budget back once they are idle");
+    }
     let mut l = run.ledger.lock().unwrap();
     if !l.enabled {
         bail!("this firm has no run budget");
@@ -680,6 +725,17 @@ pub fn fund(run: &FirmRun, by: &str, worker: &str, tokens: i64, reason: &str) ->
             bail!(
                 "{worker} has {} tokens left; you can take back at most that",
                 fmt_tokens(l.balance(worker).max(0))
+            );
+        }
+        // Someone kept on is kept able to answer: two turns at their own
+        // price. To take everything, let them go (release).
+        let keep = 2 * l.turn_price(worker, run.config.budget.turn_price) as i64;
+        if by != BOARD && l.balance(worker) - back < keep {
+            bail!(
+                "leave {worker} at least {} tokens, two of their turns ({} each); you can take back {} now. To take everything, release them",
+                fmt_tokens(keep),
+                fmt_tokens(keep / 2),
+                fmt_tokens((l.balance(worker) - keep).max(0))
             );
         }
         l.transfer(Some(worker), by, back as u64);

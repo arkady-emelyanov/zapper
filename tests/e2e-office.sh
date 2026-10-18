@@ -93,6 +93,7 @@ rules:
     do:
       - shell: "office hire '{\"role\": \"dev\", \"budget\": \"1G\", \"subject\": \"x\", \"brief\": \"x\", \"reason\": \"x\"}' > /work/rich.txt 2>&1; true"
       - hire: { role: dev, name: grace, budget: "10k", title: "Founding engineer", subject: "Build the widget", brief: "Build the widget and report.", reason: "we need an engineer" }
+      - shell: "office fund '{\"worker\": \"grace\", \"tokens\": -9500, \"reason\": \"x\"}' > /work/takeback.txt 2>&1; true"
       - hire: { role: dev, name: ken, budget: "100", subject: "A tiny job", brief: "Look at the widget.", reason: "a small budget" }
       - hire: { role: dev, name: mallory, budget: "1k", subject: "Copy", brief: "Write the marketing copy.", reason: "words" }
       - contract_offer: { role: dev, name: carl, title: "Auditor", brief: "Audit the widget's code." }
@@ -557,6 +558,8 @@ expect "the negotiation is mail" "$(cjournal)" 'carl → ceo [reply]'
 expect "the board sees the contract" "$("$Z" firm contracts corp)" "completed"
 expect "a hire beyond the balance is refused" "$("$Z" exec "$ceo" -- cat /work/rich.txt 2>&1)" "is more than that"
 expect "the hire is named and titled" "$(cjournal)" "hired grace as Founding engineer by ceo, budget 10000"
+i=0; while [ $i -lt 30 ] && ! "$Z" exec "$ceo" -- cat /work/takeback.txt 2>/dev/null | grep -q .; do sleep 1; i=$((i + 1)); done
+expect "taking budget back leaves the worker two turns" "$("$Z" exec "$ceo" -- cat /work/takeback.txt 2>&1)" "leave grace at least"
 cwait_for "screening c-[0-9]* grace cleared by sec-1" 90 && pass "the officer does a background check on the hire" || fail "the officer does a background check on the hire" "$(cjournal | grep -i screening | tail -5)"
 cwait_for 'grace → ceo \[report\]' 120 && pass "the hire boots, gets the brief and reports" || fail "the hire boots, gets the brief and reports" "$(cjournal | tail -8)"
 order=$(cjournal | grep -n "screening c-[0-9]* grace cleared\|turn grace start" | head -1)
