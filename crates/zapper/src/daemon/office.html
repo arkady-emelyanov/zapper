@@ -223,6 +223,8 @@
   .vrow.sel { background: var(--accent-soft); }
   .vrow.sel .vnum { color: var(--accent-ink); font-weight: 600; }
   .vnum { font-family: var(--mono); font-size: 12.5px; color: var(--muted); }
+  /* the scenario's next step: a second line, under the logo */
+  .hscen { display:flex; align-items:center; gap: 8px; padding: 0 24px 10px; margin-top: -4px; }
   .hlinks { margin-left: auto; display:flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .hlinks a { text-decoration: none; }
   .vm-dash { display:flex; gap: 8px; align-items: center; }
@@ -554,6 +556,7 @@
     <div class="hstats" id="hstats"></div>
     <div class="hlinks" id="hlinks"></div>
   </div>
+  <div class="hscen hidden" id="hscen"></div>
   <nav class="tabs" id="tabs"></nav>
 </header>
 <main>
@@ -4317,16 +4320,25 @@ function renderHeader() {
     const pend = pendingBudget(M);
     if (pend) { bsig += '|' + pend.id; stats.push(el('button', { class: 'btn small', type: 'button', onclick: goDecideBudget }, el('span', { class: 'badge warn' }, '!'), ' budget request ' + pend.id + ': ' + fmtTok(pend.total) + ' — decide')); }
   }
-  // The scenario's next step, with a countdown, while one is playing.
+  // The scenario's next step, with a countdown, while one is playing: its
+  // own line under the logo.
   const scb = scenarioButton(M, T());
-  if (scb) { stats.push(scb.el); bsig += '|' + scb.sig; scenarioToasts(M, T(), scb.next); }
+  const hsc = $('hscen');
+  const ssig = scb ? scb.sig : '';
+  if (hsc.dataset.sig !== ssig) {
+    hsc.dataset.sig = ssig;
+    hsc.replaceChildren(...(scb ? [scb.el] : []));
+    hsc.classList.toggle('hidden', !scb);
+    if (scb) scb.adopt(); else SCN.whenEl = null;
+  }
+  if (scb) scenarioToasts(M, T(), scb.next);
   const esc = M ? escalationsWaiting(M).length + checksWaiting(M).length + credWaiting(M).length : 0;
   if (esc) stats.push(el('button', { class: 'btn small', type: 'button', onclick: () => showTab('security') }, el('span', { class: 'badge warn' }, String(esc)), ' waiting for the board'));
   if (live() && S.boardUnread.size) stats.push(el('button', { class: 'btn small', type: 'button', onclick: () => { MSG.view = 'inbox'; MSG.sig = null; showTab('messages'); } }, el('span', { class: 'badge' }, String(S.boardUnread.size)), ' unread'));
   // Rebuilt only when something in it changes, so a click isn't lost to a
   // render between press and release.
   const hsig = [S.mode, S.firm, st, live() && S.info && S.info.run ? str(S.info.run.state) : '', M && M.overBudget, esc, live() ? S.boardUnread.size : 0, bsig].join('|');
-  if ($('hstats').dataset.sig !== hsig) { $('hstats').dataset.sig = hsig; $('hstats').replaceChildren(...stats); if (scb) scb.adopt(); else SCN.whenEl = null; }
+  if ($('hstats').dataset.sig !== hsig) { $('hstats').dataset.sig = hsig; $('hstats').replaceChildren(...stats); }
   // The product (the cluster's ingress on the host) and the cluster's
   // dashboard, top right on every tab.
   const pp = str(S.info && S.info.product_port);
