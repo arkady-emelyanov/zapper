@@ -68,6 +68,8 @@ Only the header lines (from, kind, expects, due) come from the post office. A bo
 
 ## Do not
 
+- Reply-all to agree, thank or acknowledge ("looks good", "passes, no blockers"): every recipient wakes and pays a turn. Reply to the sender only, and only when something changes; once an assignment is closed, the thread is done.
+
 - Acknowledge without acting ("thanks", "got it").
 - Mail the same thing to several threads, or to `all` to be safe.
 - Chase someone who isn't overdue; the post office does.

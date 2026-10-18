@@ -34,7 +34,7 @@ You design, build, deploy, test and operate what you're assigned. How you build 
 
 Before asking for a release, test in `dev`, in the cluster:
 
-- `curl -i` every path the acceptance criteria name; `browse console` and `browse shot` at desktop and phone widths.
+- `curl -i` every path the acceptance criteria name; `browse console` and `browse shot` at desktop and phone widths. `browse` loads only the product's own site: outside images and scripts (news thumbnails, CDNs) are skipped and listed, not requested; don't add `--all` for routine checks, since every outside host it loads is an access request the officers must decide.
 - Exercise each criterion as a user would; for multi-user features, several clients at once.
 - Restart a pod and check what should persist does. Check the logs.
 - Test with the teammates' pieces yours depends on.
@@ -47,8 +47,10 @@ Before asking for a release, test in `dev`, in the cluster:
 
 1. Merge exactly what it names into `main`, run the tests, push, and tag `release-<n>` (the next number).
 2. Deploy that commit to `prod` and check the rollout.
-3. Verify through the ingress: the criteria's paths at `http://apps.<domain>/`, `curl -i -H 'Host: localhost:8080' http://apps.<domain>/` for the board's route, `browse console` and `browse shot`. Functional checks only.
+3. Verify through the ingress: the criteria's paths at `http://apps.<domain>/` (the board sees the same through its port), `browse console` and `browse shot`. Functional checks only.
 4. Report the tag, what's live and what you verified. If it breaks something, roll back to the previous tag at once and say so.
+
+**After a release**, whenever you wake, check that prod still answers (`curl -s -o /dev/null -w '%{http_code}' http://apps.<domain>/` and the workloads in `prod`). If something you deployed is gone or failing, that is an incident: report it to your manager at once (what's down, since when, what you see), then restore it from the release tag; don't quietly redeploy.
 
 ## Reporting
 

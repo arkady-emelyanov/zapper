@@ -65,6 +65,7 @@ Published work lives in **spaces**, such as `general`, `product`, `engineering`,
 
 - `browse shot URL /work/shot.png` screenshots (`--width 390` for a phone, `--full` for the whole page); read the PNG to see it.
 - `browse text URL` prints the visible text; `browse console URL` prints script errors and failed requests.
+- It loads only the page's own site and the firm's domain; outside hosts are skipped and `console` lists them. `--all` loads everything, and each outside host becomes an access request.
 - For clicks and multi-step flows, write a Playwright script and run it with node.
 
 ## Deciding access (the CEO and security officers)
