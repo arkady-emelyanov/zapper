@@ -4651,7 +4651,7 @@ function ingest(e, fresh) {
   scheduleRender();
 }
 async function refreshUnread() {
-  if (!live() || !S.info || !S.info.run) return;
+  if (!live() || !S.info || !S.info.run || ['ended', 'failed'].includes(str(S.info.run.state))) { S.boardUnread = new Set(); return; }
   const gen = S.gen;
   try {
     const list = arr(await api(F() + '/mail?for=board&unread=true'));
@@ -4666,15 +4666,17 @@ async function loadFirm() {
   if (firm !== S.firm) return;
   S.info = info;
   if (S.mode === 'live' && gen === S.gen) {
-    const run = info.run ? str(info.run.run) : null;
+    // The live view follows the active run only: a stopped one is discarded
+    // here (its mail, unread marks, budget) and lives on in Runs and replay.
+    const active = info.run && !['ended', 'failed'].includes(str(info.run.state)) ? str(info.run.run) : null;
+    const run = active;
     // When the company stops (or another run takes its place), nothing of
     // it may linger in the page: start over with a fresh one, on Kickoff.
     // The Kickoff form's stop-and-start reloads itself once the new run is up.
-    const active = run && !['ended', 'failed'].includes(str(info.run.state)) ? run : null;
     if (S.activeRun && active !== S.activeRun && !KO.busy) { resetPage(); return; }
     S.activeRun = active;
     if (run && run !== S.run) { startLive(run); return; }
-    if (!run && (S.run || !S.M)) { stopLive(); S.gen++; S.run = null; closePanel(); S.M = modelFromInfo(info); mountAll(); }
+    if (!run && (S.run || !S.M)) { stopLive(); S.gen++; S.run = null; S.boardUnread = new Set(); closePanel(); S.M = modelFromInfo(info); mountAll(); }
     if (run) await refreshUnread();
   }
   scheduleRender();

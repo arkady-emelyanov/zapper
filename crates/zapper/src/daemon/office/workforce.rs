@@ -1073,14 +1073,7 @@ pub(super) fn join(
     // A scenario's slot for this hire gives them the board's instructions,
     // and maybe a profile of its own (another agent or model).
     let mut w = w;
-    // A contractor runs on the role's contract profile, if it has one; a
-    // scenario's slot comes first.
-    let own = super::scenario::claim(run, role, contract.is_some(), &name).or_else(|| {
-        contract
-            .and_then(|_| run.config.roles.get(role))
-            .and_then(|r| r.contract_profile.clone())
-    });
-    if let Some(p) = own {
+    if let Some(p) = super::scenario::claim(run, role, contract.is_some(), &name) {
         w.profile = Some(p.clone());
         if let Some(x) = run
             .chart

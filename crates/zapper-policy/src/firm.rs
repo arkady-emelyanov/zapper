@@ -431,11 +431,6 @@ pub struct Role {
     /// they join the officers once their background check clears.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub officer: bool,
-    /// The profile contractors of this role run on, instead of `profile`:
-    /// bounded jobs on another agent or model (a local one, say). A
-    /// scenario slot's profile still comes first.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub contract_profile: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -887,13 +882,6 @@ impl Firm {
                 }
             }
         }
-        for (rname, role) in &self.roles {
-            if let Some(p) = &role.contract_profile {
-                if let Some(e) = office_profile_problem(config, p) {
-                    err(format!("role {rname}: contract_profile: {e}"));
-                }
-            }
-        }
         for w in &self.workers {
             if let Some(p) = &w.profile {
                 if let Some(e) = office_profile_problem(config, p) {
@@ -1026,17 +1014,6 @@ firms:
             pi.firms["acme"].scenarios["p"].hires[0].profile.as_deref(),
             Some("p")
         );
-        // So may a role's contractors.
-        let f = firm(&BASE.replace(
-            "eng: { profile: w,",
-            "eng: { profile: w, contract_profile: plain,",
-        ));
-        assert!(f.unwrap_err().to_string().contains("contract_profile"));
-        assert!(firm(&BASE.replace(
-            "eng: { profile: w,",
-            "eng: { profile: w, contract_profile: p,"
-        ))
-        .is_ok());
         // So may a founder.
         let f = firm(&BASE.replace(
             "{ name: ada, role: eng, reports_to: cto }",
