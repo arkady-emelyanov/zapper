@@ -242,7 +242,7 @@ An `assignment` from someone without authority over the receiver is rejected wit
 |---|---|
 | `mail_send(to, cc?, subject?, body, kind, expects?, due?, attachments?)` | Start a thread; without a subject, its first line names it |
 | `mail_reply(message, body, kind?, attachments?, close?, all?)` | Reply in a thread, to the sender (`all`: everyone in it); `close` marks the assignment done |
-| `mail_inbox(unread?)` | List messages with sender, subject, kind, thread |
+| `mail_inbox(unread?)` | List messages with sender, subject, kind, thread, and how many are unread. With nothing unread, and in `desk()` and `credentials()` while answers or decisions are pending, a `note` says that mail wakes the worker and not to check again: agents that poll instead of ending their turn waste it |
 | `mail_read(message)` | One message with its body |
 | `mail_thread(thread)` | Full thread, oldest first |
 | `desk()` | My open assignments, threads waiting on others, pending access requests |

@@ -301,6 +301,11 @@ pub fn tools(p: Powers) -> Vec<Value> {
     v
 }
 
+/// What the office tools say when there's nothing to act on: agents that
+/// poll instead of ending their turn waste it.
+const NOTHING_NEW: &str = "Nothing new. Mail wakes you when it comes: don't check again; finish what you can and end your turn.";
+const WAITING: &str = "What you wait for (answers, access decisions) comes by mail and wakes you: don't check again; carry on with other work, or end your turn.";
+
 fn strings(v: &Value) -> Vec<String> {
     match v {
         Value::String(s) => s
@@ -530,7 +535,17 @@ pub async fn dispatch(
                 .collect::<Result<Vec<_>>>()?;
             Ok(json!({ "requests": ids, "note": "the policy owner decides; you'll get mail" }))
         }
-        "credentials" => Ok(super::access::mine(run, me)),
+        "credentials" => {
+            let mut v = super::access::mine(run, me);
+            let pending = v["requests"].as_array().is_some_and(|r| {
+                r.iter()
+                    .any(|q| matches!(q["state"].as_str(), Some("pending" | "escalated")))
+            });
+            if pending {
+                v["note"] = json!(WAITING);
+            }
+            Ok(v)
+        }
         "credentials_list" => Ok(super::access::all(run)),
         "credentials_decide" => {
             let level = opt_str(args, "level")
@@ -694,7 +709,13 @@ pub async fn dispatch(
         }
         "mail_inbox" => {
             let unread = args["unread"].as_bool().unwrap_or(false);
-            Ok(json!(run.post.lock().unwrap().inbox(me, unread, 50)))
+            let list = run.post.lock().unwrap().inbox(me, unread, 50);
+            let fresh = list.iter().filter(|m| m["unread"] == json!(true)).count();
+            let mut v = json!({ "messages": list, "unread": fresh });
+            if fresh == 0 {
+                v["note"] = json!(NOTHING_NEW);
+            }
+            Ok(v)
         }
         "mail_thread" => {
             let id = req_str(args, "thread")?;
@@ -718,9 +739,13 @@ pub async fn dispatch(
         }
         "desk" => {
             let desk = run.post.lock().unwrap().desk(me);
-            Ok(
-                json!({ "owed": desk.owed, "waiting": desk.waiting, "access_requests": security::pending_for(run, me) }),
-            )
+            let pending = security::pending_for(run, me);
+            let mut v =
+                json!({ "owed": desk.owed, "waiting": desk.waiting, "access_requests": pending });
+            if !desk.waiting.is_empty() || !pending.is_empty() {
+                v["note"] = json!(WAITING);
+            }
+            Ok(v)
         }
         "directory" => {
             let mut v = run.post.lock().unwrap().directory();
