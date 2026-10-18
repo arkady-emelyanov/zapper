@@ -493,6 +493,27 @@ impl PostOffice {
                 bail!("thread {} has {} messages and is paused; start a new thread, or tell your manager", t.id, t.messages.len());
             }
         }
+        // Closing the board's objective pauses the firm: not while work it
+        // asked for is still open anywhere in the firm.
+        if d.close && !system {
+            if let Some(t) = &thread_id {
+                if self.closes_objective(t, &d.from) {
+                    let open: Vec<String> = self
+                        .obligations
+                        .values()
+                        .filter(|o| {
+                            o.expects == Expects::Done
+                                && Some(o.message.as_str()) != self.kickoff.as_deref()
+                        })
+                        .map(|o| format!("\"{}\" ({} owes {})", o.subject, o.debtor, o.creditor))
+                        .take(8)
+                        .collect();
+                    if !open.is_empty() {
+                        bail!("the board's objective can't close while assignments are open: {}. The firm pauses when it closes, so that work would never be done. Send the board a progress report without close, or finish the open work (or take it back) first", open.join("; "));
+                    }
+                }
+            }
+        }
         if !system && d.from != BOARD {
             let fanout = fan_to || fan_cc;
             if fanout && !Self::rate_ok(&mut self.fanout_log, &d.from, self.fanout_per_hour, now) {
@@ -622,6 +643,9 @@ impl PostOffice {
                 .filter(|(_, o)| o.thread == thread && o.debtor == d.from)
                 .filter(|(_, o)| match o.expects {
                     Expects::Reply => true,
+                    // The board's objective is done only when closed: a
+                    // report on it without close is progress.
+                    Expects::Done if self.kickoff.as_deref() == Some(o.message.as_str()) => d.close,
                     Expects::Done => d.close || d.kind == Kind::Report,
                     Expects::Nothing => true,
                 })
@@ -631,7 +655,7 @@ impl PostOffice {
                 if let Some(o) = self.obligations.remove(&k) {
                     objective_done |= o.creditor == BOARD
                         && self.kickoff.as_deref() == Some(o.message.as_str())
-                        && (d.close || d.kind == Kind::Report);
+                        && d.close;
                     journal.append("settled", json!({ "message": o.message, "thread": o.thread, "debtor": o.debtor, "creditor": o.creditor, "by": id }));
                 }
             }
@@ -779,6 +803,17 @@ impl PostOffice {
                 v
             })
             .collect()
+    }
+
+    /// Whether `who`, answering in `thread`, would close the board's
+    /// objective: they owe it there.
+    fn closes_objective(&self, thread: &str, who: &str) -> bool {
+        let Some(k) = self.kickoff.as_deref() else {
+            return false;
+        };
+        self.obligations
+            .values()
+            .any(|o| o.message == k && o.thread == thread && o.debtor == who && o.creditor == BOARD)
     }
 
     pub fn desk(&self, who: &str) -> Desk {
@@ -997,9 +1032,23 @@ mod tests {
             !po.send(&j, r, 3.0).unwrap().objective_done,
             "a later assignment is not the objective"
         );
+        // A progress report on it, without close, isn't the end.
+        let mut r = draft("ceo", BOARD, Kind::Report);
+        r.in_reply_to = Some(a.id.clone());
+        assert!(!po.send(&j, r, 3.5).unwrap().objective_done);
+        // Nor can it close while work the firm owes is open.
+        let job = po
+            .send(&j, draft("ceo", "ada", Kind::Assignment), 3.6)
+            .unwrap();
         let mut r = draft("ceo", BOARD, Kind::Report);
         r.in_reply_to = Some(a.id.clone());
         r.close = true;
+        let e = po.send(&j, r.clone(), 3.7).unwrap_err().to_string();
+        assert!(e.contains("can't close while assignments are open"), "{e}");
+        let mut done = draft("ada", "ceo", Kind::Report);
+        done.in_reply_to = Some(job.id.clone());
+        done.close = true;
+        po.send(&j, done, 3.8).unwrap();
         assert!(po.send(&j, r, 4.0).unwrap().objective_done);
         std::fs::remove_dir_all(dir).unwrap();
     }
