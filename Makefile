@@ -4,7 +4,7 @@
 #   make build             zapper and the static guest agent (release)
 #   make install           both into ~/.local/bin
 #   make image             the base image (IMAGE=ubuntu-24.04, see IMAGES below)
-#   make image IMAGE=office  office workers: Claude Code (pinned), git, kubectl, podman, a headless browser
+#   make image IMAGE=office  office workers: Claude Code and pi (pinned), git, kubectl, podman, a headless browser
 #   make image IMAGE=k3s     the cluster facility (pinned k3s, air-gap images)
 #   make kernel KERNEL=k8s   a guest kernel with Kubernetes support (~10 min)
 #   make check             report missing prerequisites with the fix; changes nothing
@@ -37,6 +37,8 @@ CLAUDE_VERSION := 2.1.301
 # A headless browser for workers to check what they build: Playwright and
 # its Chromium (the `browse` command wraps it).
 PLAYWRIGHT_VERSION := 1.64.1
+# pi (agent.kind: pi), from npm; it doesn't update itself.
+PI_VERSION := 1.3.0
 # Node.js LTS from nodejs.org (Ubuntu's is too old for Playwright).
 NODE_VERSION := v22.23.3
 NODE_SHA256 := df450af89261115ef9f9e3830c3eeb2cc9213b63c720b1af623cb5dcbe2e02de
@@ -47,6 +49,7 @@ IMAGE_RUN_office  := --run "apt-get update && DEBIAN_FRONTEND=noninteractive apt
 	--run "curl -fsSL -o /tmp/node.tar.xz https://nodejs.org/dist/$(NODE_VERSION)/node-$(NODE_VERSION)-linux-x64.tar.xz && echo '$(NODE_SHA256)  /tmp/node.tar.xz' | sha256sum -c && tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 --exclude='*.md' --exclude=LICENSE && rm /tmp/node.tar.xz && node --version" \
 	--run "curl -fsSL -o /usr/local/bin/kubectl https://dl.k8s.io/release/$(KUBECTL_VERSION)/bin/linux/amd64/kubectl && echo '$(KUBECTL_SHA256)  /usr/local/bin/kubectl' | sha256sum -c && chmod 755 /usr/local/bin/kubectl" \
 	--run "curl -fsSL https://claude.ai/install.sh | bash -s $(CLAUDE_VERSION) && cp -L /root/.local/bin/claude /usr/local/bin/claude && rm -rf /root/.local /root/.claude* && claude --version" \
+	--run "npm install -g --ignore-scripts --no-audit --no-fund @earendil-works/pi-coding-agent@$(PI_VERSION) && PI_OFFLINE=1 pi --version && rm -rf /root/.npm /root/.pi" \
 	--run "npm install -g --no-audit --no-fund playwright@$(PLAYWRIGHT_VERSION) && PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright playwright install --with-deps chromium && chmod -R a+rX /opt/ms-playwright && rm -rf /var/lib/apt/lists/* /root/.npm"
 
 # The cluster facility: k3s at a pinned release, with its air-gap images so it

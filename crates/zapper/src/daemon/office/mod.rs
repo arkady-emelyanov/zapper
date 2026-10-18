@@ -1014,7 +1014,7 @@ fn harness_driver(
     let kind = &profile.agent.kind;
     crate::daemon::harness::get(kind)
         .and_then(|h| h.driver())
-        .ok_or_else(|| anyhow!("profile {}: agent kind {kind} can't run an office worker (one that can: claude-code)", profile.name))
+        .ok_or_else(|| anyhow!("profile {}: agent kind {kind} can't run an office worker (those that can: claude-code, pi)", profile.name))
 }
 
 /// Follow-ups, digests and expiries.

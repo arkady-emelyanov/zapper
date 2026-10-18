@@ -1,7 +1,8 @@
-//! A fake Claude Code for tests: speaks the same stream-json on stdin and
-//! stdout as `claude -p --input-format stream-json --output-format
-//! stream-json`, and plays a script instead of thinking. Tools are called
-//! through the office MCP server named in `~/.claude.json`, as Claude would.
+//! A fake agent for tests: speaks the same stream-json on stdin and stdout
+//! as `claude -p --input-format stream-json --output-format stream-json`
+//! (`fake-claude`), or pi's `--mode rpc` (`fake-pi`), and plays a script
+//! instead of thinking. Tools are called through the office MCP server
+//! named in `~/.claude.json` or `~/.pi/agent/mcp.json`, as the agent would.
 //!
 //! The script is YAML:
 //!
@@ -25,6 +26,7 @@
 use std::collections::HashSet;
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::sync::mpsc;
 use std::time::Instant;
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -40,11 +42,17 @@ struct Mcp {
 impl Mcp {
     fn start() -> Result<Mcp> {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
-        let state: Value = serde_json::from_slice(&std::fs::read(format!("{home}/.claude.json"))?)?;
+        // Where Claude Code or pi keeps its MCP servers, in the same shape.
+        let state: Value = [".claude.json", ".pi/agent/mcp.json"]
+            .iter()
+            .find_map(|f| std::fs::read(format!("{home}/{f}")).ok())
+            .map(|b| serde_json::from_slice(&b))
+            .transpose()?
+            .unwrap_or_default();
         let server = &state["mcpServers"]["office"];
-        let cmd = server["command"]
-            .as_str()
-            .ok_or_else(|| anyhow!("no office MCP server in ~/.claude.json"))?;
+        let cmd = server["command"].as_str().ok_or_else(|| {
+            anyhow!("no office MCP server in ~/.claude.json or ~/.pi/agent/mcp.json")
+        })?;
         let args: Vec<String> = server["args"]
             .as_array()
             .into_iter()
@@ -224,51 +232,175 @@ fn emit(v: Value) {
     let _ = out.flush();
 }
 
-pub fn run(script: &str) -> i32 {
-    match play(script) {
+pub fn run(script: &str, proto: Proto) -> i32 {
+    match play(script, proto) {
         Ok(()) => 0,
         Err(e) => {
-            eprintln!("fake-claude: {e:#}");
+            eprintln!("fake agent: {e:#}");
             1
         }
     }
 }
 
-fn play(script: &str) -> Result<()> {
+/// The protocol the fake speaks: Claude Code's stream-json, or pi's RPC.
+#[derive(Clone, Copy, PartialEq)]
+pub enum Proto {
+    Claude,
+    Pi,
+}
+
+/// What the fake writes, in the protocol's shapes.
+struct Out {
+    proto: Proto,
+    session: String,
+}
+
+impl Out {
+    /// The text of a wake, or None for other input. pi's commands are
+    /// answered first.
+    fn wake(&self, msg: &Value) -> Option<String> {
+        match self.proto {
+            Proto::Claude => {
+                if msg["type"] != "user" {
+                    return None;
+                }
+                Some(match &msg["message"]["content"] {
+                    Value::String(s) => s.clone(),
+                    Value::Array(a) => a
+                        .iter()
+                        .filter_map(|c| c["text"].as_str())
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                    _ => String::new(),
+                })
+            }
+            Proto::Pi => {
+                let kind = msg["type"].as_str()?;
+                if !["prompt", "follow_up", "steer"].contains(&kind) {
+                    return None;
+                }
+                emit(
+                    json!({ "id": msg["id"], "type": "response", "command": kind, "success": true, "data": { "disposition": "started" } }),
+                );
+                Some(msg["message"].as_str().unwrap_or("").to_string())
+            }
+        }
+    }
+
+    fn begin(&self) {
+        match self.proto {
+            Proto::Claude => emit(
+                json!({ "type": "system", "subtype": "init", "session_id": self.session, "tools": [], "model": "fake" }),
+            ),
+            Proto::Pi => emit(json!({ "type": "agent_start" })),
+        }
+    }
+
+    fn say(&self, text: &Value) {
+        match self.proto {
+            Proto::Claude => emit(
+                json!({ "type": "assistant", "session_id": self.session, "message": { "role": "assistant", "content": [{ "type": "text", "text": text }] } }),
+            ),
+            Proto::Pi => emit(
+                json!({ "type": "message_end", "message": { "role": "assistant", "content": [{ "type": "text", "text": text }], "stopReason": "stop", "usage": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 } } }),
+            ),
+        }
+    }
+
+    /// A tool call starts: `name` is the tool as the agent knows it.
+    fn call(&self, name: &str, input: &Value) {
+        match self.proto {
+            Proto::Claude => emit(
+                json!({ "type": "assistant", "session_id": self.session, "message": { "role": "assistant", "content": [{ "type": "tool_use", "id": "t", "name": name, "input": input }] } }),
+            ),
+            Proto::Pi => emit(
+                json!({ "type": "tool_execution_start", "toolCallId": "t", "toolName": name, "args": input }),
+            ),
+        }
+    }
+
+    fn result(&self, name: &str, text: &str, is_error: bool) {
+        match self.proto {
+            Proto::Claude => emit(
+                json!({ "type": "user", "session_id": self.session, "message": { "role": "user", "content": [{ "type": "tool_result", "tool_use_id": "t", "content": text, "is_error": is_error }] } }),
+            ),
+            Proto::Pi => emit(
+                json!({ "type": "tool_execution_end", "toolCallId": "t", "toolName": name, "result": { "content": [{ "type": "text", "text": text }] }, "isError": is_error }),
+            ),
+        }
+    }
+
+    /// Mail handed over while the turn runs: Claude Code's Stop hook, or
+    /// pi's queued follow-ups.
+    fn more(&self, input: &mpsc::Receiver<Value>) -> Option<String> {
+        match self.proto {
+            Proto::Claude => stop_hook(),
+            Proto::Pi => {
+                let mut texts = Vec::new();
+                while let Ok(msg) = input.try_recv() {
+                    if let Some(t) = self.wake(&msg) {
+                        texts.push(t);
+                    }
+                }
+                (!texts.is_empty()).then(|| texts.join("\n\n"))
+            }
+        }
+    }
+
+    fn end(&self, turns: u64, errors: u32, started: Instant) {
+        match self.proto {
+            Proto::Claude => emit(json!({
+                "type": "result", "subtype": "success", "is_error": false, "session_id": self.session, "num_turns": turns,
+                "duration_ms": started.elapsed().as_millis() as u64, "result": format!("played; {errors} tool errors"),
+                "total_cost_usd": 0.0, "usage": { "input_tokens": 100, "output_tokens": 10, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0 },
+            })),
+            Proto::Pi => {
+                emit(
+                    json!({ "type": "message_end", "message": { "role": "assistant", "content": [{ "type": "text", "text": format!("played; {errors} tool errors") }], "stopReason": "stop", "usage": { "input": 100, "output": 10, "cacheRead": 0, "cacheWrite": 0 } } }),
+                );
+                emit(json!({ "type": "agent_end", "messages": [], "willRetry": false }));
+                emit(json!({ "type": "agent_settled", "aborted": false }));
+            }
+        }
+    }
+}
+
+fn play(script: &str, proto: Proto) -> Result<()> {
     let script: Value = serde_yaml::from_str(
         &std::fs::read_to_string(script).with_context(|| format!("reading {script}"))?,
     )?;
     let rules = script["rules"].as_array().cloned().unwrap_or_default();
-    let session = format!("fake-{}", std::process::id());
+    let out = Out {
+        proto,
+        session: format!("fake-{}", std::process::id()),
+    };
     let mut mcp: Option<Mcp> = None;
     let mut fired: HashSet<usize> = HashSet::new();
     let mut artifact = String::new();
     let mut turns = 0u64;
-    for line in std::io::stdin().lock().lines() {
-        let line = line?;
-        let Ok(msg) = serde_json::from_str::<Value>(&line) else {
+    // Input is read on its own thread, so pi's follow-ups queue up while a
+    // turn plays.
+    let (tx, input) = mpsc::channel::<Value>();
+    std::thread::spawn(move || {
+        for line in std::io::stdin().lock().lines() {
+            let Ok(line) = line else { break };
+            if let Ok(v) = serde_json::from_str::<Value>(&line) {
+                if tx.send(v).is_err() {
+                    break;
+                }
+            }
+        }
+    });
+    while let Ok(msg) = input.recv() {
+        let Some(text) = out.wake(&msg) else {
             continue;
         };
-        if msg["type"] != "user" {
-            continue;
-        }
         let started = Instant::now();
         turns += 1;
-        let text: String = match &msg["message"]["content"] {
-            Value::String(s) => s.clone(),
-            Value::Array(a) => a
-                .iter()
-                .filter_map(|c| c["text"].as_str())
-                .collect::<Vec<_>>()
-                .join("\n"),
-            _ => String::new(),
-        };
-        emit(
-            json!({ "type": "system", "subtype": "init", "session_id": session, "tools": [], "model": "fake" }),
-        );
+        out.begin();
         let mut last = String::new();
         let mut errors = 0;
-        // A turn: the wake, then whatever the Stop hook hands over.
+        // A turn: the wake, then whatever is handed over before it ends.
         let mut text = text;
         for _ in 0..5 {
             let wake = parse_wake(&text);
@@ -297,33 +429,26 @@ fn play(script: &str) -> Result<()> {
                     };
                     let args = substitute(args, &vars);
                     match name.as_str() {
-                        "say" => emit(
-                            json!({ "type": "assistant", "session_id": session, "message": { "role": "assistant", "content": [{ "type": "text", "text": args }] } }),
-                        ),
+                        "say" => out.say(&args),
                         "sleep" => std::thread::sleep(std::time::Duration::from_secs_f64(
                             args.as_f64().unwrap_or(1.0),
                         )),
                         "shell" => {
                             let cmd = args.as_str().unwrap_or("true");
-                            emit(
-                                json!({ "type": "assistant", "session_id": session, "message": { "role": "assistant", "content": [{ "type": "tool_use", "id": "t", "name": "Bash", "input": { "command": cmd } }] } }),
-                            );
-                            let out = Command::new("sh").args(["-c", cmd]).output();
-                            last = match out {
+                            let tool = if proto == Proto::Pi { "bash" } else { "Bash" };
+                            out.call(tool, &json!({ "command": cmd }));
+                            last = match Command::new("sh").args(["-c", cmd]).output() {
                                 Ok(o) => {
                                     String::from_utf8_lossy(&o.stdout).into_owned()
                                         + &String::from_utf8_lossy(&o.stderr)
                                 }
                                 Err(e) => e.to_string(),
                             };
-                            emit(
-                                json!({ "type": "user", "session_id": session, "message": { "role": "user", "content": [{ "type": "tool_result", "tool_use_id": "t", "content": last }] } }),
-                            );
+                            out.result(tool, &last, false);
                         }
                         tool => {
-                            emit(
-                                json!({ "type": "assistant", "session_id": session, "message": { "role": "assistant", "content": [{ "type": "tool_use", "id": "t", "name": format!("mcp__office__{tool}"), "input": args }] } }),
-                            );
+                            let full = format!("mcp__office__{tool}");
+                            out.call(&full, &args);
                             if mcp.is_none() {
                                 mcp = Some(Mcp::start()?);
                             }
@@ -332,34 +457,28 @@ fn play(script: &str) -> Result<()> {
                                 json!({ "name": tool, "arguments": args }),
                             )?;
                             last = r["content"][0]["text"].as_str().unwrap_or("").to_string();
-                            if r["isError"] == json!(true) {
+                            let is_error = r["isError"] == json!(true);
+                            if is_error {
                                 errors += 1;
                             } else if tool == "drive_publish" {
                                 if let Ok(v) = serde_json::from_str::<Value>(&last) {
                                     artifact = v["ref"].as_str().unwrap_or("").to_string();
                                 }
                             }
-                            emit(
-                                json!({ "type": "user", "session_id": session, "message": { "role": "user", "content": [{ "type": "tool_result", "tool_use_id": "t", "content": last, "is_error": r["isError"] }] } }),
-                            );
+                            out.result(&full, &last, is_error);
                         }
                     }
                 }
             }
-            match stop_hook() {
-                Some(reason) => text = reason,
+            match out.more(&input) {
+                Some(more) => text = more,
                 None => break,
             }
         }
-        emit(json!({
-            "type": "result", "subtype": "success", "is_error": false, "session_id": session, "num_turns": turns,
-            "duration_ms": started.elapsed().as_millis() as u64, "result": format!("played; {errors} tool errors"),
-            "total_cost_usd": 0.0, "usage": { "input_tokens": 100, "output_tokens": 10, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0 },
-        }));
+        out.end(turns, errors, started);
     }
     Ok(())
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -37,8 +37,13 @@ fn main() {
     match args.get(1).map(String::as_str) {
         Some("--version") => println!("zapper-agent {}", env!("CARGO_PKG_VERSION")),
         Some("office") => std::process::exit(office::cli(&args[2..])),
-        Some("fake-claude") => std::process::exit(fake::run(
+        Some(f @ ("fake-claude" | "fake-pi")) => std::process::exit(fake::run(
             args.get(2).map(String::as_str).unwrap_or("/dev/null"),
+            if f == "fake-pi" {
+                fake::Proto::Pi
+            } else {
+                fake::Proto::Claude
+            },
         )),
         _ => {
             eprintln!("zapper-agent runs as PID 1 of a zapper microVM");

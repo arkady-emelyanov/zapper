@@ -63,6 +63,10 @@ secrets:
   claude:
     file: ~/.config/zapper/claude-token
     hosts: [api.anthropic.com]
+  # A key for the OpenAI-compatible endpoint the `office-pi` profiles use.
+  elitea:
+    file: ~/.config/zapper/elitea-token
+    hosts: [elitea.technicaldomain.xyz]
   # s3:
   #   file: ~/.config/zapper/s3-session.env
   #   mode: guest
@@ -156,6 +160,34 @@ profiles:
         # the token (this layer is checked before the office profile's).
         - { action: allow, host: api.anthropic.com, ports: [443], secrets: [claude] }
         - { action: allow, host: "*", ports: [80, 443] }
+
+  # Office workers on pi instead of Claude Code (agent.kind: pi), with a
+  # model behind an OpenAI-compatible endpoint: give a role `profile:
+  # office-pi` (or office-pi-engineer). The key stays on the host: pi sends
+  # the placeholder, the proxy puts the `elitea` secret in.
+  office-pi:
+    extends: office
+    description: An office worker on pi
+    agent: &pi-agent
+      kind: pi
+      model: RadixArk/Qwen3.8-27B-NVFP4
+      settings: { defaultProvider: elitea }
+      env:
+        ELITEA_KEY: "{{secret:elitea}}"
+      config_files:
+        models.json: |
+          {"providers": {"elitea": {"baseUrl": "https://elitea.technicaldomain.xyz/llm/v1", "api": "openai-completions",
+            "apiKey": "${ELITEA_KEY}", "models": [{"id": "RadixArk/Qwen3.8-27B-NVFP4"}]}}}
+    policy:
+      net: &pi-net
+        - { action: allow, host: elitea.technicaldomain.xyz, ports: [443], secrets: [elitea] }
+
+  office-pi-engineer:
+    extends: office-engineer
+    description: An office engineer on pi
+    agent: *pi-agent
+    policy:
+      net: *pi-net
 
   # The firm's cluster: k3s on one node, with the k8s kernel.
   office-k3s:

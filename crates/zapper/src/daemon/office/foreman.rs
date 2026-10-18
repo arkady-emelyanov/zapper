@@ -88,7 +88,12 @@ async fn start(
     let argv = match &run.config.roles[&w.role].fake {
         Some(_) => vec![
             super::ops::AGENT_PATH.into(),
-            "fake-claude".into(),
+            if s.resolved.agent.kind == "pi" {
+                "fake-pi"
+            } else {
+                "fake-claude"
+            }
+            .into(),
             format!("{home}/.office/fake.yaml"),
         ],
         None => conv.argv(),

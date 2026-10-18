@@ -71,7 +71,7 @@ profiles:
 
 | Key | Default | Meaning |
 |---|---|---|
-| `kind` | `claude-code` | The agent harness: `claude-code` sets Claude Code up from the keys below (and can run office workers); `generic` writes only `env` and `files`. See [agent harnesses](#agent-harnesses) |
+| `kind` | `claude-code` | The agent harness: `claude-code` sets Claude Code up and `pi` sets pi up from the keys below (both can run office workers); `generic` writes only `env` and `files`. See [agent harnesses](#agent-harnesses) |
 | `command` | `[claude]` | What `zapper run` and `zapper attach` start |
 | `user` | `agent` | The user the command runs as, created with uid 1000 |
 | `root` | `false` | Run as root; this gives up the in-guest guardrails ([security](security.md#what-is-enforced-where)) |
@@ -94,13 +94,13 @@ Every session's environment also has:
 - `ZAPPER_SESSION`, the session id
 - in vsock mode, `HTTP_PROXY` and `HTTPS_PROXY` set to `http://127.0.0.1:3128`
 
-For `claude-code`, zapper also sets `DISABLE_AUTOUPDATER=1` and `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`, and marks onboarding, the folder trust dialog and the bypass-permissions prompt as accepted.
+For `claude-code`, zapper also sets `DISABLE_AUTOUPDATER=1` and `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`, and marks onboarding, the folder trust dialog and the bypass-permissions prompt as accepted. For `pi`, it sets `PI_OFFLINE=1`, `PI_SKIP_VERSION_CHECK=1` and `PI_TELEMETRY=0`, writes `settings.json` (`model` as `defaultModel`, `quietStartup`, `defaultProjectTrust: never`, then `settings`), `AGENTS.md` and `mcp.json` (servers declared to the model directly: `exposure: direct`, unless set) in `~/.pi/agent`; providers and models go in `config_files` as `models.json`, with keys as `${ENV}` from `env` (see the `office-pi` profile).
 
 ### Agent harnesses
 
 The agent keys above are neutral: each harness (`crates/zapper/src/daemon/harness.rs`) writes them where and how its agent reads them, and the office gives its workers their preamble, skills, tools and turn-end hook through them, so it doesn't depend on one agent. A harness implements `Harness` (its config directory, its skills directory, files and environment from the neutral keys, mounts) and, to run office workers, `Driver`, which starts a `Conversation`: the command line, a handshake if the protocol has one, how a prompt goes in, what each output line means (the session id for resuming, the current tool, the end of a turn with its tokens, a rate limit or failure, a reply to write back), and handing over a message while the agent works if it can.
 
-Only `claude-code` is implemented. [HARNESS.md](../HARNESS.md) describes the interfaces in full and how pi and opencode would implement them; in short:
+`claude-code` and `pi` are implemented; opencode isn't yet. [HARNESS.md](../HARNESS.md) describes the interfaces in full and how each implements them; in short:
 
 | | Claude Code | pi | opencode (V2) |
 |---|---|---|---|
@@ -108,7 +108,7 @@ Only `claude-code` is implemented. [HARNESS.md](../HARNESS.md) describes the int
 | Instructions | `CLAUDE.md` | `AGENTS.md` | `AGENTS.md` |
 | Skills | `skills/` | `skills/` | `skills/` |
 | MCP servers | `mcpServers` in `~/.claude.json` | `mcp.json`, the same shape | `mcp.servers` in `opencode.json`, `command` as one array |
-| Turn end | a `Stop` hook | an extension (`agent_before_settle`), or the host's `follow_up` | none; the host's `queue` delivery |
+| Turn end | a `Stop` hook | none: mail during a turn goes in as a `follow_up` command | none; the host's `queue` delivery |
 | Headless | `claude -p`, stream-json in and out | `pi --mode rpc`, JSON lines | `opencode acp` (JSON-RPC over stdio) or `opencode serve` |
 | Resume | `--resume ID` | `--session-id ID` | `--session ID` |
 

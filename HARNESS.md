@@ -1,6 +1,6 @@
 # Agent harnesses
 
-A harness is the coding agent a session runs: Claude Code today, and pi or opencode later. zapper sees an agent only through the interfaces in `crates/zapper/src/daemon/harness.rs`, so adding one is an implementation of those interfaces plus a name in `agent.kind` (`zapper_policy::AGENT_KINDS`). This page describes the interfaces, how Claude Code implements them, and how pi and opencode would. Neither is implemented yet. The pi and opencode details come from their repositories and documentation as of 2026-10-17 (pi `@earendil-works/pi-coding-agent` 1.3, opencode `@opencode/cli` 2.0); check them again before implementing.
+A harness is the coding agent a session runs: Claude Code and pi today, opencode later. zapper sees an agent only through the interfaces in `crates/zapper/src/daemon/harness.rs`, so adding one is an implementation of those interfaces plus a name in `agent.kind` (`zapper_policy::AGENT_KINDS`). This page describes the interfaces, how Claude Code and pi implement them, and how opencode would; opencode isn't implemented yet. The pi and opencode details come from their repositories and documentation as of 2026-10-17 (pi `@earendil-works/pi-coding-agent` 1.3, opencode `@opencode/cli` 2.0); check them again before implementing.
 
 ## The interfaces
 
@@ -59,39 +59,27 @@ The fake Claude (`zapper-agent fake-claude`) is the test double for office e2e t
 
 ## pi (`pi`)
 
-pi is the coding agent in [earendil-works/pi](https://github.com/earendil-works/pi), package `packages/coding-agent`, npm `@earendil-works/pi-coding-agent`, binary `pi`, on Node 22.19 or later.
+pi is the coding agent in [earendil-works/pi](https://github.com/earendil-works/pi), package `packages/coding-agent`, npm `@earendil-works/pi-coding-agent`, binary `pi`, on Node 22.19 or later. Implemented against 1.3.0, checked against a run on an OpenAI-compatible endpoint (2026-10-17).
 
-**Install.** Install it in the image at a pinned version: `npm i -g --ignore-scripts @earendil-works/pi-coding-agent@<version>`. pi doesn't update itself; set `PI_SKIP_VERSION_CHECK=1`, and `PI_OFFLINE=1` to stop automatic network use.
-
-**Configuration** (`docs/configuration.md`, `docs/settings.md`):
-
-| Neutral key | pi |
+| | |
 |---|---|
-| config directory | `~/.pi/agent`, or anywhere through `PI_CODING_AGENT_DIR` |
-| `settings`, `model` | `settings.json`: `defaultProvider`, `defaultModel`, `defaultThinkingLevel`, `defaultTools`, `retry.*`, `sessionDir` |
-| `instructions` | `~/.pi/agent/AGENTS.md`. pi also reads `CLAUDE.md`, and `AGENTS.md` from the working directory up, which a worker's empty `/work` doesn't have |
-| `skills` | `~/.pi/agent/skills` (also `~/.agents/skills`, `--skill <path>`); it implements the Agent Skills spec |
-| `mcp_servers` | `~/.pi/agent/mcp.json`, `{"mcpServers":{name:{command,args,env,cwd}}}`: the neutral shape. MCP is the built-in `builtin:mcp` extension; tools are named `mcp__<server>__<tool>` |
-| `permission_mode` | nothing to set. pi has no approval system ("It does not ask before every tool call"); zapper's sandbox (network policy, exec checks) is the only control. Tools can be limited with `--tools` and `--exclude-tools` |
-| project trust | a headless run needs `--approve` or `"defaultProjectTrust": "always"` to load `.pi/` project settings; workers don't need them |
-| auth | `ANTHROPIC_API_KEY`, `ANTHROPIC_OAUTH_TOKEN` (a `sk-ant-oat…` token, as `claude setup-token` makes), or `ANTHROPIC_AUTH_TOKEN`; or `auth.json`. The base URL is in `models.json` (`providers.anthropic.baseUrl`), not an environment variable; zapper's proxy doesn't need one |
+| Config directory | `~/.pi/agent` |
+| Settings | `settings.json`: `defaultModel` from `model`, `quietStartup: true`, `defaultProjectTrust: "never"` (a worker loads no `.pi/` from its work), then `settings` (`defaultProvider`, `retry.*`, `compaction.*`) |
+| Instructions | `~/.pi/agent/AGENTS.md` |
+| Skills | `~/.pi/agent/skills` |
+| MCP servers | `~/.pi/agent/mcp.json`, `{"mcpServers": …}`, the neutral shape. Each server gets `"exposure": "direct"` unless set: pi's default (`codemode`) reaches MCP tools only from codemode scripts, so the office's tools wouldn't be declared to the model. Tools are named `mcp__<server>__<tool>` |
+| Models | `models.json` in `config_files`: a provider with `baseUrl`, `api` (`openai-completions` for an OpenAI-compatible endpoint), `apiKey` as `${NAME}` from `env`, and `models`. With `{{secret:NAME}}` in `env`, pi sends the placeholder and the proxy puts the key in |
+| `permission_mode` | nothing to set: pi has no approvals; zapper's sandbox is the control |
+| `turn_end` | not used: pi runs no shell hooks; mail during a turn goes in as `follow_up` |
+| Environment | `PI_OFFLINE=1`, `PI_SKIP_VERSION_CHECK=1`, `PI_TELEMETRY=0` |
+| Command | `pi --mode rpc --session-id <id>`: the host picks a stable id per worker (`w-…`), which opens the session or creates it, so resuming needs nothing from the output |
+| Prompt | `{"id": "z-N", "type": "prompt", "message": …}`; pi answers with a `response` (`success: false` if refused, which ends the turn as failed) |
+| Output | `tool_execution_start {toolName, args}` → activity. `message_end` of an assistant message: `usage {input, output, cacheRead, cacheWrite}`, `stopReason` (`stop`, `toolUse`, `error`, `aborted`), `errorMessage`; the turn's tokens are `input + output + cacheWrite` summed over its messages. `auto_retry_end` with `success: false` and `finalError`: pi's own retries gave up. `agent_settled` ends the turn (`agent_end` alone is not final). A last `stopReason: "error"` is `RateLimited` when its message names a rate limit or overload (429, 529), else `Failed` (a refused key: `401: …token validation failed`, at once) |
+| Mid-turn mail | `steers()`: the foreman sends `{"type": "follow_up", "message": …}` as mail arrives; pi delivers it when the agent would otherwise stop, before `agent_settled` |
+| Install | the `office` image: `npm install -g --ignore-scripts @earendil-works/pi-coding-agent@$(PI_VERSION)` |
+| Tests | `harness::tests::pi_setup` and `pi_output` (events as pi printed them); `zapper-agent fake-pi` speaks the same RPC for office e2e (the `mixed` firm) |
 
-**Driving.** `pi --mode rpc` is a long-running process speaking JSON lines on stdin and stdout (`docs/rpc.md`, `docs/rpc-commands.md`).
-
-- `argv`: `pi --mode rpc --session-id <id>`, which opens the session or creates it. The host can pick a stable id per worker, so resuming needs no id from the output. Sessions live in `~/.pi/agent/sessions/` (`--session-dir`, `PI_CODING_AGENT_SESSION_DIR`).
-- `prompt`: a `prompt` command, `{"type":"prompt","id":…,"message":…}`. Responses are `{"type":"response","id",…}`.
-- `read`:
-  - `tool_execution_start {toolName, args}` → `Activity`.
-  - `message_end` for assistant messages carries `usage {input, output, cacheRead, cacheWrite, totalTokens}`, `stopReason` (`stop|length|toolUse|error|aborted`) and `errorMessage`. Sum `input + output + cacheWrite` over the turn's messages.
-  - `auto_retry_start {attempt, delayMs, errorMessage}` and `auto_retry_end {success, finalError}`: rate limits and overloads, which pi retries itself. A final failure → `Outcome::Failed` or `RateLimited` by its message.
-  - `agent_settled {aborted}` ends the turn → `TurnEnd`. The documentation says `agent_end` alone is not final.
-  - `get_state` returns `sessionId` and `sessionFile`, if the id is needed.
-- `steer`: pi takes messages while it works. `follow_up` is delivered when the agent would otherwise stop (the same as Claude Code's Stop hook), and `steer` after the current tool calls. `steers()` is true, and the foreman hands mail over as it arrives. `turn_end` then isn't needed; if it were, pi runs no shell hooks, so it would take an extension (`agent_before_settle` can return `continue: true`).
-
-**Open questions.**
-- Whether pi's RPC mode stays up across many prompts without growing state the host must clear.
-- How it reports a refused token: probably `stopReason: error` with an `errorMessage`.
-- Its tool names in activity: `toolName` is enough.
+Notes from the first runs: a turn on a 27B model behind a busy endpoint takes one to two minutes (the first byte came after 60 s); `httpIdleTimeoutMs` (300 s) covers it. pi also has an `abort` command, which a turn timeout could use instead of hanging the process up.
 
 ## opencode (`opencode`)
 

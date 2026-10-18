@@ -476,14 +476,15 @@ impl Default for Engine {
 
 /// Agent harnesses zapper knows (`agent.kind`); each is implemented in the
 /// daemon's `harness` module.
-pub const AGENT_KINDS: &[&str] = &["claude-code", "generic"];
+pub const AGENT_KINDS: &[&str] = &["claude-code", "pi", "generic"];
 
 /// What runs inside the sandbox and how it is configured.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct AgentSpec {
     /// The agent harness (`AGENT_KINDS`): `claude-code` sets Claude Code up
-    /// and can run office workers; `generic` only writes `files` and `env`.
+    /// and `pi` sets pi up, and both can run office workers; `generic` only
+    /// writes `files` and `env`.
     pub kind: String,
     /// Default command of `zapper run`.
     pub command: Vec<String>,

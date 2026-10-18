@@ -182,6 +182,26 @@ EOF
 # solo: the CEO holds security alone, decides a colleague's access request,
 # hires an officer (whom the board checks) and hands security over, then
 # lets the officer go and holds it again.
+# mixed: a Claude Code CEO and a pi engineer (the fake speaks pi's RPC).
+cat > "$T/fake/mixed-ceo.yaml" <<'EOF'
+rules:
+  - when: { from: board, kind: assignment }
+    do:
+      - mail_send: { to: [pat], subject: "Build it", body: "Build it and report.", kind: assignment }
+EOF
+cat > "$T/fake/mixed-dev.yaml" <<'EOF'
+rules:
+  - when: { contains: "Interrupt" }
+    do:
+      - shell: "echo handed over > /work/steered.txt"
+  - when: { subject: "Slow" }
+    do:
+      - sleep: 8
+  - when: { subject: "Build it" }
+    do:
+      - shell: "ls ~/.pi/agent > /work/pi-dir.txt"
+      - mail_reply: { message: $message, body: "Built, on pi.", kind: report, close: true }
+EOF
 cat > "$T/fake/solo-ceo.yaml" <<'EOF'
 rules:
   - when: { subject: "Slow" }
@@ -273,6 +293,10 @@ profiles:
         - { action: allow, host: apps.lab.internal, ports: [80] }
   engineer:
     extends: worker
+  # The same worker on pi (the fake doesn't need pi in the image).
+  pi-worker:
+    extends: worker
+    agent: { kind: pi }
   k3s:
     engine: { image: k3s, kernel: vmlinux-6.1-k8s, vcpus: 4, memory_mib: 4096, disk: 12GiB }
     agent: { kind: generic, command: [bash], user: user, workdir: / }
@@ -342,6 +366,13 @@ firms:
     workers:
       - { name: ceo, role: boss }
     security: { answer_within: 10s, digest_every: { minutes: 60, requests: 0 } }
+  mixed:
+    roles:
+      boss: { profile: worker, skills: { work: ceo }, fake: $T/fake/mixed-ceo.yaml }
+      dev: { profile: pi-worker, skills: { work: software-engineer }, fake: $T/fake/mixed-dev.yaml }
+    workers:
+      - { name: ceo, role: boss }
+      - { name: pat, role: dev, reports_to: ceo }
   lab:
     git: {}
     product_port: 127.0.0.1:$PORT
@@ -819,6 +850,33 @@ print("in order" if seq.get("mail", 1e9) < seq.get("left", 0) else "out of order
 "$Z" firm fund scen ben 777 --reason "the drill needs more" > /dev/null 2>&1
 expect "the board funds a worker on top of the budget" "$("$Z" --json firm budget scen | python3 -c 'import sys,json; f=json.load(sys.stdin); print(f["workers"]["ben"]["received"], f["approved"])')" "4777 "
 "$Z" firm down scen > /dev/null
+
+echo "== a pi worker"
+out=$("$Z" firm up mixed 2>&1)
+expect "a firm boots with a pi worker" "$out" "is running"
+mjournal() { "$Z" firm journal mixed; }
+mwait_for() { i=0; while [ $i -lt "$2" ]; do mjournal 2>/dev/null | grep -q -- "$1" && return 0; sleep 1; i=$((i + 1)); done; return 1; }
+mpat=$("$Z" --json firm status mixed | python3 -c 'import sys,json; print([w["session"] for w in json.load(sys.stdin)["run"]["workers"] if w["name"]=="pat"][0])')
+expect "pi reads the preamble from its agent directory" "$("$Z" exec "$mpat" -- cat /home/agent/.pi/agent/AGENTS.md 2>&1)" "pat"
+expect "and the office tools, declared to the model" "$("$Z" exec "$mpat" -- cat /home/agent/.pi/agent/mcp.json 2>&1)" '"exposure": "direct"'
+expect "and the role's skills" "$("$Z" exec "$mpat" -- ls /home/agent/.pi/agent/skills 2>&1)" "software-engineer"
+refute "nothing of Claude Code's" "$("$Z" exec "$mpat" -- ls -a /home/agent 2>&1)" ".claude.json"
+"$Z" mail send mixed --to ceo --subject "Go" --body "Build it." > /dev/null
+mwait_for 'pat → ceo \[report\]' 90 && pass "a pi worker takes an assignment and reports" || fail "a pi worker takes an assignment and reports" "$(mjournal | tail -6)"
+expect "its turn is counted" "$("$Z" --json firm journal mixed | python3 -c '
+import sys, json
+print(sum(e.get("tokens", 0) for e in map(json.loads, sys.stdin) if e.get("type") == "turn" and e.get("worker") == "pat" and e.get("event") == "end"))')" "110"
+# Mail during a pi turn is handed over as a follow-up, in the same turn.
+i=0; while [ $i -lt 30 ] && [ "$("$Z" --json firm status mixed | python3 -c 'import sys,json; print([w["state"] for w in json.load(sys.stdin)["run"]["workers"] if w["name"]=="pat"][0])')" = working ]; do sleep 1; i=$((i + 1)); done
+starts=$(mjournal | grep -c "turn pat start")
+"$Z" mail send mixed --to pat --kind fyi --subject "Slow" --body "Take your time." > /dev/null
+i=0; while [ $i -lt 30 ] && [ "$(mjournal | grep -c "turn pat start")" -le "$starts" ]; do sleep 1; i=$((i + 1)); done
+sleep 2
+"$Z" mail send mixed --to pat --kind fyi --subject "Interrupt" --body "One more thing." > /dev/null
+mwait_for "turn pat steered" 30 && pass "mail mid-turn reaches pi at once" || fail "mail mid-turn reaches pi at once" "$(mjournal | grep 'turn pat' | tail -4)"
+i=0; while [ $i -lt 30 ] && ! "$Z" exec "$mpat" -- cat /work/steered.txt 2>/dev/null | grep -q handed; do sleep 1; i=$((i + 1)); done
+expect "and is handled in the same turn" "$("$Z" exec "$mpat" -- cat /work/steered.txt 2>&1)" "handed over"
+"$Z" firm down mixed > /dev/null
 
 if [ -f "$DATA/images/k3s.ext4" ] && [ -f "$DATA/kernels/vmlinux-6.1-k8s" ]; then
     echo "== the cluster, git and the product port"
