@@ -600,6 +600,21 @@ impl Conversation for PiConversation {
             out.push(Event::Session(self.session.clone()));
         }
         match v["type"].as_str() {
+            // What the model is producing now, while it streams: the
+            // deltas themselves stay out of the transcript.
+            Some("message_update") => {
+                let ev = &v["assistantMessageEvent"];
+                match ev["type"].as_str() {
+                    Some("thinking_start") => out.push(Event::Activity("thinking".into())),
+                    Some("text_start") => out.push(Event::Activity("writing".into())),
+                    Some("toolcall_start") => {
+                        let name = ev["toolName"].as_str().unwrap_or("a tool");
+                        let name = name.strip_prefix("mcp__office__").unwrap_or(name);
+                        out.push(Event::Activity(format!("preparing {name}")));
+                    }
+                    _ => {}
+                }
+            }
             Some("tool_execution_start") => {
                 let call = json!({ "message": { "content": [{ "type": "tool_use", "name": v["toolName"], "input": v["args"] }] } });
                 out.extend(claude_activity(&call).map(Event::Activity));
@@ -821,6 +836,30 @@ mod tests {
             "the id is reported once"
         );
         assert!(d.read(&json!({ "type": "agent_start" })).is_empty());
+        // While it streams: thinking, writing, a tool call taking shape.
+        let up = |t: &str, extra: Value| {
+            let mut e = json!({ "type": t });
+            zapper_policy::merge(&mut e, &extra);
+            json!({ "type": "message_update", "usage": {}, "assistantMessageEvent": e })
+        };
+        assert_eq!(
+            d.read(&up("thinking_start", json!({ "contentIndex": 0 }))),
+            vec![Event::Activity("thinking".into())]
+        );
+        assert!(d
+            .read(&up("thinking_delta", json!({ "delta": "hm" })))
+            .is_empty());
+        assert_eq!(
+            d.read(&up("text_start", json!({}))),
+            vec![Event::Activity("writing".into())]
+        );
+        assert_eq!(
+            d.read(&up(
+                "toolcall_start",
+                json!({ "id": "c", "toolName": "mcp__office__mail_send" })
+            )),
+            vec![Event::Activity("preparing mail_send".into())]
+        );
         let e = json!({ "type": "tool_execution_start", "toolCallId": "c-1", "toolName": "mcp__office__mail_send", "args": { "subject": "Plan" } });
         assert_eq!(d.read(&e), vec![Event::Activity("mail_send Plan".into())]);
         let e = json!({ "type": "tool_execution_start", "toolCallId": "c-2", "toolName": "read", "args": { "path": "notes/note.txt" } });

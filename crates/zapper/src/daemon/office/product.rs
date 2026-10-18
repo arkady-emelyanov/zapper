@@ -84,6 +84,14 @@ fn host_only_cookie(v: &str) -> String {
         .join(";")
 }
 
+/// A body read whole goes out with its length: not chunked, as the
+/// product may have sent it (both at once is a response hyper refuses,
+/// and the browser gets nothing).
+fn sized(h: &mut hyper::HeaderMap, len: usize) {
+    h.remove(hyper::header::TRANSFER_ENCODING);
+    h.insert(CONTENT_LENGTH, HeaderValue::from(len));
+}
+
 /// Whether a response's links are worth rewriting: pages, styles, scripts.
 fn textual(ct: &str) -> bool {
     let ct = ct.to_ascii_lowercase();
@@ -204,9 +212,7 @@ async fn handle(run: &FirmRun, mut req: Request<Incoming>, port: u32) -> Respons
         Ok(s) if s.contains(&format!("://{apps}")) => Bytes::from(back(s, &apps, &shown)),
         _ => bytes,
     };
-    parts
-        .headers
-        .insert(CONTENT_LENGTH, HeaderValue::from(bytes.len()));
+    sized(&mut parts.headers, bytes.len());
     Response::from_parts(parts, full(bytes))
 }
 
@@ -242,6 +248,15 @@ mod tests {
             "sid=1; Path=/; HttpOnly"
         );
         assert!(textual("text/html; charset=utf-8") && textual("application/javascript"));
+        // A chunked page read whole goes out with its length only.
+        let mut h = hyper::HeaderMap::new();
+        h.insert(
+            hyper::header::TRANSFER_ENCODING,
+            HeaderValue::from_static("chunked"),
+        );
+        sized(&mut h, 42);
+        assert!(h.get(hyper::header::TRANSFER_ENCODING).is_none());
+        assert_eq!(h[CONTENT_LENGTH], "42");
         assert!(!textual("image/png"));
     }
 }
