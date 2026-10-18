@@ -1335,7 +1335,9 @@ fn run_summary(journal: &std::path::Path) -> RunSummary {
                     .take(240)
                     .collect();
                 sum.kickoff = Some(
-                    json!({ "subject": v["subject"], "preview": preview, "to": v["to"], "ts": v["ts"] }),
+                    // The whole message too, for the board to give the
+                    // next run the same task.
+                    json!({ "subject": v["subject"], "preview": preview, "body": body, "to": v["to"], "ts": v["ts"] }),
                 );
             }
         } else if run {
@@ -1517,6 +1519,8 @@ mod tests {
         assert_eq!(s.messages, 2);
         assert_eq!(s.kickoff.as_ref().unwrap()["subject"], "Build a todo app");
         assert_eq!(s.kickoff.as_ref().unwrap()["preview"], "An MVP, please.");
+        // The message as sent, to send again.
+        assert_eq!(s.kickoff.as_ref().unwrap()["body"], "An MVP,\n  please.");
         assert_eq!(s.last, Some(30.0));
         assert!(s.ended);
         std::fs::write(&j, r#"{"seq":1,"ts":10.0,"type":"run","state":"running"}"#).unwrap();

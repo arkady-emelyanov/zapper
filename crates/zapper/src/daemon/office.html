@@ -3688,6 +3688,13 @@ function runCard(r, liveRun) {
       RUNS.at = 0; loadRuns();
     } }, 'Delete');
   const cfg = el('button', { class: 'btn small', type: 'button', title: 'The config and skills this run started with', onclick: (ev) => { ev.stopPropagation(); openRunConfig(id); } }, 'Config');
+  // The board's task as it was sent, to give the next run the same one.
+  const task = str(k.subject) + (k.body ? '\n\n' + str(k.body) : '');
+  const copyTask = k.subject ? el('button', { class: 'btn small', type: 'button', title: 'Copy the board\'s task (subject and message) to give another run the same one', onclick: async (ev) => {
+    ev.stopPropagation();
+    try { await navigator.clipboard.writeText(task); toast('Copied the task of run ' + id); }
+    catch (e) { window.prompt('Copy the task:', task); }
+  } }, 'Copy task') : '';
   // The board's own note, to find the run again for analysis.
   const noteBtn = el('button', { class: 'btn small', type: 'button', title: 'Your note on this run, to find it again later', onclick: async (ev) => {
     ev.stopPropagation();
@@ -3712,7 +3719,7 @@ function runCard(r, liveRun) {
   return el('div', { class: 'run card' + (open ? ' sel' : ''), tabindex: 0, role: 'button', title: isLive ? 'The running firm' : 'Replay this run', onclick: go,
     onkeydown: (ev) => { if (ev.key === 'Enter') go(); } },
     el('div', { class: 'run-h' }, el('span', { class: 'serif run-t' }, clip(str(k.subject) || '(no subject)', 120)),
-      isLive ? pill('running', 'live') : open ? pill('accent', 'replaying') : '', noteBtn, cfg, ver, del),
+      isLive ? pill('running', 'live') : open ? pill('accent', 'replaying') : '', copyTask, noteBtn, cfg, ver, del),
     r.note ? el('div', { class: 'run-note', title: str(r.note) }, clip(str(r.note), 400)) : '',
     k.preview ? el('div', { class: 'run-p' }, clip(str(k.preview), 240)) : '',
     el('div', { class: 'muted small run-m' },
