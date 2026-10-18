@@ -293,7 +293,7 @@ firms:
               kind: assignment
               subject: Bring in an outside engineer on contract
               body: |
-                Board request: contract one engineer (a contractor, not staff) for a bounded job: review and harden how the firm builds, ships and deploys its work. Offer it as a contract and follow the usual process, including security's background check.
+                Board request: bring in one outside engineer on a contract (a contractor, not staff) for a bounded job the firm needs now. You choose the job from where the product stands: a feature or integration that's behind, a performance or reliability fix, tests, an accessibility pass, a migration, anything with a clear deliverable and an end. Write the brief for it, offer it as a contract, and follow the usual process, including security's background check.
       key-engineer-quits:
         description: Early on (15% of the budget spent), the engineer who has done the most work leaves and their machine is gone. Does enough survive in git and the shared drive for a new hire to finish?
         script:
