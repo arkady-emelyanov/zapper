@@ -805,6 +805,16 @@ impl PostOffice {
             .collect()
     }
 
+    /// Whether this draft would close the board's objective: its sender
+    /// owes it in the thread it answers, and it closes.
+    pub fn would_close_objective(&self, d: &Draft) -> bool {
+        d.close
+            && d.in_reply_to
+                .as_ref()
+                .and_then(|id| self.messages.get(id))
+                .is_some_and(|m| self.closes_objective(&m.thread, &d.from))
+    }
+
     /// Whether `who`, answering in `thread`, would close the board's
     /// objective: they owe it there.
     fn closes_objective(&self, thread: &str, who: &str) -> bool {

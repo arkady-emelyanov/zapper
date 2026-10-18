@@ -185,11 +185,20 @@ EOF
 # hires an officer (whom the board checks) and hands security over, then
 # lets the officer go and holds it again.
 # mixed: a Claude Code CEO and a pi engineer (the fake speaks pi's RPC).
+# The CEO keeps the board's assignment, and later closes it: refused while
+# pat is busy, then once the post office says the team is idle.
 cat > "$T/fake/mixed-ceo.yaml" <<'EOF'
 rules:
   - when: { from: board, kind: assignment }
     do:
+      - shell: "echo $message > /work/objective"
       - mail_send: { to: [pat], subject: "Build it", body: "Build it and report.", kind: assignment }
+  - when: { contains: "Close now" }
+    do:
+      - shell: "office mail_reply --message $(cat /work/objective) --body 'All done.' --kind report --close true > /work/close1.txt 2>&1; true"
+  - when: { contains: "Your team is idle" }
+    do:
+      - shell: "office mail_reply --message $(cat /work/objective) --body 'All done.' --kind report --close true > /work/close2.txt 2>&1; true"
 EOF
 cat > "$T/fake/mixed-dev.yaml" <<'EOF'
 rules:
@@ -885,6 +894,17 @@ sleep 2
 mwait_for "turn pat steered" 30 && pass "mail mid-turn reaches pi at once" || fail "mail mid-turn reaches pi at once" "$(mjournal | grep 'turn pat' | tail -4)"
 i=0; while [ $i -lt 30 ] && ! "$Z" exec "$mpat" -- cat /work/steered.txt 2>/dev/null | grep -q handed; do sleep 1; i=$((i + 1)); done
 expect "and is handled in the same turn" "$("$Z" exec "$mpat" -- cat /work/steered.txt 2>&1)" "handed over"
+# The board's objective closes only when the CEO's team is idle.
+mceo=$("$Z" --json firm status mixed | python3 -c 'import sys,json; print([w["session"] for w in json.load(sys.stdin)["run"]["workers"] if w["name"]=="ceo"][0])')
+i=0; while [ $i -lt 30 ] && [ "$("$Z" --json firm status mixed | python3 -c 'import sys,json; print([w["state"] for w in json.load(sys.stdin)["run"]["workers"] if w["name"]=="pat"][0])')" = working ]; do sleep 1; i=$((i + 1)); done
+starts=$(mjournal | grep -c "turn pat start")
+"$Z" mail send mixed --to pat --kind fyi --subject "Slow" --body "Take your time." > /dev/null
+i=0; while [ $i -lt 30 ] && [ "$(mjournal | grep -c "turn pat start")" -le "$starts" ]; do sleep 1; i=$((i + 1)); done
+"$Z" mail send mixed --to ceo --kind fyi --subject "Close now" --body "Wrap it up." > /dev/null
+i=0; while [ $i -lt 30 ] && ! "$Z" exec "$mceo" -- cat /work/close1.txt 2>/dev/null | grep -q .; do sleep 1; i=$((i + 1)); done
+expect "the objective can't close while the team is busy" "$("$Z" exec "$mceo" -- cat /work/close1.txt 2>&1)" "your team is still busy: pat"
+mwait_for 'office → ceo \[fyi\] "Your team is idle' 60 && pass "the CEO is told when the team is idle" || fail "the CEO is told when the team is idle" "$(mjournal | tail -6)"
+mwait_for "the CEO completed the board's objective" 60 && pass "and then closes it, which pauses the firm" || fail "and then closes it, which pauses the firm" "$("$Z" exec "$mceo" -- cat /work/close2.txt 2>&1 | tail -c 300)"
 "$Z" firm down mixed > /dev/null
 
 if [ -f "$DATA/images/k3s.ext4" ] && [ -f "$DATA/kernels/vmlinux-6.1-k8s" ]; then

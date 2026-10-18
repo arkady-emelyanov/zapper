@@ -187,6 +187,9 @@ pub struct FirmRun {
     pub articles: String,
     /// The scenario the run plays, if the board picked one.
     pub scenario: Option<scenario::Play>,
+    /// Who tried to close the board's objective while their team was busy:
+    /// told once the team is idle, so they wake to close it.
+    pub close_waiter: Mutex<Option<String>>,
     /// Names that were in the firm and left: they can't be hired again.
     pub departed: Mutex<BTreeMap<String, String>>,
     /// Hires to boot: the run's booter boots their VMs and starts their
@@ -296,6 +299,57 @@ impl FirmRun {
         );
     }
 
+    /// Who below `who` is still busy: in a turn, queued for one, booting,
+    /// or with mail to read.
+    pub fn team_busy(&self, who: &str) -> Vec<String> {
+        let chart = self.chart();
+        self.rts()
+            .iter()
+            .filter(|w| w.name != who && chart.is_above(who, &w.name))
+            .filter_map(|w| {
+                let st = w.state();
+                let mail = w.queue.lock().unwrap().len();
+                if matches!(
+                    st,
+                    WorkerState::Working
+                        | WorkerState::Reviewing
+                        | WorkerState::Queued
+                        | WorkerState::Booting
+                ) {
+                    let name = serde_json::to_value(st)
+                        .ok()
+                        .and_then(|v| v.as_str().map(str::to_string))
+                        .unwrap_or_default();
+                    Some(format!("{} ({name})", w.name))
+                } else if mail > 0 {
+                    Some(format!("{} ({mail} unread)", w.name))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    /// Tells whoever waits to close the board's objective that their team
+    /// is idle now. Called by the run's ticker.
+    fn tell_close_waiter(&self) {
+        let Some(who) = self.close_waiter.lock().unwrap().clone() else {
+            return;
+        };
+        if self.rt(&who).is_none() {
+            *self.close_waiter.lock().unwrap() = None;
+            self.journal
+                .append("objective", json!({ "event": "idle", "worker": who }));
+            return;
+        }
+        if self.team_busy(&who).is_empty() {
+            *self.close_waiter.lock().unwrap() = None;
+            self.journal
+                .append("objective", json!({ "event": "idle", "worker": who }));
+            self.notice(&who, "Your team is idle: close the board's objective", "[Automatic notice] Everyone below you is idle now: no turns running, no mail waiting. If the board's objective is done, close it now (mail_reply to the board's assignment with close: true); if not, keep it open and assign what's left.\n");
+        }
+    }
+
     /// Sends mail and hands it to the recipients' foremen.
     pub fn send(&self, d: Draft) -> Result<mail::Sent> {
         contracts::may_mail(
@@ -303,6 +357,26 @@ impl FirmRun {
             &d.from,
             &d.to.iter().chain(&d.cc).cloned().collect::<Vec<_>>(),
         )?;
+        // Closing the board's objective pauses the firm: only once everyone
+        // below the closer is idle, not mid-turn or with mail to read.
+        if !d.automatic && self.post.lock().unwrap().would_close_objective(&d) {
+            let busy = self.team_busy(&d.from);
+            if !busy.is_empty() {
+                let fresh = self
+                    .close_waiter
+                    .lock()
+                    .unwrap()
+                    .replace(d.from.clone())
+                    .is_none();
+                if fresh {
+                    self.journal.append(
+                        "objective",
+                        json!({ "event": "waiting", "worker": d.from, "busy": busy }),
+                    );
+                }
+                anyhow::bail!("the board's objective can't close while your team is still busy: {}. The firm pauses when it closes and their work would stop half done. End your turn: the post office tells you as soon as they are all idle, and then you close", busy.join(", "));
+            }
+        }
         let sent = self.post.lock().unwrap().send(&self.journal, d, now())?;
         self.deliver(&sent);
         if sent.objective_done {
@@ -820,6 +894,7 @@ pub async fn up_with(d: &Arc<Daemon>, name: &str, opts: &StartOptions) -> Result
         prompts: prompts.clone(),
         articles: articles.clone(),
         scenario: scenario.as_ref().map(|(n, sc)| scenario::Play::new(n, sc)),
+        close_waiter: Mutex::new(None),
         departed: Mutex::new(BTreeMap::new()),
         drive: Mutex::new(drive::Drive::new(&firm)?),
         security: Mutex::new(security::Security::default()),
@@ -1081,6 +1156,7 @@ async fn ticker(d: Arc<Daemon>, run: Arc<FirmRun>) {
         contracts::tick(&d, &run);
         access::tick(&d, &run);
         workforce::tick(&run);
+        run.tell_close_waiter();
         scenario::tick(&d, &run);
     }
 }

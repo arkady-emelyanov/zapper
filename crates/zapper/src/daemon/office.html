@@ -756,7 +756,7 @@ function newModel() {
     // budget requests, what the board approved.
     fundsIn: new Map(), fundsOut: new Map(), moves: [], budgetReqs: new Map(), approved: 0, hires: [],
     // Background checks on new hires.
-    screenings: new Map(), scenarioLog: [], scenario: null,
+    screenings: new Map(), scenarioLog: [], scenario: null, closeWaiter: null,
     // Who held security when, and the board's own articles.
     officerChanges: [], articles: '',
     // Contracts: offers, negotiations, agreed terms, how they ended.
@@ -1078,6 +1078,9 @@ function apply(M, e) {
     case 'fetched': M.fetched.push({ artifact: str(e.artifact), version: e.version, worker: str(e.worker), dest: str(e.dest), ts }); break;
     case 'digest': M.digests.push({ requests: Number(e.requests) || 0, allowed: Number(e.allowed) || 0, new_hosts: arr(e.new_hosts).map(str), ts }); break;
     case 'budget': if (e.over) M.overBudget = true; break;
+    // The CEO tried to close the board's objective while the team was busy:
+    // they wait for it to go idle.
+    case 'objective': M.closeWaiter = e.event === 'waiting' ? str(e.worker) : null; break;
     case 'op_error': M.opErrors.push({ worker: str(e.worker), op: str(e.op), error: str(e.error), ts }); break;
   }
 }
@@ -1121,7 +1124,8 @@ function desk(M, name, now) {
 function statusLine(M, w, now) {
   const d = desk(M, w.name, now);
   const parts = [];
-  if (w.state === 'waiting' && d.waits.length) parts.push('waiting for ' + [...new Set(d.waits.map((o) => o.debtor))].join(', '));
+  if (M.closeWaiter === w.name && !['working', 'reviewing', 'queued'].includes(w.state)) parts.push('waiting for the team');
+  else if (w.state === 'waiting' && d.waits.length) parts.push('waiting for ' + [...new Set(d.waits.map((o) => o.debtor))].join(', '));
   else if (w.state === 'off') parts.push('off');
   else if (w.detail) parts.push(w.detail);
   else parts.push(w.state);
