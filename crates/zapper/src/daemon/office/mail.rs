@@ -805,6 +805,22 @@ impl PostOffice {
             .collect()
     }
 
+    /// Settles what `debtor` owes in `thread`: an answer given another way
+    /// (accepting a contract's quote sends the job in a new thread).
+    pub fn settle_thread(&mut self, journal: &Journal, thread: &str, debtor: &str, by: &str) {
+        let keys: Vec<(String, String)> = self
+            .obligations
+            .iter()
+            .filter(|(_, o)| o.thread == thread && o.debtor == debtor)
+            .map(|(k, _)| k.clone())
+            .collect();
+        for k in keys {
+            if let Some(o) = self.obligations.remove(&k) {
+                journal.append("settled", json!({ "message": o.message, "thread": o.thread, "debtor": o.debtor, "creditor": o.creditor, "by": by }));
+            }
+        }
+    }
+
     /// Whether this draft would close the board's objective: its sender
     /// owes it in the thread it answers, and it closes.
     pub fn would_close_objective(&self, d: &Draft) -> bool {

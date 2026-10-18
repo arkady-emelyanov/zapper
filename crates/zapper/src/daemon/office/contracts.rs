@@ -453,6 +453,12 @@ pub fn accept(run: &FirmRun, by: &str, id: &str) -> Result<Value> {
     );
     draft.due = q.due;
     let sent = run.send(draft)?;
+    // The job answers the quote: the hirer owes nothing more in the
+    // negotiation's thread.
+    run.post
+        .lock()
+        .unwrap()
+        .settle_thread(&run.journal, &c.thread, by, &sent.id);
     update(run, id, |c| c.job = Some(sent.id.clone()));
     run.journal.append(
         "contract",
