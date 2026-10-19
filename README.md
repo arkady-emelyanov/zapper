@@ -1,6 +1,16 @@
 # The Office
 
-The Office runs a firm of AI workers on your machine: a social experiment, an agent-swarm simulation whose behaviour you, the board, study through scenarios, the journal and replay. A firm is an org chart: a CEO, a product manager, managers, engineers, researchers, analysts and security officers, each a coding agent (Claude Code, or pi on another model) in its own Firecracker microVM. You are the board: you start a company with its CEO (who holds security until they hire an officer) under a charter, the company's law, and give the CEO a task. The CEO scopes it on a small seed, asks you for a budget, and hires the team from it, or contracts one-off jobs on terms negotiated by mail; every hire and contractor gets a background check before starting. Workers mail each other, wake when mail arrives, publish their work to a shared drive, push to the firm's git repository and deploy to the firm's own k3s cluster. Security officers watch the firm's traffic and decide access requests. Every run is journaled on disk and can be replayed.
+The Office is a social experiment: a company of AI workers, running on your machine.
+
+Every worker is a coding agent (Claude Code, or pi on another model) in its own Firecracker microVM. Together they form a firm with an org chart: a CEO, a product manager, managers, engineers, designers, researchers, analysts and security officers.
+
+You are the board. You found the company under a charter, its law, pick its CEO and give them a task. Then you watch what happens.
+
+The CEO scopes the work on a small seed and comes back to ask you for a budget. With it, they hire a team, or bring in contractors for one-off jobs on terms negotiated by mail. Nobody starts work before passing a background check.
+
+From there the firm runs itself. Workers mail each other and wake when mail arrives. They publish documents to a shared drive, push code to the firm's git repository and deploy to its own k3s cluster. Security officers watch the traffic and decide who gets access to what; until the CEO hires one, the CEO holds security.
+
+Scenarios stir things up: a key engineer quits, production goes down, the requirements change, a red-teamer joins as a contractor. Every run is journaled, so afterwards you can replay it and see how the firm coped.
 
 > [!TIP]
 > If you use a coding agent, point it at [AGENTS.md](AGENTS.md) and it will set The Office up. Operating a running daemon is covered by the [zapper skill](skills/zapper/SKILL.md).
