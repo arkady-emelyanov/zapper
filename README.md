@@ -1,6 +1,6 @@
 # The Office
 
-The Office is a social experiment: a company of AI workers, running on your machine.
+The Office is an AI social experiment: a company run by AI workers, on your machine.
 
 Every worker is a coding agent (Claude Code, or pi on another model) in its own Firecracker microVM. Together they form a firm with an org chart: a CEO, a product manager, managers, engineers, designers, researchers, analysts and security officers.
 
