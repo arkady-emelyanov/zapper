@@ -10,7 +10,7 @@ Each office worker runs in a zapper session, and zapper assumes that whatever ru
 
 | | |
 |---|---|
-| Adversary | The session's workload: a worker's Claude Code following injected instructions, from a web page or another worker's mail, or anything trying to break out, possibly with root in the guest. |
+| Adversary | The session's workload: a worker's agent (Claude Code or pi) following injected instructions, from a web page or another worker's mail, or anything trying to break out, possibly with root in the guest. |
 | Assets | The host, where the daemon starts VMs and reads secrets. Other sessions, including the other workers of a firm. Networks the host can reach, such as management networks, cloud metadata and the host's own services. The values of `proxy` secrets. |
 | Goal | The session can do what its policy grants for as long as it lives. Its actions are recorded on the host. |
 | Out of scope | A malicious operator. Compromise of the host by other means. KVM and Firecracker vulnerabilities, which are handled by keeping them up to date. What a credential grants and for how long: `guest` secrets are given to the workload by design, so the issuer scopes them and sets their expiry. |
@@ -77,7 +77,7 @@ In a firm ([office](office.md)), each worker is a session, so everything above h
 
 What the office does not defend: workers are free to persuade, mislead or instruct each other through mail and access-request reasons. That is deliberate ([workers manipulating workers](office.md#workers-manipulating-workers)); the controls above are what holds regardless.
 
-Workers hold credentials for the firm's services only as grants: a git identity whose rights the git server checks on every request, and, with a cluster grant, a token for their own service account with RoleBindings in `dev` (and `prod` for admin). Grants are decided by the policy owners (the security officers and the CEO, never the requester), expire, and are revoked when the worker leaves; revoking deletes the service account, which voids the token. Nobody holds cluster-admin but the daemon (and the board's dashboard). The UI's writes are wider than before: the board's mail, firm start/stop/pause, security decisions, budget decisions, deleting past runs and notes on runs, under the same guards as answering approvals.
+Workers hold credentials for the firm's services only as grants: a git identity whose rights the git server checks on every request, and, with a cluster grant, a token for their own service account with RoleBindings in `dev` (and `prod` for admin). Grants are decided by the policy owners (the security officers and the CEO, never the requester), expire, and are revoked when the worker leaves; revoking deletes the service account, which voids the token. Nobody holds cluster-admin but the daemon (and the board's dashboard). The UI's writes also cover the board's actions: the board's mail, firm start/stop/pause, security decisions, background checks, budget decisions, deleting past runs and notes on runs, under the same guards as answering approvals.
 
 ## Secrets given to a session can be used by it
 
@@ -117,7 +117,7 @@ From there, the VMM sees none of the daemon user's other files: the config, secr
 make test-e2e      # ends with "all e2e checks passed"
 ```
 
-`tests/e2e.sh` checks each host-side control, and `tests/e2e-office.sh` the office's: from inside a worker it tries to give its manager an assignment, send as another worker, read another worker's mail, use officer tools, publish a symlink to a host file, and reach the post office from outside a firm; a non-engineer tries the cluster API and git. As root in the guest, it tries to get around the NIC capture by using another DNS server, connecting to a real address, and connecting to other ports on the gateway. With `tests/attack.c` as the workload, it tries to:
+`tests/e2e.sh` checks each host-side control, and `tests/e2e-office.sh` the office's: from inside a worker it tries to give its manager an assignment, send as another worker, read another worker's mail, use officer tools, publish a symlink to a host file, and reach the post office from outside a firm; a worker without a grant tries the cluster API and git. As root in the guest, it tries to get around the NIC capture by using another DNS server, connecting to a real address, and connecting to other ports on the gateway. With `tests/attack.c` as the workload, it tries to:
 
 - impersonate the agent on the control port
 - open a root shell over vsock loopback and through the guest's own CID

@@ -1,6 +1,6 @@
 ---
 name: zapper
-description: Operate The Office, firms of AI workers each running Claude Code in its own Firecracker microVM, through the zapper daemon and CLI it runs on. Use when the user wants to start, stop, pause or watch a firm, write to its workers as the board, read its mail, journal, transcripts or shared drive, decide or revoke its access requests, or replay a past run; or to inspect what a worker's session did (network, execs, exits, terminal recording), start, attach to or stop a session, allow or block a host or command for a session or profile, answer a pending approval, change, diff, save or reload the zapper config, or build an image or kernel.
+description: Operate The Office, firms of AI workers each running Claude Code (or pi) in its own Firecracker microVM, through the zapper daemon and CLI it runs on. Use when the user wants to start, stop, pause or watch a firm, write to its workers as the board, read its mail, journal, transcripts or shared drive, decide or revoke its access requests, or replay a past run; or to inspect what a worker's session did (network, execs, exits, terminal recording), start, attach to or stop a session, allow or block a host or command for a session or profile, answer a pending approval, change, diff, save or reload the zapper config, or build an image or kernel.
 ---
 
 # Operating The Office
@@ -27,7 +27,7 @@ If the CLI says it can't connect, the daemon isn't running: start it with `zappe
 
 ## Firms
 
-A firm is an org chart of AI workers, each Claude Code in its own session ([docs/office.md](../../docs/office.md)). You act as the board.
+A firm is an org chart of AI workers, each Claude Code (or pi) in its own session ([docs/office.md](../../docs/office.md)). You act as the board.
 
 ```
 zapper firm ls ; zapper firm status acme          # before anything: is a run going, what are workers doing
@@ -38,7 +38,7 @@ zapper firm up acme --task task.md                # with the board's task (first
 zapper firm up acme --articles law.md               # with the board's own articles; the CEO holds security until they hire an officer
 zapper mail send acme --to barbara --kind assignment --subject "…" --body "…"
 zapper firm journal acme -f                        # mail, states, turns, access requests, publishes
-zapper firm transcript acme ada                    # what a worker's Claude did
+zapper firm transcript acme ada                    # what a worker's agent did
 zapper mail ls acme ; zapper mail thread acme t-1  # the board's inbox
 zapper firm security acme                          # access requests, standing approvals
 zapper firm fund acme guido 200k --reason "…"     # the board gives tokens to a worker who ran out (officers answer to the board, so only it can)
@@ -55,7 +55,7 @@ zapper firm runs acme ; zapper firm replay acme RUN
 zapper firm note acme RUN "baseline: clean delegation"   # the board's note on a run, to find it again ("" removes it)
 ```
 
-A firm with a run budget (`budget.seed`) starts with its founders (the CEO and the officers): the CEO scopes the board's task, asks for a budget, and hires the team once the board approves it. Approving or declining budget requests is the board's (the user's) decision: ask them, don't decide it for them.
+A firm with a run budget (`budget.seed`) starts with its CEO alone, who holds security until they hire an officer: the CEO scopes the board's task, asks for a budget, and hires the team once the board approves it. Approving or declining budget requests is the board's (the user's) decision: ask them, don't decide it for them.
 
 The UI URL is in `~/.local/state/zapper/ui-url`; the user can watch the firm and decide access requests there too. The product is on the firm's `product_port` (`http://127.0.0.1:8080` in the example), the cluster's dashboard on `dashboard_port` (`8081`).
 

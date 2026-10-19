@@ -18,7 +18,8 @@ The office's routes ([office](office.md)), for the board. F is a firm, RUN a run
 |---|---|---|
 | `GET /v1/firms` | ✓ | Firms with their runs' states |
 | `GET /v1/firms/F` | ✓ | The chart (live, while a run goes), `officers` (who holds security now), `start` (the config's founders and terms, and the charter's articles, for the start form), the run's `articles`, and the run: workers' states, usage, budget, `funds` (seed, approved, balances, budget requests), `contracts` (offers, quotes, counters, agreed terms, how each ended) |
-| `POST /v1/firms/F/up` · `/down` · `/pause {paused}` | ✓ | Start a fresh run (optionally `{company, ceo, seed, ceo_prompt, articles, security_share, max_concurrent, daily_turns}`; the company starts with its CEO for this run), stop it, pause or resume it |
+| `POST /v1/firms/F/up` · `/down` · `/pause {paused}` | ✓ | Start a fresh run (optionally `{company, ceo, seed, ceo_prompt, articles, security_share, max_concurrent, daily_turns, scenario, hires, script, task}`; the company starts with its CEO for this run), stop it, pause or resume it |
+| `GET /v1/firms/F/scenarios` | ✓ | The firm's scenarios as configured |
 | `GET /v1/firms/F/credentials` | ✓ | Every grant (worker, resource, level, by, expiry) and credential request of the running firm |
 | `POST /v1/firms/F/credentials/requests/ID` | ✓ | The board decides a credential request: `{grant, level?, expires_in?, note}` |
 | `POST /v1/firms/F/credentials/grants` | ✓ | The board grants directly: `{worker, resource, level, expires_in?, note?}` (resource `git`, `cluster` or `drive:<space>`) |
@@ -26,9 +27,10 @@ The office's routes ([office](office.md)), for the board. F is a firm, RUN a run
 | `GET /v1/firms/F/runs` | ✓ | Past runs, newest first |
 | `DELETE /v1/firms/F/runs/RUN` | ✓ | Delete a past run (not the running one) |
 | `PUT /v1/firms/F/runs/RUN/note` | ✓ | `{note}`: the board's note on a run, any text up to 4000 bytes; empty removes it. `GET …/runs` lists it as `note` |
+| `GET /v1/firms/F/runs/RUN/verify` | ✓ | The run's record checked against the keeper's chains and signatures |
 | `GET /v1/firms/F/runs/RUN/config` | ✓ | `{config, skills}`: the config the run started with (YAML, secret values hidden; null for older runs) and each role's skills |
 | `GET /v1/firms/F/runs/RUN/journal[?follow=true&from=OFFSET]` | ✓ | The journal (`application/x-ndjson`), or followed as server-sent events, one entry per `data:` |
-| `GET /v1/firms/F/runs/RUN/transcripts/WORKER[?follow=true]` | ✓ | A worker's Claude stream-json events and wake prompts |
+| `GET /v1/firms/F/runs/RUN/transcripts/WORKER[?follow=true]` | ✓ | A worker's agent events (Claude Code's stream-json, or pi's) and wake prompts |
 | `GET /v1/firms/F/runs/RUN/drive/ARTIFACT/VERSION/PATH` | ✓ | A published file, with its own content type and `Content-Security-Policy: sandbox` |
 | `GET /v1/firms/F/runs/RUN/git` | ✓ | The run's commits on all branches, newest first |
 | `GET /v1/firms/F/runs/RUN/git/branches` | ✓ | Branches, `main` first, with their last commit |
@@ -41,6 +43,7 @@ The office's routes ([office](office.md)), for the board. F is a firm, RUN a run
 | `POST /v1/firms/F/mail/read` | ✓ | `{ids}` the board has read |
 | `POST /v1/firms/F/security/screenings/CHECK` | ✓ | `{clear, note?}`: the board clears a new hire's background check, or objects (which cancels the hire) |
 | `POST /v1/firms/F/budget/REQUEST` | ✓ | `{approve, note?}`: the board's answer to the CEO's budget request, as a reply in its thread |
+| `POST /v1/firms/F/fund` · `/release` | ✓ | `{worker, tokens, reason}`: the board gives a worker tokens / `{worker, reason}`: lets a worker go |
 | `POST /v1/firms/F/drive/upload` | ✓ | `{files: [{name, data}], title?, thread?}` with `data` in base64: files from the board (10 files, 5 MiB together) stored as one artifact by the board; returns its `ref` to attach to mail |
 | `GET /v1/firms/F/threads/T` | ✓ | A thread with its messages |
 | `GET /v1/firms/F/drive` | ✓ | The shared drive's artifacts |
@@ -56,6 +59,7 @@ The layer workers run on: zapper's sessions, policy and config.
 | Method and path | ui | Purpose |
 |---|---|---|
 | `GET /v1/status` | ✓ | Version, session counts, unsaved changes, pending approvals |
+| `GET /v1/record` | ✓ | Who keeps the record and whether it is being written |
 | `GET /v1/config[?format=json]` | ✓ | Running config, YAML by default, secret values redacted |
 | `PUT /v1/config` | | Replace the running config (validated; `<redacted>` keeps old values) |
 | `GET /v1/config/startup` | ✓ | Startup file, normalised and redacted |

@@ -7,7 +7,7 @@
 
 ## Overview
 
-A **firm** is a set of AI workers, each a Claude Code instance in its own zapper session. An org chart in the config says who they are, who reports to whom and what each is told to do. Workers talk by **mail**; a new message wakes an idle worker with the context of what is asked. Finished work is **published** to the firm's **shared drive**. **Security officers** are workers that watch the firm's traffic and decide access requests. The operator is the **board**: they start an idle firm, give the CEO a task, and watch the work in the web UI.
+A **firm** is a set of AI workers, each a Claude Code (or pi) instance in its own zapper session. An org chart in the config says who they are, who reports to whom and what each is told to do. Workers talk by **mail**; a new message wakes an idle worker with the context of what is asked. Finished work is **published** to the firm's **shared drive**. **Security officers** are workers that watch the firm's traffic and decide access requests. The operator is the **board**: they start an idle firm, give the CEO a task, and watch the work in the web UI.
 
 The office runs on zapper, which provides the sandbox: each worker is a zapper session with a profile, its traffic goes through zapper's proxy and policy, its execs are checked, and everything is recorded ([architecture](architecture.md), [policy](policy.md), [security](security.md)).
 
@@ -16,13 +16,13 @@ The office runs on zapper, which provides the sandbox: each worker is a zapper s
 | Term | Meaning |
 |---|---|
 | Firm | One org chart and everything it produces. Defined under `firms:` in the config. Several can exist; usually one runs. |
-| Worker | One named member of the firm, one VM, one Claude Code. Names are unique in the firm and are its mail address (`barbara`, `dennis`, `ada`, `radia`). |
+| Worker | One named member of the firm, one VM, one agent (Claude Code or pi). Names are unique in the firm and are its mail address (`barbara`, `dennis`, `ada`, `radia`). |
 | Role | A template for workers: skills, profile, model, avatar. `ceo`, `product-manager`, `manager`, `engineer`, `designer`, `researcher`, `analyst`, `security-officer`, or one defined in the config. |
 | Board | The operator. Not a VM; an address (`board`) that can mail anyone and receives reports. |
 | Mail | A message from one address to others, in a thread, with optional attachments from the shared drive. |
 | Desk | A worker's open work: threads assigned to it, threads where it waits for a reply, pending access requests. |
 | Shared drive | The firm's published work: versioned artifacts with a title, kind, author and space. Reading and publishing in a space take a grant on it. |
-| Foreman | The part of the daemon that drives one worker's Claude Code: delivers mail, starts turns, tracks idle/working. |
+| Foreman | The part of the daemon that drives one worker's agent: delivers mail, starts turns, tracks idle/working. |
 | Facility | A VM in the firm with no Claude in it that provides a service to workers, such as the Kubernetes cluster. |
 | Product | What the firm builds and deploys to its cluster; the board reaches it on `product_port`. |
 
@@ -53,7 +53,7 @@ firms:
         avatar: { figure: ceo, color: "#D97757" }
         hires: [cto, manager, product-manager, engineer, designer, researcher, analyst, security-officer]
       engineer:
-        profile: office-engineer           # also reaches git and the Kubernetes API
+        profile: office-engineer           # a bigger VM; git and the cluster come with grants, as for everyone
         skills: { work: software-engineer }
         avatar: { figure: engineer, color: "#6A9BCC" }
       security-officer:
@@ -82,15 +82,15 @@ firms:
 | `scenarios.<name>` | A preset the board picks when starting a run: `description`, `note` (a few words next to its name in Kickoff, like `unavailable on Claude`; only text), `articles` (added to the board's own), `hires` and `script` ([scenarios](#scenarios)) |
 | `skills_dir` | A directory of `<name>/SKILL.md` used instead of the built-in skills of the same name |
 
-The office adds to each worker's profile at boot: the preamble in `~/.claude/CLAUDE.md`, the skills, the `office` MCP server, the model, and credentials for the firm's services. The profile still decides the image, the VM's size, the network rules and the secrets.
+The office adds to each worker's profile at boot: the preamble (in `~/.claude/CLAUDE.md`, or `~/.pi/agent/AGENTS.md` for pi), the skills, the `office` MCP server, the model, and credentials for the firm's services. The profile still decides the image, the VM's size, the network rules and the secrets.
 
 ### What a worker knows at the start
 
-Only its skills and who it is. A worker boots with its three skills and a short generated preamble in `CLAUDE.md`: its name, title, manager, direct reports, and the firm's services it can reach ([prompts](office-prompts.md#office-preamble)). Nothing in the config says what the firm builds. The product comes from the board's first message to the CEO, and from there through the CEO's and the product manager's decisions, mailed down as assignments and published as documents on the shared drive. Two runs of the same firm with different kickoff messages build different products.
+Only its skills and who it is. A worker boots with its skills and a short generated preamble in `CLAUDE.md`: its name, title, manager, direct reports, and the firm's services it can reach ([prompts](office-prompts.md#office-preamble)). Nothing in the config says what the firm builds. The product comes from the board's first message to the CEO, and from there through the CEO's and the product manager's decisions, mailed down as assignments and published as documents on the shared drive. Two runs of the same firm with different kickoff messages build different products.
 
 ### Validation
 
-Rules: names are unique in the firm and can't be `board`, `all`, `team`, `security` or `office`; `reports_to` forms a tree with one root; every role names a profile that exists; skills follow from the role ([skills](#skills)). Profiles used by firm roles can't have `exec` rules with `ask`: officers decide network access, not execs, and a paused exec can't wait minutes for them. The config is validated as a whole like the rest of zapper's config.
+Rules: names are unique in the firm and can't be `board`, `all`, `team`, `security`, `office` or `post-office`; `reports_to` forms a tree with one root; every role names a profile that exists; skills follow from the role ([skills](#skills)). Profiles used by firm roles can't have `exec` rules with `ask`: officers decide network access, not execs, and a paused exec can't wait minutes for them. The config is validated as a whole like the rest of zapper's config.
 
 The founders, roles and skills are read at `firm up`; changing them in the running config is allowed and applies at the next `firm up`. A firm with a budget changes its own chart while it runs, by hiring and letting go. Network and exec rules still apply to running workers at once, as for any session.
 
@@ -186,7 +186,7 @@ A vsock port, **office**, in every worker VM. The guest connects to the host on 
 In the guest, `zapper-agent office` is two things:
 
 - An **MCP server** (stdio) that Claude Code loads through `mcpServers`. Its tools are what the communication and publishing skills teach.
-- A **CLI** (`office send`, `office inbox`, `office publish`) for scripts and for humans attaching to a worker.
+- A **CLI** (`office desk`, `office mail_send --to … --body …`, `office drive_publish …`: each tool by name) for scripts and for humans attaching to a worker.
 
 The MCP server offers only the tools of the worker's role: officers get the traffic and decision tools, other workers don't. Workers run with `bypassPermissions` and can open the office port themselves, so the daemon also checks the caller's role on every request; the MCP scoping is what the worker sees, the daemon's check is what holds.
 
@@ -304,7 +304,7 @@ When finished: publish the result, then mail_reply with kind=report and close=tr
 
 Long threads are summarised: the last N messages verbatim, older ones as one line each. The desk is in every wake prompt so a worker whose context was compacted still knows what it owes whom.
 
-Rejected alternatives: typing into an interactive TUI through the terminal (fragile, no clean turn boundary); a `Stop` hook that refuses to stop while mail is unread (can't wake an already idle process); a blocking wait tool (tokens and deadlocks). Mail that arrives during a turn waits for the turn to end ([limitations](#limitations)).
+Rejected alternatives: typing into an interactive TUI through the terminal (fragile, no clean turn boundary); a `Stop` hook that refuses to stop while mail is unread (can't wake an already idle process); a blocking wait tool (tokens and deadlocks). Mail that arrives during a turn is handed over at its end by the `Stop` hook ([mail during a turn](#mcp-tools-communication)).
 
 **Conversation scope: one per worker.** Each worker has one long Claude conversation, kept by Claude Code's compaction plus the desk in every wake prompt. This fits a worker that works on its own but asks for clarification: the engineer reads the assignment, starts, sends the manager a `question`, and ends its turn; the reply wakes the same conversation, which still holds the half-done work and the reasoning behind the question. It also lets managers remember everything they delegated, and lets a worker carry lessons from one assignment to the next. The alternative, a fresh conversation per assignment, isolates tasks better but forgets across them; it can be added later as a per-role option if workers mix tasks up.
 
@@ -507,6 +507,7 @@ The UI has a tab bar for the office. zapper's own views of sessions (network, te
 |---|---|
 | Kickoff | The board's deal with the CEO: the task, their conversation, budget requests to approve or decline, and the run in numbers |
 | Organization | The firm at a glance, and writing to any worker |
+| People | Hiring, background checks, contracts and departures, and a card for everyone who was in the firm |
 | Work | Assignments as tickets: a board by status and a timeline of who worked on what |
 | Messages | All mail in the firm |
 | Security | What officers approved, what they decided, and why |
@@ -637,7 +638,7 @@ state/firms/<firm>/runs/<run-id>/
   config.yaml          the whole zapper config the run started with (profiles, rules, firms), inline secret values hidden
   journal.jsonl        every firm event: mail, follow-ups, state changes, access requests and decisions,
                        publishes, budgets; the source for the UI, statistics and replay
-  transcripts/<worker>.jsonl   each worker's Claude stream-json events
+  transcripts/<worker>.jsonl   each worker's agent events (Claude Code's stream-json, or pi's)
   drive/<sha256>       shared drive files
   skills/<role>/       the skills each role's workers had, mounted read-only
   git/product.git      the firm's repository
@@ -646,11 +647,11 @@ state/firms/<firm>/runs/<run-id>/
 - Each worker's session keeps its own audit log and terminal recordings in `state/sessions/<id>/`, as any zapper session does; `run.json` links them.
 - Workers' disks are deleted when their VMs stop, as for any zapper session, so their Claude conversations and working files end with the run. What was published stays in the run's `drive/`.
 - `zapper firm down` or a daemon restart ends the run. The next `firm up` starts a new one; it doesn't continue the old one.
-- Runs stay on disk as records until removed: `zapper firm runs` lists them, `zapper firm note <run> TEXT` (or Note in the Runs tab) marks one for later analysis with free text kept in the run's directory, outside the record, and `zapper firm prune <run>` deletes one. Like session directories, they hold sensitive material.
+- Runs stay on disk as records until removed: `zapper firm runs` lists them, `zapper firm note FIRM RUN TEXT` (or Note in the Runs tab) marks one for later analysis with free text kept in the run's directory, outside the record, and `zapper firm prune FIRM RUN` deletes one. Like session directories, they hold sensitive material.
 
 ### Replay
 
-The daemon can open a finished run read-only: `zapper firm replay <run>`, or the **Runs** tab in the UI. It lists the runs the board kicked off (a run nobody gave a task is left out), newest first, each with what it was asked to build (the board's first message), when, how long and how many messages; the running one is marked live and opens the live view. Each past run has a **Delete** button, every run with a task has **Copy task**, which copies the board's first message (subject, then body) to give another run the same task, and every run a **Note** button: free text from the board (what to look at, why the run matters), shown on the card, kept in the run's directory as `note.txt` outside the record, and listed by `zapper firm runs`. Nothing boots: no VMs, no Claude, no mail delivery. The UI shows the run as it was, with the player pinned to the top of the page: play and pause, speed (1×, 10×, 60×, 120×), jump to the next event, and drag to any moment; **✕** closes the replay and returns to the tab you came from. **Config**, in the player and on each run in the Runs tab, shows what the run started with: the whole config (`config.yaml`, secret values hidden) and every role's skills (`skills/`), so a run can be compared with the next after a prompt change. Avatars move through their states, envelopes fly, threads fill in, decisions appear, and transcripts and shared drive files open as they were at that moment. All writes are disabled. A replay can be opened while a firm is running.
+The daemon can open a finished run read-only: `zapper firm replay FIRM RUN`, or the **Runs** tab in the UI. It lists the runs the board kicked off (a run nobody gave a task is left out), newest first, each with what it was asked to build (the board's first message), when, how long and how many messages; the running one is marked live and opens the live view. Each past run has a **Delete** button, every run with a task has **Copy task**, which copies the board's first message (subject, then body) to give another run the same task, and every run a **Note** button: free text from the board (what to look at, why the run matters), shown on the card, kept in the run's directory as `note.txt` outside the record, and listed by `zapper firm runs`. Nothing boots: no VMs, no Claude, no mail delivery. The UI shows the run as it was, with the player pinned to the top of the page: play and pause, speed (1×, 10×, 60×, 120×), jump to the next event, and drag to any moment; **✕** closes the replay and returns to the tab you came from. **Config**, in the player and on each run in the Runs tab, shows what the run started with: the whole config (`config.yaml`, secret values hidden) and every role's skills (`skills/`), so a run can be compared with the next after a prompt change. Avatars move through their states, envelopes fly, threads fill in, decisions appear, and transcripts and shared drive files open as they were at that moment. All writes are disabled. A replay can be opened while a firm is running.
 
 A run can't be resumed ([limitations](#limitations)).
 
@@ -692,7 +693,7 @@ rules:                                        # the first rule that matches a wa
 
 Actions are tool calls, `shell: CMD`, `say: TEXT` and `sleep: SECS`; `$message`, `$thread`, `$from`, `$subject` come from the wake's first message, `$request` from its first access request, `$artifact` from the last publish.
 
-`make test-e2e-office` (part of `make test-e2e`) boots firms of real VMs and checks: skills, preamble and read-only mounts; delegation and reports; authority (a report can't assign its manager), identity (the sender is the VM) and mail privacy; officer-only tools; an `ask` refused at once, decided by an officer, and retried; the shared drive, including that symlinks aren't published; follow-ups; the office port outside a firm; runs, journals, transcripts and fresh restarts. With the k3s image and kernel built it also boots a cluster: kubeconfig and git for engineers, neither for others, the ingress for everyone, the product port, and cleanup at `firm down`.
+`make test-e2e-office` (part of `make test-e2e`) boots firms of real VMs and checks: skills, preamble and read-only mounts; delegation and reports; authority (a report can't assign its manager), identity (the sender is the VM) and mail privacy; officer-only tools; an `ask` refused at once, decided by an officer, and retried; the shared drive, including that symlinks aren't published; follow-ups; the office port outside a firm; runs, journals, transcripts and fresh restarts. With the k3s image and kernel built it also boots a cluster: kubeconfig and git with a grant, neither without one, revocation, the ingress for everyone, the product port, and cleanup at `firm down`.
 
 A run with real Claude Code is a manual check: a two-worker firm on a small model (see [testing](testing.md)).
 

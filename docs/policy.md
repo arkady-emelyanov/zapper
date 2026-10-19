@@ -76,7 +76,7 @@ secrets:
 | Mode | The guest sees | Use for |
 |---|---|---|
 | `proxy` (default) | a placeholder | bearer tokens and API keys, which travel in headers |
-| `guest` | the value | credentials the client holds itself: S3 signing keys, client certificates and keys, kubeconfigs (as the firm's engineers get for its cluster) |
+| `guest` | the value | credentials the client holds itself: S3 signing keys, client certificates and keys, kubeconfigs (as workers with a cluster grant get for the firm's cluster) |
 
 Profiles refer to secrets as `{{secret:<name>}}` in `agent.env` or `agent.files`. The workload can read and use a `guest` secret once it's delivered, so issue those scoped and short-lived.
 

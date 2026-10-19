@@ -9,10 +9,11 @@
 | `make deps` | Download Firecracker, verifying its checksum, and the guest kernel into `~/.local/share/zapper` |
 | `make build` | Release build of the static musl `zapper-agent` and of `zapper`, both in `target/release` |
 | `make install` | Install both into `~/.local/bin` (set `PREFIX` for another place) |
-| `make image [IMAGE=name]` | Build an image from a recipe in the Makefile: `office` (office workers: Claude Code at a pinned version, git, kubectl, podman), `k3s` (a firm's cluster), `ubuntu-24.04` (default; the base profiles), and `claude` and `python` for the config's other profiles |
+| `make image [IMAGE=name]` | Build an image from a recipe in the Makefile: `office` (office workers: Claude Code and pi at pinned versions, git, kubectl, podman, a headless browser), `k3s` (a firm's cluster), and `ubuntu-24.04` (default; the base profiles) |
 | `make kernel [KERNEL=k8s]` | Build a guest kernel from the Firecracker config plus `config/kernel/<name>.config`, in a container; `k8s` is the cluster's (~10 min) |
 | `make check` | `zapper check` |
 | `make test` | Unit tests |
+| `make lint` / `make fmt` / `make hooks` | rustfmt and clippy with warnings as errors / format the code / use the repository's pre-commit hook, which runs `make lint` |
 | `make test-e2e` | End-to-end tests with real VMs ([testing](testing.md)): zapper's controls, then the office's |
 | `make test-e2e-office` | The office's end-to-end tests only: firms of real VMs with a fake Claude |
 

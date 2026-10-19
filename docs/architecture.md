@@ -51,7 +51,7 @@ What happens when a session starts, for each worker at `zapper firm up` or for `
 5. The guest boots. Its first process is `zapper-agent`.
 6. The agent connects to the daemon and receives the setup: user, environment, files, disks.
 7. The agent sets up the guest and reports ready. This takes about a second.
-8. A terminal is opened to the workload: for a worker, by the foreman, which starts its agent headless through the agent's harness, Claude Code today ([the office](#the-office), [agent harnesses](configuration.md#agent-harnesses)); for `zapper run`, by the CLI.
+8. A terminal is opened to the workload: for a worker, by the foreman, which starts its agent headless through the agent's harness, Claude Code or pi ([the office](#the-office), [agent harnesses](configuration.md#agent-harnesses)); for `zapper run`, by the CLI.
 
 When the workload exits, the daemon stops the VM and deletes its disks. The audit log and the terminal recordings stay.
 
@@ -105,12 +105,12 @@ A firm's workers are sessions with a link to their firm's run ([office](office.m
 | Part | Where | Job |
 |---|---|---|
 | Post office | daemon (`office/mail.rs`) | Mail, threads, who owes whom an answer, follow-ups; bodies in the run's journal |
-| Foreman | daemon (`office/foreman.rs`), one per worker | Runs `claude -p --input-format stream-json` in the worker's VM over a terminal channel, writes wake prompts, ends a turn on `result`, records the transcript |
+| Foreman | daemon (`office/foreman.rs`), one per worker | Runs the agent headless in the worker's VM over a terminal channel (`claude -p --input-format stream-json`, or `pi --mode rpc`), writes wake prompts, ends a turn when the agent reports it, records the transcript |
 | Office port | vsock port 1100 of each worker VM | One JSON request and response per connection; the sender is the VM it comes from |
-| `office` | in the guest: `zapper-agent office mcp` | The MCP server Claude Code loads, offering the role's tools; also a command line |
+| `office` | in the guest: `zapper-agent office mcp` | The MCP server the agent loads, offering the role's tools; also a command line |
 | Shared drive | daemon (`office/drive.rs`) | Copies published files out of the VM over a system terminal, by content hash |
 | Security | daemon (`office/security.rs`) | Access requests from `ask` rules, officers' decisions as rules at the worker's or role's layer, digests |
-| Facilities | daemon (`office/facility.rs`) | The firm's git repository (`git http-backend`), its cluster VM (k3s), the product port; the proxy routes the firm's names to them |
+| Facilities | daemon (`office/facility.rs`, `product.rs`) | The firm's git repository (`git http-backend`), its cluster VM (k3s), the product port; the proxy routes the firm's names to them |
 
 The cluster VM's agent forwards host vsock connections on ports 6443, 80 and 443 to k3s; only the host may connect.
 

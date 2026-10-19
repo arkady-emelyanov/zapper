@@ -2,7 +2,7 @@
 
 People should start with the [README](README.md). Operating a running daemon (starting and watching firms, writing to workers as the board, deciding access requests, changing rules, reading audit logs) is covered by the agent skill [skills/zapper/SKILL.md](skills/zapper/SKILL.md); keep it in step with the CLI and docs.
 
-The project is The Office: firms of AI workers (CEO, product manager, managers, engineers, designers, researchers, analysts, security officers), each Claude Code in its own Firecracker microVM, who mail each other, wake on mail, publish to a shared drive, push to the firm's git repository and deploy to the firm's own k3s cluster; security officers watch traffic and decide access requests; the operator is the board ([docs/office.md](docs/office.md)).
+The project is The Office: firms of AI workers (CEO, product manager, managers, engineers, designers, researchers, analysts, security officers), each Claude Code (or pi) in its own Firecracker microVM, who mail each other, wake on mail, publish to a shared drive, push to the firm's git repository and deploy to the firm's own k3s cluster; security officers watch traffic and decide access requests; the operator is the board ([docs/office.md](docs/office.md)).
 
 The office runs on zapper: the daemon, the `zapper` CLI and the sandbox each worker runs in. All guest traffic is captured outside the VM and goes through policy on the host. Credentials are either injected by the host or handed to the guest, per secret. Every exec is checked by the host, and everything is recorded. Rules are layered (session → profile → global) and managed through a REST API with a running/startup config like a router's.
 
@@ -46,7 +46,7 @@ Run image builds in the background with a log (`make image > /tmp/zapper-image.l
 
 ### 4. Hand over a running firm
 
-The workers need the Claude token: the user creates it themselves (`claude setup-token`, stored 0600 in the file the config names, `~/.config/zapper/claude-token`); never read or print it.
+The workers need the Claude token: the user creates it themselves (`claude setup-token`, stored 0600 in the file the config names, `~/.config/zapper/claude-token`); never read or print it. The example firm's contractors run on pi with DeepSeek through OpenRouter, whose key the user stores the same way in `~/.config/zapper/openrouter-token`.
 
 Start `zapper serve` (or tell the user to) and give them the UI URL it prints. `zapper run -C $(mktemp -d) -- cat /etc/os-release` checks that a plain session boots (`-C` gives it an empty directory instead of a copy of the checkout). Then, with the user's go-ahead (a firm spends their Claude usage), the user starts the company in the UI's Kickoff tab (the company, its CEO, charter terms, their own articles), or `zapper firm up acme` starts the example firm with its CEO idle; the user gives the CEO its first task there, or with `zapper mail send acme --to barbara --kind assignment …` (barbara is the CEO). The CEO then asks for a budget, which only the user approves (`zapper firm budget acme approve b-1`, or Kickoff); never approve budgets, background checks or access requests on the user's behalf.
 
@@ -68,7 +68,7 @@ crates/zapper/           CLI, daemon, proxy, Firecracker launcher, REST API, web
   src/daemon/office.html   the office UI (org chart, messages, security, drive, statistics, replay)
   src/vmm.rs               `zapper __vmm`: runs Firecracker confined in its own namespaces and root
   src/netns.rs             the guest's network in the VMM's namespace, and traffic capture
-  src/daemon/harness.rs    agent harnesses: Claude Code behind `Harness`/`Driver`/`Conversation`; HARNESS.md for pi and opencode
+  src/daemon/harness.rs    agent harnesses: Claude Code and pi behind `Harness`/`Driver`/`Conversation`; HARNESS.md for both, and opencode
   src/daemon/session.rs    session lifecycle, guest control channel, exec decisions, recordings
   src/daemon/proxy.rs      egress proxy: tunnels, TLS inspection, secret injection
   src/daemon/addr.rs       which destination addresses are reachable at all
@@ -78,7 +78,7 @@ crates/zapper/           CLI, daemon, proxy, Firecracker launcher, REST API, web
   src/daemon/ui.html       the web UI: state, terminal viewer, answering approvals (textContent only)
   src/daemon/assets/       xterm.js 6.0.0 (MIT) for the terminal viewer; see its README
 crates/zapper-keeper/    the record's keeper: a separate user's append-only store with hash chains and signed checkpoints, its read-only UI
-crates/zapper-agent/     guest PID 1: setup, terminals, seccomp exec supervision, accounting; `office` (MCP server, CLI) and the fake Claude
+crates/zapper-agent/     guest PID 1: setup, terminals, seccomp exec supervision, accounting; `office` (MCP server, CLI) and the fake Claude and pi
 config/                  zapper.yaml: the config, used when zapper runs in the checkout (relative paths resolve against it);
   skills/                  office workers' skills: built in, and read live through the acme firm's `skills_dir: skills`
   kernel/                  kernel config fragments (`make kernel KERNEL=k8s`)

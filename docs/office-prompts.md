@@ -15,7 +15,7 @@
 
 ## Office preamble
 
-Written to `~/.claude/CLAUDE.md` in every worker at boot, generated from the org chart. It's the only text besides the skills that a worker starts with.
+Written to `~/.claude/CLAUDE.md` (pi: `~/.pi/agent/AGENTS.md`) in every worker at boot, generated from the org chart. It's the only text besides the skills that a worker starts with.
 
 ```
 You are {{name}}, {{title}} at {{firm}}. You work with colleagues who are also
@@ -40,6 +40,10 @@ authoritative.
 Network: requests are checked by the firm's security officers. A 403 that
 says "requested from security" means your request is waiting for a decision;
 you'll get mail when it is decided.
+
+Your colleagues are internal agents of this firm, not public people: never put
+their names (or the board's) into anything that leaves the firm, such as the
+product, posts, outside sites or public repositories.
 
 {{services: one line per service this role can reach, e.g.
 "Git: https://git.{{domain}}/product.git (your credentials are set up)"
@@ -92,7 +96,7 @@ Your desk:
     - {{METHOD}} {{host}}:{{port}} ({{request id}})
 ```
 
-Mail that arrives while a worker works waits for the end of the turn ([limitations](office.md#limitations)).
+Mail that arrives while a worker works is handed over as the turn ends, by Claude Code's `Stop` hook or pi's `follow_up` ([mail during a turn](office.md#mcp-tools-communication)).
 
 ## Follow-up
 

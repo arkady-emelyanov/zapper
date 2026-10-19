@@ -2,7 +2,7 @@
 
 # Quickstart
 
-From a fresh clone to a running firm: the example firm `acme`, with seven workers and a cluster to deploy to. About 30 minutes, most of it downloads and the cluster's kernel build.
+From a fresh clone to a running firm: the example firm `acme`, a CEO who hires the team, and a cluster to deploy to. About 30 minutes, most of it downloads and the cluster's kernel build.
 
 ## 1. What you need
 
@@ -30,7 +30,7 @@ zapper is the daemon and CLI the office runs on. Run it from the repository's ro
 
 ```
 make image                    # the base Ubuntu image (~2 min)
-make image IMAGE=office       # the workers: Claude Code (pinned), git, kubectl, podman (~5 min)
+make image IMAGE=office       # the workers: Claude Code and pi (pinned), git, kubectl, podman (~5 min)
 make image IMAGE=k3s          # the firm's cluster (~2 min)
 make kernel KERNEL=k8s        # the cluster's kernel, built in a container (~10 min)
 ```
@@ -47,6 +47,8 @@ $EDITOR ~/.config/zapper/claude-token      # paste the token
 
 The token stays on the host: zapper adds it to the workers' requests to `api.anthropic.com`, and Claude Code in the VMs only sees a placeholder.
 
+The example firm's contractors run on pi with DeepSeek through OpenRouter: put an OpenRouter key in `~/.config/zapper/openrouter-token` the same way, or remove `contract_profile` from the roles in the config to keep contractors on Claude.
+
 Usage counts against your subscription, not API billing. Claude Code's banner says "Claude API" anyway, because this kind of token can't read your plan; `/status` shows "Auth token: CLAUDE_CODE_OAUTH_TOKEN", and `/usage` shows your plan's limits. The comments on `secrets` in the config explain the difference, and how to switch to an API key.
 
 ## 5. Check
@@ -58,6 +60,7 @@ zapper check
 Each line should say `ok`. Expected at this point:
 
 - `note   the daemon isn't running`: you start it next.
+- `note   the record is written by this user`: no [keeper](security.md#the-record), which is optional.
 
 ## 6. Start the daemon
 
@@ -125,7 +128,7 @@ Then the CEO hires the team; each hire waits for a background check (by an offic
 
 ```
 zapper firm journal acme -f             # mail, states, turns, access requests, publishes
-zapper firm transcript acme ada         # what a worker's Claude did
+zapper firm transcript acme ada         # what a worker's agent did
 zapper firm security acme               # access requests and standing approvals
 zapper drive ls acme                    # what workers published
 ```
