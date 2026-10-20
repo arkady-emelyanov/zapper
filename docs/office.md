@@ -647,7 +647,7 @@ state/firms/<firm>/runs/<run-id>/
 - Each worker's session keeps its own audit log and terminal recordings in `state/sessions/<id>/`, as any zapper session does; `run.json` links them.
 - Workers' disks are deleted when their VMs stop, as for any zapper session, so their Claude conversations and working files end with the run. What was published stays in the run's `drive/`.
 - `zapper firm down` or a daemon restart ends the run. The next `firm up` starts a new one; it doesn't continue the old one.
-- Runs stay on disk as records until removed: `zapper firm runs` lists them, `zapper firm note FIRM RUN TEXT` (or Note in the Runs tab) marks one for later analysis with free text kept in the run's directory, outside the record, and `zapper firm prune FIRM RUN` deletes one. Like session directories, they hold sensitive material.
+- Runs stay on disk as records until removed: `zapper firm runs` lists them (and [`zapper-inspect`](commands.md#zapper-inspect) reads them without the daemon: people, a scenario's operatives, transcripts as Markdown), `zapper firm note FIRM RUN TEXT` (or Note in the Runs tab) marks one for later analysis with free text kept in the run's directory, outside the record, and `zapper firm prune FIRM RUN` deletes one. Like session directories, they hold sensitive material.
 
 ### Replay
 

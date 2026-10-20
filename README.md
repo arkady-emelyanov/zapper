@@ -39,7 +39,7 @@ On a Linux host with KVM, from a fresh clone (The Office uses `config/zapper.yam
 
 ```
 make deps                     # Firecracker and a guest kernel into ~/.local/share/zapper (~1 min)
-make install                  # zapper and zapper-agent into ~/.local/bin
+make install                  # zapper, zapper-agent and zapper-inspect into ~/.local/bin
 make image                    # base Ubuntu image (~2 min)
 make image IMAGE=office       # the workers' image: Claude Code and pi (pinned), git, kubectl, podman (~5 min)
 make image IMAGE=k3s          # the firm's cluster (~2 min)

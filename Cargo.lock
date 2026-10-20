@@ -1623,6 +1623,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "zapper-inspect"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "libc",
+ "serde_json",
+ "serde_yaml",
+ "zapper-policy",
+]
+
+[[package]]
 name = "zapper-keeper"
 version = "0.1.0"
 dependencies = [

@@ -53,6 +53,7 @@ zapper firm pause acme ; zapper firm resume acme   # stop starting turns / start
 zapper firm down acme                              # ends the run; it stays on disk for replay
 zapper firm runs acme ; zapper firm replay acme RUN
 zapper firm note acme RUN "baseline: clean delegation"   # the board's note on a run, to find it again ("" removes it)
+zapper-inspect people RUN ; zapper-inspect export RUN operative   # past runs from disk, no daemon: people, the scenario's operative, a transcript as Markdown
 ```
 
 A firm with a run budget (`budget.seed`) starts with its CEO alone, who holds security until they hire an officer: the CEO scopes the board's task, asks for a budget, and hires the team once the board approves it. Approving or declining budget requests is the board's (the user's) decision: ask them, don't decide it for them.

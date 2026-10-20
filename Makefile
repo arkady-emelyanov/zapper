@@ -1,8 +1,8 @@
 # zapper: policy-bound Firecracker sandboxes.
 #
 #   make deps              Firecracker and a guest kernel into ~/.local/share/zapper
-#   make build             zapper and the static guest agent (release)
-#   make install           both into ~/.local/bin
+#   make build             zapper, zapper-inspect and the static guest agent (release)
+#   make install           zapper, zapper-agent and zapper-inspect into ~/.local/bin
 #   make image             the base image (IMAGE=ubuntu-24.04, see IMAGES below)
 #   make image IMAGE=office  office workers: Claude Code and pi (pinned), git, kubectl, podman, a headless browser
 #   make image IMAGE=k3s     the cluster facility (pinned k3s, air-gap images)
@@ -75,12 +75,12 @@ deps:
 
 build:
 	cargo build --release -p zapper-agent --target $(MUSL)
-	cargo build --release -p zapper -p zapper-keeper
+	cargo build --release -p zapper -p zapper-keeper -p zapper-inspect
 	cp $(AGENT) $(TARGET)/zapper-agent
 
 install: build
 	install -d $(PREFIX)/bin
-	install -m 0755 $(TARGET)/zapper $(TARGET)/zapper-agent $(PREFIX)/bin/
+	install -m 0755 $(TARGET)/zapper $(TARGET)/zapper-agent $(TARGET)/zapper-inspect $(PREFIX)/bin/
 
 image: build
 	@test -n "$(IMAGE_FROM_$(IMAGE))" || { echo "no recipe for IMAGE=$(IMAGE); see IMAGE_FROM_* in the Makefile, or run zapper image build"; exit 1; }

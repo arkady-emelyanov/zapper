@@ -34,7 +34,7 @@ Never run `sudo` without the user's explicit consent, and run only what you list
 
 ```
 make deps                       # Firecracker (checksum-verified) and kernel, ~1 min
-make install                    # zapper and zapper-agent into ~/.local/bin
+make install                    # zapper, zapper-agent and zapper-inspect into ~/.local/bin
 make image                      # ubuntu-24.04, ~2 min: the base profiles, and a plain session to check the setup
 make image IMAGE=office         # the workers, ~5 min
 make image IMAGE=k3s && make kernel KERNEL=k8s   # the firm's cluster and its kernel, ~2 and ~10 min
@@ -77,6 +77,7 @@ crates/zapper/           CLI, daemon, proxy, Firecracker launcher, REST API, web
   src/daemon/vm.rs         disks, initramfs, the Firecracker process
   src/daemon/ui.html       the web UI: state, terminal viewer, answering approvals (textContent only)
   src/daemon/assets/       xterm.js 6.0.0 (MIT) for the terminal viewer; see its README
+crates/zapper-inspect/   `zapper-inspect`: past runs read from disk, their people and a scenario's operatives, transcripts exported; a minimal TUI
 crates/zapper-keeper/    the record's keeper: a separate user's append-only store with hash chains and signed checkpoints, its read-only UI
 crates/zapper-agent/     guest PID 1: setup, terminals, seccomp exec supervision, accounting; `office` (MCP server, CLI) and the fake Claude and pi
 config/                  zapper.yaml: the config, used when zapper runs in the checkout (relative paths resolve against it);
