@@ -95,7 +95,7 @@ Every session's environment also has:
 - `ZAPPER_SESSION`, the session id
 - in vsock mode, `HTTP_PROXY` and `HTTPS_PROXY` set to `http://127.0.0.1:3128`
 
-For `claude-code`, zapper also sets `DISABLE_AUTOUPDATER=1` and `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`, and marks onboarding, the folder trust dialog and the bypass-permissions prompt as accepted. For `pi`, it sets `PI_OFFLINE=1`, `PI_SKIP_VERSION_CHECK=1` and `PI_TELEMETRY=0`, writes `settings.json` (`model` as `defaultModel`, `quietStartup`, `defaultProjectTrust: never`, then `settings`), `AGENTS.md` and `mcp.json` (servers declared to the model directly: `exposure: direct`, unless set) in `~/.pi/agent`; providers and models go in `config_files` as `models.json`, with keys as `${ENV}` from `env` (see the `office-pi` profile).
+For `claude-code`, zapper also sets `DISABLE_AUTOUPDATER=1` and `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`, and marks onboarding, the folder trust dialog and the bypass-permissions prompt as accepted. For `pi`, it sets `PI_OFFLINE=1`, `PI_SKIP_VERSION_CHECK=1` and `PI_TELEMETRY=0`, writes `settings.json` (`model` as `defaultModel`, `quietStartup`, `defaultProjectTrust: never`, then `settings`), `AGENTS.md` and `mcp.json` (servers declared to the model directly: `exposure: direct`, unless set) in `~/.pi/agent`; providers and models go in `config_files` as `models.json`, with keys as `${ENV}` from `env` (see the `office-deepseek` profile).
 
 ### Agent harnesses
 

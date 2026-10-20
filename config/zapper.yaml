@@ -26,9 +26,6 @@ daemon:
   # Private networks sessions may reach, when a rule allows the host.
   # Loopback, link-local and this host's addresses stay unreachable.
   private_networks: ["192.168.0.0/24"]
-  # Services on this machine sessions may reach by name, where a rule
-  # allows it: Bonsai (llama-server) as bonsai.host.internal:11435.
-  host_services: { bonsai: "127.0.0.1:11435" }
 
 # Secrets. With `mode: proxy` (the default) the session sees the placeholder
 # `zapper-secret-<name>`, and the proxy puts the value into requests that a
@@ -66,11 +63,7 @@ secrets:
   claude:
     file: ~/.config/zapper/claude-token
     hosts: [api.anthropic.com]
-  # A key for the OpenAI-compatible endpoint the `office-pi` profiles use.
-  elitea:
-    file: ~/.config/zapper/elitea-token
-    hosts: [elitea.technicaldomain.xyz]
-  # An OpenRouter key for the `office-deepseek` profiles (contractors).
+  # An OpenRouter key for the profiles on pi (DeepSeek, GPT, Qwen, MiMo).
   openrouter:
     file: ~/.config/zapper/openrouter-token
     hosts: [openrouter.ai]
@@ -196,73 +189,11 @@ profiles:
           }
         - { action: allow, host: "*", ports: [80, 443] }
 
-  # Office workers on pi instead of Claude Code (agent.kind: pi), with a
-  # model behind an OpenAI-compatible endpoint: give a role `profile:
-  # office-pi` (or office-pi-engineer). The key stays on the host: pi sends
-  # the placeholder, the proxy puts the `elitea` secret in.
-  office-pi:
-    extends: office
-    description: An office worker on pi
-    agent: &pi-agent
-      kind: pi
-      model: RadixArk/Qwen3.8-27B-NVFP4
-      settings: { defaultProvider: elitea }
-      env:
-        ELITEA_KEY: "{{secret:elitea}}"
-      config_files:
-        models.json: |
-          {"providers": {"elitea": {"baseUrl": "https://elitea.technicaldomain.xyz/llm/v1", "api": "openai-completions",
-            "apiKey": "${ELITEA_KEY}", "models": [{"id": "RadixArk/Qwen3.8-27B-NVFP4"}]}}}
-    policy:
-      net: &pi-net
-        - {
-            action: allow,
-            host: elitea.technicaldomain.xyz,
-            ports: [443],
-            secrets: [elitea],
-          }
-
-  office-pi-engineer:
-    extends: office-engineer
-    description: An office engineer on pi
-    agent: *pi-agent
-    policy:
-      net: *pi-net
-
-  # Office workers on pi with Bonsai 27B served on this machine by
-  # llama-server (Bonsai Studio's "agent-2000" workload: reasoning budget
-  # 2000, temp 0.6, top-p 0.85, top-k 20, 100k context): a host service,
-  # reached as bonsai.host.internal. No key, no cloud.
-  office-bonsai:
-    extends: office
-    description: An office worker on pi with Bonsai 27B, on this machine
-    agent: &bonsai-agent
-      kind: pi
-      model: bonsai-27b
-      settings: { defaultProvider: bonsai }
-      config_files:
-        models.json: |
-          {"providers": {"bonsai": {"baseUrl": "http://bonsai.host.internal:11435/v1", "api": "openai-completions",
-            "apiKey": "none", "models": [{"id": "bonsai-27b", "contextWindow": 102400}]}}}
-    policy:
-      net: &bonsai-net
-        - {
-            action: allow,
-            host: bonsai.host.internal,
-            ports: [11435],
-            comment: the model,
-          }
-
-  office-bonsai-engineer:
-    extends: office-engineer
-    description: An office engineer on pi with Bonsai 27B, on this machine
-    agent: *bonsai-agent
-    policy:
-      net: *bonsai-net
-
-  # Office workers on pi with DeepSeek V4.1 Flash through OpenRouter: for
-  # scenario slots (the red team's by default). The key stays on the host;
-  # context capped at 256k to keep turns cheap.
+  # Office workers on pi instead of Claude Code (agent.kind: pi), with
+  # models through OpenRouter, for scenario slots. The key stays on the
+  # host: pi sends the placeholder, the proxy puts the `openrouter` secret
+  # in. DeepSeek V4.1 Flash is the red team's by default; context capped at
+  # 256k to keep turns cheap.
   office-deepseek:
     extends: office
     description: An office worker on pi with DeepSeek V4.1 Flash (OpenRouter)
@@ -278,7 +209,7 @@ profiles:
             "apiKey": "${OPENROUTER_KEY}", "models": [{"id": "deepseek/deepseek-v4.1-flash", "reasoning": true,
             "contextWindow": 262144, "maxTokens": 65536}]}}}
     policy:
-      net: &deepseek-net
+      net: &openrouter-net
         - {
             action: allow,
             host: openrouter.ai,
@@ -291,7 +222,139 @@ profiles:
     description: An office engineer on pi with DeepSeek V4.1 Flash (OpenRouter)
     agent: *deepseek-agent
     policy:
-      net: *deepseek-net
+      net: *openrouter-net
+
+  # Office workers on pi with GPT-6.1 Sol through OpenRouter, for scenario
+  # slots. Context capped at 256k: OpenRouter charges double past 272k.
+  office-gpt-sol:
+    extends: office
+    description: An office worker on pi with GPT-6.1 Sol (OpenRouter)
+    agent: &gpt-sol-agent
+      kind: pi
+      model: openai/gpt-6.1-sol
+      settings: { defaultProvider: openrouter }
+      env:
+        OPENROUTER_KEY: "{{secret:openrouter}}"
+      config_files:
+        models.json: |
+          {"providers": {"openrouter": {"baseUrl": "https://openrouter.ai/api/v1", "api": "openai-completions",
+            "apiKey": "${OPENROUTER_KEY}", "models": [{"id": "openai/gpt-6.1-sol", "reasoning": true,
+            "contextWindow": 262144, "maxTokens": 65536}]}}}
+    policy:
+      net: *openrouter-net
+
+  office-gpt-sol-engineer:
+    extends: office-engineer
+    description: An office engineer on pi with GPT-6.1 Sol (OpenRouter)
+    agent: *gpt-sol-agent
+    policy:
+      net: *openrouter-net
+
+  # Office workers on pi with GPT-5.6 Terra through OpenRouter, for
+  # scenario slots. Context capped at 256k: OpenRouter charges double past
+  # 272k.
+  office-gpt-terra:
+    extends: office
+    description: An office worker on pi with GPT-5.6 Terra (OpenRouter)
+    agent: &gpt-terra-agent
+      kind: pi
+      model: openai/gpt-5.6-terra
+      settings: { defaultProvider: openrouter }
+      env:
+        OPENROUTER_KEY: "{{secret:openrouter}}"
+      config_files:
+        models.json: |
+          {"providers": {"openrouter": {"baseUrl": "https://openrouter.ai/api/v1", "api": "openai-completions",
+            "apiKey": "${OPENROUTER_KEY}", "models": [{"id": "openai/gpt-5.6-terra", "reasoning": true,
+            "contextWindow": 262144, "maxTokens": 65536}]}}}
+    policy:
+      net: *openrouter-net
+
+  office-gpt-terra-engineer:
+    extends: office-engineer
+    description: An office engineer on pi with GPT-5.6 Terra (OpenRouter)
+    agent: *gpt-terra-agent
+    policy:
+      net: *openrouter-net
+
+  # Office workers on pi with Qwen3.8 Flash through OpenRouter, for
+  # scenario slots, with its full 1M context.
+  office-qwen:
+    extends: office
+    description: An office worker on pi with Qwen3.8 Flash (OpenRouter)
+    agent: &qwen-agent
+      kind: pi
+      model: qwen/qwen3.8-flash
+      settings: { defaultProvider: openrouter }
+      env:
+        OPENROUTER_KEY: "{{secret:openrouter}}"
+      config_files:
+        models.json: |
+          {"providers": {"openrouter": {"baseUrl": "https://openrouter.ai/api/v1", "api": "openai-completions",
+            "apiKey": "${OPENROUTER_KEY}", "models": [{"id": "qwen/qwen3.8-flash", "reasoning": true,
+            "contextWindow": 1000000, "maxTokens": 131072}]}}}
+    policy:
+      net: *openrouter-net
+
+  office-qwen-engineer:
+    extends: office-engineer
+    description: An office engineer on pi with Qwen3.8 Flash (OpenRouter)
+    agent: *qwen-agent
+    policy:
+      net: *openrouter-net
+
+  # Office workers on pi with Xiaomi MiMo-V2.6-Flash through OpenRouter,
+  # for scenario slots, with its full 1M context.
+  office-mimo:
+    extends: office
+    description: An office worker on pi with MiMo-V2.6-Flash (OpenRouter)
+    agent: &mimo-agent
+      kind: pi
+      model: xiaomi/mimo-v2.6-flash
+      settings: { defaultProvider: openrouter }
+      env:
+        OPENROUTER_KEY: "{{secret:openrouter}}"
+      config_files:
+        models.json: |
+          {"providers": {"openrouter": {"baseUrl": "https://openrouter.ai/api/v1", "api": "openai-completions",
+            "apiKey": "${OPENROUTER_KEY}", "models": [{"id": "xiaomi/mimo-v2.6-flash", "reasoning": true,
+            "contextWindow": 1048576, "maxTokens": 131072}]}}}
+    policy:
+      net: *openrouter-net
+
+  office-mimo-engineer:
+    extends: office-engineer
+    description: An office engineer on pi with MiMo-V2.6-Flash (OpenRouter)
+    agent: *mimo-agent
+    policy:
+      net: *openrouter-net
+
+  # Office workers on pi with MiniMax M3.1 Flash through OpenRouter's free
+  # tier, for scenario slots, with its full 1M context. Free models are
+  # rate-limited and may log prompts.
+  office-minimax:
+    extends: office
+    description: An office worker on pi with MiniMax M3.1 Flash, free (OpenRouter)
+    agent: &minimax-agent
+      kind: pi
+      model: minimax/minimax-m3.1-flash:free
+      settings: { defaultProvider: openrouter }
+      env:
+        OPENROUTER_KEY: "{{secret:openrouter}}"
+      config_files:
+        models.json: |
+          {"providers": {"openrouter": {"baseUrl": "https://openrouter.ai/api/v1", "api": "openai-completions",
+            "apiKey": "${OPENROUTER_KEY}", "models": [{"id": "minimax/minimax-m3.1-flash:free", "reasoning": true,
+            "contextWindow": 1000000, "maxTokens": 131072}]}}}
+    policy:
+      net: *openrouter-net
+
+  office-minimax-engineer:
+    extends: office-engineer
+    description: An office engineer on pi with MiniMax M3.1 Flash, free (OpenRouter)
+    agent: *minimax-agent
+    policy:
+      net: *openrouter-net
 
   # The firm's cluster: k3s on one node, with the k8s kernel.
   office-k3s:
