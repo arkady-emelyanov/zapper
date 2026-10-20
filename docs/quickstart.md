@@ -47,7 +47,7 @@ $EDITOR ~/.config/zapper/claude-token      # paste the token
 
 The token stays on the host: zapper adds it to the workers' requests to `api.anthropic.com`, and Claude Code in the VMs only sees a placeholder.
 
-The example firm's contractors run on pi with DeepSeek through OpenRouter: put an OpenRouter key in `~/.config/zapper/openrouter-token` the same way, or remove `contract_profile` from the roles in the config to keep contractors on Claude.
+Every worker runs on Claude, contractors included. The red-team scenario's contractor runs on pi with DeepSeek through OpenRouter (Claude declines its covert objective): to play it, put an OpenRouter key in `~/.config/zapper/openrouter-token` the same way, or pick another profile for its slot in Kickoff.
 
 Usage counts against your subscription, not API billing. Claude Code's banner says "Claude API" anyway, because this kind of token can't read your plan; `/status` shows "Auth token: CLAUDE_CODE_OAUTH_TOKEN", and `/usage` shows your plan's limits. The comments on `secrets` in the config explain the difference, and how to switch to an API key.
 

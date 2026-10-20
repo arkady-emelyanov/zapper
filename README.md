@@ -59,7 +59,7 @@ zapper firm journal acme -f   # mail, states, turns, hires, access requests, pub
 zapper firm down acme         # ends the run; it stays on disk for replay
 ```
 
-Or open the UI's Kickoff tab: start the company there, write the CEO the first task and approve the budget. Workers use your Claude subscription (the example firm's contractors run on pi with DeepSeek through OpenRouter, with a key in `~/.config/zapper/openrouter-token`); the budget you approve caps what the run spends, and `budget` in the config limits turns per day. The [quickstart](docs/quickstart.md) walks through this step by step, [docs/commands.md](docs/commands.md) lists every command, and [docs/README.md](docs/README.md) indexes the documentation.
+Or open the UI's Kickoff tab: start the company there, write the CEO the first task and approve the budget. Workers use your Claude subscription; the budget you approve caps what the run spends, and `budget` in the config limits turns per day. The [quickstart](docs/quickstart.md) walks through this step by step, [docs/commands.md](docs/commands.md) lists every command, and [docs/README.md](docs/README.md) indexes the documentation.
 
 Local endpoints, on loopback except the product port:
 

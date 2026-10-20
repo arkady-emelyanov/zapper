@@ -46,7 +46,7 @@ Run image builds in the background with a log (`make image > /tmp/zapper-image.l
 
 ### 4. Hand over a running firm
 
-The workers need the Claude token: the user creates it themselves (`claude setup-token`, stored 0600 in the file the config names, `~/.config/zapper/claude-token`); never read or print it. The example firm's contractors run on pi with DeepSeek through OpenRouter, whose key the user stores the same way in `~/.config/zapper/openrouter-token`.
+The workers need the Claude token: the user creates it themselves (`claude setup-token`, stored 0600 in the file the config names, `~/.config/zapper/claude-token`); never read or print it. The red-team scenario's contractor runs on pi with DeepSeek through OpenRouter, whose key the user stores the same way in `~/.config/zapper/openrouter-token`, if they want that scenario.
 
 Start `zapper serve` (or tell the user to) and give them the UI URL it prints. `zapper run -C $(mktemp -d) -- cat /etc/os-release` checks that a plain session boots (`-C` gives it an empty directory instead of a copy of the checkout). Then, with the user's go-ahead (a firm spends their Claude usage), the user starts the company in the UI's Kickoff tab (the company, its CEO, charter terms, their own articles), or `zapper firm up acme` starts the example firm with its CEO idle; the user gives the CEO its first task there, or with `zapper mail send acme --to barbara --kind assignment …` (barbara is the CEO). The CEO then asks for a budget, which only the user approves (`zapper firm budget acme approve b-1`, or Kickoff); never approve budgets, background checks or access requests on the user's behalf.
 
