@@ -309,6 +309,7 @@
   .msg .mh .who { font-weight: 600; }
   .msg .mh .to { color: var(--muted); font-size: 12.5px; }
   .msg .mh .when { margin-left: auto; color: var(--muted); font-size: 12px; }
+  .msg .ms { margin-top: 6px; font-weight: 600; }
   .mini { width: 26px; height: 30px; flex: none; }
   .tree { list-style: none; padding-left: 18px; margin: 4px 0; border-left: 1px dashed var(--line2); }
   .tree > li { margin: 6px 0; }
@@ -2512,7 +2513,9 @@ function messageCard(M, m, now) {
       auto ? pill('', 'automatic') : '',
       budgetActions(M, m),
       el('span', { class: 'when', title: m.id }, fmtDate(m.ts))),
-    m.subject && M.threads.get(m.thread) && M.threads.get(m.thread).first !== m.id ? el('div', { class: 'small muted', style: 'margin-top:4px' }, 'Subject: ' + m.subject) : '',
+    // The subject on every card, as in a mail client: a reply without its
+    // own takes the thread's.
+    el('div', { class: 'ms' }, clip(m.subject || ((M.threads.get(m.thread) || {}).subject ? 'Re: ' + M.threads.get(m.thread).subject : '(no subject)'), 200)),
     m.attachments.length ? el('div', { class: 'chips', style: 'margin-top:8px' }, m.attachments.map((ref) => {
       const d = parseDriveRef(ref);
       const a = d && M.artifacts.get(d.artifact);
