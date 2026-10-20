@@ -539,12 +539,15 @@ While no company is running, every firm tab (Organization, People, Work, Message
 
 - **Org chart**: the live tree, top to bottom: the founders, and each hire as they join (a node fades in under the hirer); someone let go leaves it. With a run budget, each node has a bar of what they spent of what they were given (amber under 15% left, red when out). Envelopes fly from sender to recipients as mail is sent; the post office's automatic notices fly from its box at the top right. A legend at the right lists the states' colors, the budget bar and the marks on a node (unread mail, a pending access request, overdue work, a contractor's dashed outline, a coloured frame for a worker on another agent than Claude Code). Under each title is the worker's model, and its agent when it isn't Claude Code ("pi · Qwen3.8-27B-NVFP4"); Statistics compares agents and models (workers, turns, tokens, tokens per turn) when a run has more than one. Each node is the worker's animated avatar, name, title and a one-line status ("drafting pricing.md", "waiting for ada", "overdue: 1"). Envelopes animate along the edges as mail is sent, also between workers who aren't directly connected; a badge shows unread mail. The board sits above the CEO as its own node.
 - **People**: the log of hiring and firing, newest first (hires with who hired them, the budget and the reason; background checks; contract steps; departures with who let them go and why; a scenario's actions), and below it a card for everyone who was in the firm, including those who left, with a Communication list of every message they sent or received. Live and in replay.
-- **Click a worker** to open a side panel:
-  - **Unread mail**, first, when there is any: the messages the worker hasn't read yet (the mail badge on its node counts them), and why: a worker reads its mail when it wakes, so they wait for the end of its current turn, a free turn slot, the budget, or the firm to resume.
+- **Click a worker** to open their panel, under the org chart in columns (elsewhere, as when Kickoff opens the CEO's, it slides in from the side):
   - **Write as the board**: a message (the subject is optional: the first line names the thread otherwise), kind (`assignment`, `question`, `fyi`), `due`, attachments from the shared drive or small files from the board's computer (up to 10 files, 5 MiB together, stored on the shared drive as the board's artifact). It starts a new thread; to answer in an existing one, reply in the thread in Messages.
   - **Desk**: open assignments, threads waiting on others, overdue items, pending access requests.
-  - **Now**: a live transcript of the current turn (text and tool calls, rendered as text), and earlier turns on demand.
-  - Recent mail, published work, and a link to its session in zapper's session views.
+  - **Now**: a live transcript of the current turn, newest first, each entry with its time (text and tool calls, rendered as text), and earlier turns on demand.
+  - **Published**, **Unread mail** and **Read mail**, each with a count on its header (the unread count highlighted while there is any); the mail open and Published collapsed, each can be opened or closed:
+    - **Published**: their work on the shared drive.
+    - **Unread mail**: the messages the worker hasn't read yet (the mail badge on its node counts them), and why: a worker reads its mail when it wakes, so they wait for the end of its current turn, a free turn slot, the budget, or the firm to resume.
+    - **Read mail**: what the worker has read, newest first, with when it was sent and when it was read (at the start of a turn, or handed over during one), and how long it waited; the latest ten, or all.
+  - A link to its session in zapper's session views.
 - **Kickoff**: when the firm is idle and has no threads, the CEO's panel opens with an empty assignment ready to write.
 
 ### Work

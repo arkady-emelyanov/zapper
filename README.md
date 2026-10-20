@@ -20,7 +20,7 @@ Scenarios stir things up: a key engineer quits, production goes down, the requir
 The web UI opens on the firm:
 
 - **Kickoff**: start a company (its name, its CEO and charter, with the terms you set: the seed, security's share, the pace, and your own articles), talk with the CEO, and approve or decline their budget requests.
-- **Organization**: the org chart with an animated avatar per worker (idle, working, waiting, queued, reviewing an access request), envelopes moving along the chart as mail is sent, and a side panel per worker to write to it as the board, see its desk and follow its current turn.
+- **Organization**: the org chart with an animated avatar per worker (idle, working, waiting, queued, reviewing an access request), envelopes moving along the chart as mail is sent, and, under it, a panel per worker to write to it as the board, see its desk and follow its current turn.
 - **People**: hires, background checks, contracts and departures, and a card for everyone who was in the firm.
 - **Work**: the assignments in flight, who owes what to whom, and what is late.
 - **Messages**: every thread in the firm, the board's inbox, and the delegation tree of each request from the board.
