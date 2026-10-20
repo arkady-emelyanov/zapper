@@ -104,7 +104,7 @@ Invariants (each has a test in `tests/e2e.sh` or a unit test; a change that brea
 - Guest traffic goes through zapper, also with root in the guest. With a NIC, the VMM's network namespace has loopback and the tap as its interfaces and sends all TCP and DNS to the daemon; in vsock mode, vsock is the guest's only channel to the host.
 - DNS queries and host names from the guest are validated before policy sees them. DNS looks a name up on the host only if some request to it could be allowed (outright or after an `ask`), refuses other names, and never makes up an answer. `ask` decides access, not resolution.
 - `proxy` secret values stay on the host. The proxy adds a value to a request when a rule listing the secret allows it, the destination matches the secret's `hosts`, and the connection uses TLS or the secret sets `plaintext: true`. A `guest` secret goes to sessions whose profile uses it.
-- The proxy connects to the address it checked. Loopback, link-local and host addresses are unreachable, and private ranges need `daemon.private_networks`. The one exception is a host service the config names (`daemon.host_services`): reached only as `<name>.host.internal`, at its one address and port, where a rule allows the name.
+- The proxy connects to the address it checked. Loopback, link-local and host addresses are unreachable, and private ranges need `daemon.private_networks`.
 - Passthrough connections are bound to the TLS server name; inspected ones present a per-session CA and override `Host`.
 - The host accepts only the first control connection; the agent accepts terminal connections only from CID 2.
 - The seccomp filter kills foreign-arch and x32 syscalls, so exec checks cannot be bypassed through another syscall table.

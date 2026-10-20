@@ -47,7 +47,6 @@ firms:      name → org chart, budgets, officers, the firm's services  (office.
 | `ask_timeout_secs` | `60` | How long an `ask` waits before it denies |
 | `max_sessions` | `16` | Sessions starting or running at the same time |
 | `private_networks` | `[]` | CIDRs of private networks sessions may reach ([network](network.md#address-checks)) |
-| `host_services` | `{}` | Services on this host sessions may reach by name, the one exception to the host being unreachable: `{bonsai: "127.0.0.1:11435"}` is `bonsai.host.internal`, at that port only, where a rule allows the name ([network](network.md#address-checks)) |
 | `keeper` | unset | `{socket, dir}`: the record kept by `zapper-keeper` as a separate user, append-only ([security: the record](security.md#the-record)); `scripts/install-keeper.sh` prints the values. Read at start: changing it needs a restart |
 
 ### profiles

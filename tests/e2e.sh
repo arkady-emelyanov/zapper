@@ -24,7 +24,6 @@ expect() { # name, haystack, needle
 
 cleanup() {
     [ -n "${DAEMON:-}" ] && kill "$DAEMON" 2>/dev/null && wait "$DAEMON" 2>/dev/null
-    [ -n "${HOSTSVC:-}" ] && kill "$HOSTSVC" 2>/dev/null
     [ -n "${ZAPPER_E2E_KEEP:-}" ] && echo "kept $T" || rm -rf "$T"
 }
 trap cleanup EXIT
@@ -33,14 +32,8 @@ mkdir -p "$T/work" "$T/attack"
 echo 'SECRET=hunter2' > "$T/work/.env"
 echo 'hello from host' > "$T/work/readme.txt"
 gcc -static -O1 -o "$T/attack/attack" "$HERE/attack.c" 2>/dev/null || echo "skip  attack probe (no static gcc)"
-# A service on the host's loopback, which sessions reach only as a host
-# service, by name (daemon.host_services).
-mkdir -p "$T/hostsvc" && echo 'host service here' > "$T/hostsvc/index.html"
-HP=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
-python3 -m http.server --bind 127.0.0.1 --directory "$T/hostsvc" "$HP" > /dev/null 2>&1 &
-HOSTSVC=$!
 cat > "$T/zapper.yaml" <<EOF
-daemon: { state: $T/state, ui: "127.0.0.1:0", ask_timeout_secs: 20, host_services: { probe: "127.0.0.1:$HP" } }
+daemon: { state: $T/state, ui: "127.0.0.1:0", ask_timeout_secs: 20 }
 secrets:
   test: { value: s3cr3t-test, hosts: [postman-echo.com] }
   key: { value: guest-visible-key, mode: guest }
@@ -58,8 +51,6 @@ profiles:
         - { action: allow, host: "*.invalid", ports: [443], comment: "reserved, never exists" }
         - { action: allow, host: postman-echo.com, ports: [443], methods: [GET], secrets: [test] }
         - { action: ask, host: "*.wikipedia.org" }
-        - { action: allow, host: probe.host.internal, ports: [$HP, 81] }
-        - { action: allow, host: other.host.internal, ports: [$HP] }
       exec: [{ action: deny, path: perl }]
   vsock:
     extends: default
@@ -90,9 +81,6 @@ echo "port80=$(code http://example.com)"
 echo "rawip=$(code https://1.1.1.1)"
 echo "fronting=$(code --resolve github.com:443:$(getent hosts example.com | cut -d" " -f1) https://github.com)"
 echo "perl=$(perl -e "print 1" 2>&1)"
-echo "hostsvc=$(curl -sS -m 5 http://probe.host.internal:'"$HP"'/)"
-echo "hostsvc-port=$(code http://probe.host.internal:81/)"
-echo "hostsvc-other=[$(getent hosts other.host.internal)]"
 exit 7' 2>&1)
 code=$?
 expect "workload runs as uid 1000 with a NIC, no proxy settings" "$out" "id=1000 ifaces=eth0,lo, proxy=none"
@@ -108,9 +96,6 @@ expect "port without a rule denied" "$out" "port80=000"
 expect "raw IP denied" "$out" "rawip=000"
 expect "TLS name must match the name dialled" "$out" "fronting=000"
 expect "exec deny rule" "$out" "Permission denied"
-expect "a host service is reached by its name" "$out" "hostsvc=host service here"
-expect "at its own port only" "$out" "hostsvc-port=000"
-expect "and only the services the config names" "$out" "hostsvc-other=[]"
 [ "$code" = 7 ] && pass "exit code propagates" || fail "exit code propagates" "got $code"
 
 out=$("$Z" run -C "$T/work" -- perl -e 1 2>&1)

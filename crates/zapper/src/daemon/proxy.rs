@@ -282,9 +282,6 @@ fn log(d: &Daemon, s: &Session, l: NetLog<'_>) {
 #[derive(Clone)]
 enum Target {
     Addr(SocketAddr),
-    /// A host service (`daemon.host_services`): this host's address, which
-    /// the address policy otherwise refuses, reached only by its name.
-    Host(SocketAddr),
     Firm(
         Arc<super::office::FirmRun>,
         super::office::facility::Internal,
@@ -294,15 +291,6 @@ enum Target {
 /// The target for `host:port`: the firm's services by name, anything else
 /// resolved on the host and checked against the address policy.
 async fn target(d: &Daemon, s: &Session, host: &str, port: u16) -> Result<Target, String> {
-    // A host service by name: its one address and port, nothing else.
-    let svc = d.config.read().unwrap().daemon.host_service(host);
-    if let Some(svc) = svc {
-        let addr = svc?;
-        if addr.port() != port {
-            return Err(format!("{host} listens on port {}", addr.port()));
-        }
-        return Ok(Target::Host(addr));
-    }
     if let Some(run) = s.firm.as_ref().and_then(|f| f.run()) {
         if let Some(r) = super::office::facility::route(&run, host, port) {
             return r
@@ -318,7 +306,7 @@ async fn dial_target(
     t: &Target,
 ) -> std::io::Result<Box<dyn super::office::facility::Io>> {
     match t {
-        Target::Addr(a) | Target::Host(a) => Ok(Box::new(dial(*a).await?)),
+        Target::Addr(a) => Ok(Box::new(dial(*a).await?)),
         Target::Firm(run, i) => super::office::facility::connect(run, s, *i)
             .await
             .map_err(|e| std::io::Error::other(format!("{e:#}"))),

@@ -128,17 +128,6 @@ async fn query_dns(d: &Arc<Daemon>, s: &Arc<Session>, query: &[u8]) -> Option<Ve
     if let Some(exists) = firm {
         s.dns.lock().unwrap().remember(&q.name, exists);
     }
-    // So are host services: they exist if the config names them.
-    let host = d
-        .config
-        .read()
-        .unwrap()
-        .daemon
-        .host_service(&q.name)
-        .map(|r| r.is_ok());
-    if let Some(exists) = host {
-        s.dns.lock().unwrap().remember(&q.name, exists);
-    }
     // Allowed: say whether the name exists, from a real lookup on the host.
     let cached = s.dns.lock().unwrap().cached(&q.name);
     let exists = match cached {
