@@ -22,9 +22,17 @@ pub async fn sessions() -> impl IntoResponse {
 
 /// xterm.js 6.0.0 (MIT), bundled; see `assets/README`.
 /// A single terminal, read-only, for its own browser window.
+/// The terminal viewer: in its own window, or framed in the session's page;
+/// framed by the UI itself only.
 pub async fn terminal() -> impl IntoResponse {
     (
-        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        [
+            (header::CONTENT_TYPE, "text/html; charset=utf-8"),
+            (
+                header::CONTENT_SECURITY_POLICY,
+                "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; frame-ancestors 'self'",
+            ),
+        ],
         include_str!("terminal.html"),
     )
 }

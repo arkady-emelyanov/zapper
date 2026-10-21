@@ -22,6 +22,8 @@
 // textContent only.
 const q = new URLSearchParams(location.search);
 const session = q.get('session'), n = q.get('n');
+// Framed in the session's page, whose buttons already say which terminal.
+if (q.has('embed')) document.querySelector('header').style.display = 'none';
 const $ = (id) => document.getElementById(id);
 $('title').textContent = 'session ' + session + ' · terminal ' + n;
 document.title = 'zapper ' + session + ' · terminal ' + n;

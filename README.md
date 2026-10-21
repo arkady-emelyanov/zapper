@@ -5,7 +5,7 @@ zapper runs AI agents in Firecracker microVMs. What they reach on the network, w
 > [!NOTE]
 > Here from [Contained](https://blog.emelianov.cloud/contained/)? [The Office](docs/the-office.md) is the company of AI workers from the post, built on zapper: its front page, what you see and its quickstart.
 
-![Seven Firecracker microVMs of one firm on zapper, each with its vCPUs, memory, kernel and counts of network connections and program starts; every VM's traffic goes through the daemon](docs/img/vms.png)
+![A zapper session running Claude Code: its VM's details, the live terminal where Claude reports that PyPI was unreachable, and the network log: the Claude API allowed with the token the host added, pypi.org, github.com and downloads.claude.ai refused](docs/img/session.png)
 
 ## Why
 

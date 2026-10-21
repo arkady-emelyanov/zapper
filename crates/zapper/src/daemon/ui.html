@@ -9,10 +9,10 @@
   @media (prefers-color-scheme: light) { :root { --bg:#f6f7f9; --panel:#fff; --line:#e3e6eb; --text:#1d2129; --dim:#6b7280; } }
   * { box-sizing: border-box; }
   body { margin:0; font: 13px/1.45 ui-sans-serif, system-ui, sans-serif; background:var(--bg); color:var(--text); }
-  header { display:flex; gap:16px; align-items:center; padding:10px 18px; border-bottom:1px solid var(--line); background:var(--panel); position:sticky; top:0; z-index:1; }
+  header { display:flex; gap:16px; align-items:center; padding:10px 40px; border-bottom:1px solid var(--line); background:var(--panel); position:sticky; top:0; z-index:1; }
   header h1 { font-size:15px; margin:0; letter-spacing:.5px; }
   /* footer: the way back to the office, where the office has its link here */
-  footer.foot { position:fixed; left:0; right:0; bottom:0; z-index:1; height:32px; display:flex; align-items:center; padding:0 24px; background:var(--panel); border-top:1px solid var(--line); font-size:12.5px; }
+  footer.foot { position:fixed; left:0; right:0; bottom:0; z-index:1; height:32px; display:flex; align-items:center; padding:0 40px; background:var(--panel); border-top:1px solid var(--line); font-size:12.5px; }
   footer.foot a { margin-left:auto; color:var(--dim); text-decoration:none; }
   footer.foot a:hover { color:var(--text); }
   header .ro { color:var(--dim); font-size:11px; border:1px solid var(--line); padding:1px 6px; border-radius:9px; }
@@ -20,7 +20,7 @@
   nav button.on { color:var(--text); background:var(--line); }
   .stat { margin-left:auto; display:flex; gap:14px; color:var(--dim); }
   .stat b { color:var(--text); }
-  main { padding:16px 18px 56px; }
+  main { padding:20px 40px 56px; }
   section { display:none; } section.on { display:block; }
   table { width:100%; border-collapse:collapse; background:var(--panel); border:1px solid var(--line); border-radius:8px; overflow:hidden; }
   th, td { text-align:left; padding:6px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
@@ -47,6 +47,27 @@
   #session-req dl { display:grid; grid-template-columns: max-content 1fr; gap:2px 14px; margin:4px 0 12px; }
   #session-req dt { color:var(--dim); } #session-req dd { margin:0; word-break:break-all; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12px; }
   .cols { display:grid; grid-template-columns: 1fr 1fr; gap:24px; }
+  /* A session: its details, its terminals, and the chosen one live. */
+  /* The details on the left; the preview on the right, its terminal picked below it. */
+  .stop { display:grid; grid-template-columns: minmax(240px, 1fr) 448px; column-gap:48px; row-gap:24px; align-items:start; margin-top:12px; }
+  #session-term-ff { position:relative; }
+  #session-term-h { margin-top:10px; }
+  #session-term-h select { width:100%; background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:5px 8px; font:12px ui-monospace, SFMono-Regular, Menlo, monospace; }
+  @media (max-width: 1000px) { .stop { grid-template-columns: 1fr; } #session-term-f { max-width:448px; } }
+  /* Over the preview's top right corner. */
+  #session-term-f .pv { position:relative; }
+  #session-term-fh { position:absolute; top:8px; right:8px; z-index:2; }
+  #session-term-fh .pop { background:rgba(23,26,33,.85); }
+  /* The terminal's preview: its frame at full size, scaled to half. */
+  #session-term-ff .preview { position:relative; width:100%; height:100%; overflow:hidden; border:1px solid var(--line); border-radius:8px; background:#000; cursor:zoom-in; }
+  #session-term-ff .preview iframe { position:absolute; left:0; top:0; border:0; transform-origin:0 0; pointer-events:none; }
+  #session-term-ff .preview .veil { position:absolute; inset:0; }
+  /* Full size: over the page, until clicked again. */
+  #session-term-ff .preview.full { position:fixed; inset:6vh 6vw; z-index:30; width:auto; aspect-ratio:auto !important; box-shadow:0 20px 60px rgba(0,0,0,.6); cursor:zoom-out; }
+  #session-term-ff .preview.full iframe { transform-origin:0 0; }
+  /* Long commands: two lines, the rest on a click. */
+  .clamp { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; cursor:pointer; word-break:break-all; }
+  .clamp.open { display:block; }
   @media (max-width: 900px) { .cols { grid-template-columns: 1fr; } }
   ul.kv { list-style: disc; margin:0; padding-left:20px; line-height:1.9; }
   ul.kv .k { color:var(--dim); }
@@ -66,7 +87,8 @@
 <main>
   <section id="sessions"></section>
   <section id="session">
-    <div id="session-info"></div>
+    <div id="session-bar"></div>
+    <div class="stop"><div id="session-info"></div><div id="session-term-f"><h2>preview</h2><div class="pv"><div id="session-term-fh"></div><div id="session-term-ff"></div></div><div id="session-term-h"></div></div></div>
     <div id="session-net">
       <h2>network</h2>
       <div class="bar"><input id="net-q" placeholder="filter: method, host, path, status"><span class="dim" id="net-count"></span></div>
@@ -182,8 +204,9 @@ async function renderSession(id) {
     [s, audit] = await Promise.all([api('/sessions/' + id), api('/sessions/' + id + '/audit')]);
   } catch (e) {
     if (e.message !== '404') throw e;
-    $('session-info').replaceChildren(el('div', { class: 'bar' }, el('button', { on: () => show('sessions') }, '← sessions')),
-      el('div', { class: 'empty' }, 'Session ' + id + ' has ended. Its audit log stays in the daemon\'s state directory.'));
+    $('session-bar').replaceChildren(el('div', { class: 'bar' }, el('button', { on: () => show('sessions') }, '← sessions')));
+    $('session-info').replaceChildren(el('div', { class: 'empty' }, 'Session ' + id + ' has ended. Its audit log stays in the daemon\'s state directory.'));
+    showTerminal(id, []);
     for (const part of ['session-req', 'session-more']) $(part).replaceChildren();
     $('net-body').replaceChildren();
     return;
@@ -194,32 +217,26 @@ async function renderSession(id) {
   const execs = events.filter(e => e.type === 'exec').slice(-200).reverse();
   const exits = events.filter(e => e.type === 'guest' && e.event.event === 'exit').slice(-200).reverse();
   const terms = await api('/sessions/' + id + '/terminals');
-  $('session-info').replaceChildren(
-    el('div', { class: 'bar' }, el('button', { on: () => show('sessions') }, '← sessions'), el('b', { class: 'mono' }, s.id), pill(s.state), el('span', { class: 'dim' }, s.detail || '')),
-    el('div', { class: 'cols' },
-      el('div', {}, el('h2', {}, 'details'), el('ul', { class: 'kv' },
-        item('profile', s.profile),
-        item('image', s.image, el('span', { class: 'dim' }, ' · ' + s.vcpus + ' vCPU · ' + s.memory_mib + ' MiB')),
-        item('user', s.root ? pill('ask', 'root') : s.user),
-        item('workdir', el('span', { class: 'mono' }, s.workdir)),
-        item('started', new Date(s.created * 1000).toLocaleString()),
-        item('expires', s.expires ? new Date(s.expires * 1000).toLocaleString() : 'never'),
-        item('network', el('span', { class: 'allow' }, c.net_allowed + ' allowed'), ' · ', el('span', { class: 'deny' }, c.net_denied + ' denied')),
-        item('programs', el('span', { class: 'allow' }, c.exec_allowed + ' allowed'), ' · ', el('span', { class: 'deny' }, c.exec_denied + ' denied')),
-        item('process exits', c.exits),
-        item('session rules', s.rules))),
-      el('div', {}, el('h2', {}, 'terminals'), terms.length ? el('ul', { class: 'kv' }, terms.map(t => el('li', {},
-          el('span', { class: 'k' }, t.id + ': '), el('span', { class: 'mono' }, t.argv.join(' ')), ' ',
-          pill(t.open ? 'running' : 'stopped', t.open ? 'open' : 'closed'), el('span', { class: 'dim' }, ' ' + t.cols + '×' + t.rows + ' '),
-          el('button', { class: 'act', on: () => watchTerminal(id, t) }, 'Watch ↗'))))
-        : el('div', { class: 'empty' }, 'no terminals'))),
-  );
+  $('session-bar').replaceChildren(
+    el('div', { class: 'bar' }, el('button', { on: () => show('sessions') }, '← sessions'), el('b', { class: 'mono' }, s.id), pill(s.state), el('span', { class: 'dim' }, s.detail || '')));
+  $('session-info').replaceChildren(el('div', {}, el('h2', {}, 'details'), el('ul', { class: 'kv' },
+    item('profile', s.profile),
+    item('vm', s.image, el('span', { class: 'dim' }, ' · ' + s.vcpus + ' vCPU · ' + s.memory_mib + ' MiB')),
+    item('user', s.root ? pill('ask', 'root') : s.user),
+    item('workdir', el('span', { class: 'mono' }, s.workdir)),
+    item('up', ago(s.created), el('span', { class: 'dim' }, ' · since ' + new Date(s.created * 1000).toLocaleTimeString())),
+    item('expires', s.expires ? new Date(s.expires * 1000).toLocaleString() : 'never'),
+    item('network', el('span', { class: 'allow' }, c.net_allowed + ' allowed'), ' · ', el('span', { class: 'deny' }, c.net_denied + ' denied')),
+    item('programs', el('span', { class: 'allow' }, c.exec_allowed + ' allowed'), ' · ', el('span', { class: 'deny' }, c.exec_denied + ' denied')),
+    item('process exits', c.exits),
+    item('session rules', s.rules))));
+  showTerminal(id, terms);
   renderNetwork(id);
   $('session-more').replaceChildren(
     el('h2', {}, 'exec (latest first)'),
     execs.length ? el('table', {}, el('thead', {}, el('tr', {}, ['time', 'action', 'pid', 'command', 'cwd', 'rule', 'wait'].map(h => el('th', {}, h)))),
       el('tbody', {}, execs.map(e => el('tr', {}, el('td', {}, time(e.ts)), el('td', {}, pill(e.action)), el('td', { class: 'mono' }, e.pid),
-        el('td', { class: 'mono' }, e.argv.join(' ')), el('td', { class: 'mono dim' }, e.cwd || ''), el('td', { class: 'mono' }, e.rule || 'default'), el('td', {}, e.wait_ms.toFixed(1) + ' ms'))))) : el('div', { class: 'empty' }, 'no execs'),
+        el('td', { class: 'mono' }, el('div', { class: 'clamp', title: 'click to show it all', on: (ev) => ev.currentTarget.classList.toggle('open') }, e.argv.join(' '))), el('td', { class: 'mono dim' }, e.cwd || ''), el('td', { class: 'mono' }, e.rule || 'default'), el('td', {}, e.wait_ms.toFixed(1) + ' ms'))))) : el('div', { class: 'empty' }, 'no execs'),
     el('h2', {}, 'process exits (latest first)'),
     exits.length ? el('table', {}, el('thead', {}, el('tr', {}, ['time', 'pid', 'command', 'exit', 'elapsed', 'cpu user/sys', 'avg mem', 'io'].map(h => el('th', {}, h)))),
       el('tbody', {}, exits.map(({ ts, event: x }) => el('tr', {}, el('td', {}, time(ts)), el('td', { class: 'mono' }, x.pid), el('td', { class: 'mono' }, x.comm),
@@ -298,6 +315,59 @@ async function showRequest(sessionId, n) {
   $('session-req').replaceChildren(
     el('div', { class: 'bar' }, el('h2', { style: 'margin:0' }, '#' + r.id + ' ' + r.method + ' ' + r.url), close),
     tabs, el('div', { class: 'panel' }, panels[reqTab]()));
+}
+
+// A session's terminal, live and read-only, beside its details: the open
+// one, or the one picked below it. The frame is replaced only when the
+// session or the terminal changes, so a refresh doesn't reconnect it.
+let shownTerm = '', shownTerms = '', pickedTerm = null, termObserver = null, termFit = null;
+function showTerminal(sessionId, terms) {
+  const pick = terms.find(t => pickedTerm && pickedTerm.session === sessionId && t.id === pickedTerm.id)
+    || terms.find(t => t.open) || terms[terms.length - 1];
+  // The picker, rebuilt only when the list changes, so an open dropdown isn't closed by a refresh.
+  const sig = sessionId + '|' + (pick ? pick.id : '') + '|' + terms.map(t => t.id + ':' + t.open + ':' + t.argv.join(' ')).join(',');
+  if (sig !== shownTerms) {
+    shownTerms = sig;
+    const select = el('select', { title: 'the terminal to show' }, terms.map(t => {
+      const o = el('option', { value: String(t.id) }, t.id + ': ' + t.argv.join(' ') + (t.open ? '' : ' (closed)'));
+      if (t === pick) o.selected = true;
+      return o;
+    }));
+    select.addEventListener('change', () => { pickedTerm = { session: sessionId, id: Number(select.value) }; showTerminal(sessionId, terms); });
+    $('session-term-h').replaceChildren(...(terms.length ? [select] : []));
+  }
+  $('session-term-fh').replaceChildren(...(pick ? [
+    el('button', { class: 'act pop', title: 'Open this terminal in its own window', on: () => watchTerminal(sessionId, pick) }, 'Pop out ↗')] : []));
+  // The terminal's own size in the frame (xterm's 13px cells, its padding).
+  const size = pick ? { w: pick.cols * 7.85 + 20, h: pick.rows * 17 + 20 } : null;
+  const key = pick ? sessionId + '/' + pick.id : '';
+  if (key === shownTerm) { if (size && termFit) termFit(size); return; }
+  shownTerm = key;
+  if (termObserver) { termObserver.disconnect(); termObserver = null; termFit = null; }
+  if (!pick) { $('session-term-ff').style.height = ''; return $('session-term-ff').replaceChildren(el('div', { class: 'empty' }, 'no terminals')); }
+  const f = el('iframe', { title: 'terminal ' + pick.id + ' of session ' + sessionId, tabindex: '-1' });
+  f.src = '/terminal?session=' + encodeURIComponent(sessionId) + '&n=' + encodeURIComponent(pick.id) + '&embed=1';
+  const box = el('div', { class: 'preview', title: 'click to show it full size' }, f, el('div', { class: 'veil' }));
+  box.addEventListener('click', () => { box.classList.toggle('full'); fit(); });
+  // A fixed width, the details' height (less the picker below), and the
+  // whole terminal zoomed to fit, never past the real font size: a larger
+  // terminal is drawn smaller.
+  const ff = $('session-term-ff'), info = $('session-info'), picker = $('session-term-h');
+  let cur = size;
+  const fit = (next) => {
+    if (next && next.w) cur = next;
+    f.style.width = cur.w + 'px'; f.style.height = cur.h + 'px';
+    if (!box.classList.contains('full')) {
+      const below = picker.offsetHeight ? picker.offsetHeight + 10 : 0;
+      ff.style.height = Math.max(160, Math.round(info.getBoundingClientRect().bottom - ff.getBoundingClientRect().top - below)) + 'px';
+    }
+    f.style.transform = 'scale(' + Math.min(box.clientWidth / cur.w, box.clientHeight / cur.h, 1) + ')';
+  };
+  termFit = fit;
+  termObserver = new ResizeObserver(() => fit());
+  termObserver.observe(info); termObserver.observe(box);
+  ff.replaceChildren(box);
+  fit();
 }
 
 // Each terminal opens in its own window; a second click focuses it.
