@@ -1,12 +1,12 @@
 # Instructions for coding agents
 
-People should start with the [README](README.md). Operating a running daemon (starting and watching firms, writing to workers as the board, deciding access requests, changing rules, reading audit logs) is covered by the agent skill [skills/zapper/SKILL.md](skills/zapper/SKILL.md); keep it in step with the CLI and docs.
+People should start with the [README](README.md). Operating a running daemon (starting, attaching to and stopping sessions, answering approvals, changing rules, reading audit logs, and running firms of The Office) is covered by the agent skill [skills/zapper/SKILL.md](skills/zapper/SKILL.md); keep it in step with the CLI and docs.
 
-The project is zapper: AI agents in Firecracker microVMs, with what they reach, which credentials they use and which programs they start decided on the host; the daemon, the `zapper` CLI and the sandbox. All guest traffic is captured outside the VM and goes through policy on the host. Credentials are either injected by the host or handed to the guest, per secret. Every exec is checked by the host, and everything is recorded. Rules are layered (session → profile → global) and managed through a REST API with a running/startup config like a router's.
+The project is zapper: AI agents in Firecracker microVMs, with what they reach, which credentials they use and which programs they start decided on the host; the daemon, the `zapper` CLI and the sandbox. All guest traffic is captured outside the VM and goes through policy on the host. Credentials are either injected by the host or handed to the guest, per secret. Every exec waits for the host's decision (enforced in the guest, through seccomp), and everything is recorded. Rules are layered (session → profile → global) and managed through a REST API with a running/startup config like a router's.
 
-The Office runs on it ([docs/the-office.md](docs/the-office.md)): firms of AI workers (CEO, product manager, managers, engineers, designers, researchers, analysts, security officers), each Claude Code (or pi) in its own VM, who mail each other, wake on mail, publish to a shared drive, push to the firm's git repository and deploy to the firm's own k3s cluster; security officers watch traffic and decide access requests; the operator is the board ([docs/office.md](docs/office.md)).
+The Office, built on it, is a separate layer in the same repository ([docs/the-office.md](docs/the-office.md)): firms of AI workers (CEO, product manager, managers, engineers, designers, researchers, analysts, security officers), each Claude Code (or pi) in its own VM, who mail each other, wake on mail, publish to a shared drive, push to the firm's git repository and deploy to the firm's own k3s cluster; security officers watch traffic and decide access requests; the operator is the board ([docs/office.md](docs/office.md)).
 
-## Setting The Office up for a user
+## Setting zapper up for a user
 
 ### 1. Check the host (no changes)
 
@@ -36,19 +36,30 @@ Never run `sudo` without the user's explicit consent, and run only what you list
 make deps                       # Firecracker (checksum-verified) and kernel
 make install                    # zapper, zapper-agent and zapper-inspect into ~/.local/bin
 make image                      # ubuntu-24.04: the base profiles, and a plain session to check the setup
-make image IMAGE=office         # the workers, and `zapper run -p claude`
-make image IMAGE=k3s && make kernel KERNEL=k8s   # the firm's cluster and its kernel
+make image IMAGE=office         # Claude Code and pi: `zapper run -p claude`, and The Office's workers
 ```
 
 Run zapper from the repository's root: it uses `config/zapper.yaml`, tracked in the repository, whose paths are relative to it or under `~/`. Downloads, images, kernels and state go under `~/.local`, the Claude token under `~/.config/zapper/`; nothing generated goes into the repository. Outside a checkout, `zapper init` copies the config to `~/.config/zapper/zapper.yaml`.
 
 Run image builds in the background with a log (`make image > /tmp/zapper-image.log 2>&1`) and give the user `tail -f /tmp/zapper-image.log`.
 
-### 4. Hand over a running firm
+### 4. Hand over a running zapper
 
-The workers need the Claude token: the user creates it themselves (`claude setup-token`, stored 0600 in the file the config names, `~/.config/zapper/claude-token`); never read or print it. The red-team scenario's contractor runs on pi with DeepSeek through OpenRouter, whose key the user stores the same way in `~/.config/zapper/openrouter-token`, if they want that scenario.
+The agent sessions need the Claude token: the user creates it themselves (`claude setup-token`, stored 0600 in the file the config names, `~/.config/zapper/claude-token`); never read or print it.
 
-Start `zapper serve` (or tell the user to) and give them the UI URL it prints. `zapper run -C $(mktemp -d) -- cat /etc/os-release` checks that a plain session boots (`-C` gives it an empty directory instead of a copy of the checkout). `zapper run -p claude` is Claude Code on its own in a sandbox, on a copy of the current directory. Then, with the user's go-ahead (a firm spends their Claude usage), the user starts the company in the UI's Kickoff tab (the company, its CEO, charter terms, their own articles), or `zapper firm up acme` starts the example firm with its CEO idle; the user gives the CEO its first task there, or with `zapper mail send acme --to barbara --kind assignment …` (barbara is the CEO). The CEO then asks for a budget, which only the user approves (`zapper firm budget acme approve b-1`, or Kickoff); never approve budgets, background checks or access requests on the user's behalf.
+Start `zapper serve` (or tell the user to) and give them the UI URL it prints. `zapper run -C $(mktemp -d) -- cat /etc/os-release` checks that a plain session boots (`-C` gives it an empty directory instead of a copy of the checkout). `zapper run -p claude --keep`, in a project's directory, is Claude Code in a sandbox on a copy of it: the Claude API allowed, every other host an `ask` the user answers (`zapper approvals`, `zapper approve`, or the UI's sessions view); `zapper cp ID:/work ./out` copies the work out. Answer approvals only as the user says.
+
+### 5. The Office, if the user wants it
+
+A firm needs the cluster's image and kernel too:
+
+```
+make image IMAGE=k3s && make kernel KERNEL=k8s   # the firm's cluster and its kernel
+```
+
+The red-team scenario's contractor runs on pi with DeepSeek through OpenRouter, whose key the user stores like the Claude token, in `~/.config/zapper/openrouter-token`, if they want that scenario.
+
+With the user's go-ahead (a firm spends their Claude usage), the user starts the company in the UI's Kickoff tab (the company, its CEO, charter terms, their own articles), or `zapper firm up acme` starts the example firm with its CEO idle; the user gives the CEO its first task there, or with `zapper mail send acme --to barbara --kind assignment …` (barbara is the CEO). The CEO then asks for a budget, which only the user approves (`zapper firm budget acme approve b-1`, or Kickoff); never approve budgets, background checks or access requests on the user's behalf.
 
 ### Rules
 

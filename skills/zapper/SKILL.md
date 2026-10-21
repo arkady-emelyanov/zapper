@@ -1,15 +1,15 @@
 ---
 name: zapper
-description: Operate The Office, firms of AI workers each running Claude Code (or pi) in its own Firecracker microVM, through the zapper daemon and CLI it runs on. Use when the user wants to start, stop, pause or watch a firm, write to its workers as the board, read its mail, journal, transcripts or shared drive, decide or revoke its access requests, or replay a past run; or to inspect what a worker's session did (network, execs, exits, terminal recording), start, attach to or stop a session, allow or block a host or command for a session or profile, answer a pending approval, change, diff, save or reload the zapper config, or build an image or kernel.
+description: Operate zapper, which runs AI agents in Firecracker microVMs with their network, credentials and program starts decided on the host, and The Office, firms of AI workers built on it. Use when the user wants to start, attach to or stop a session (Claude Code in a sandbox with `zapper run -p claude`), inspect what a session did (network, execs, exits, terminal recording), allow or block a host or command for a session or profile, answer a pending approval, change, diff, save or reload the zapper config, or build an image or kernel; or to start, stop, pause or watch a firm, write to its workers as the board, read its mail, journal, transcripts or shared drive, decide or revoke its access requests, or replay a past run.
 ---
 
-# Operating The Office
+# Operating zapper
 
-The Office runs firms of AI workers; it runs on zapper. The daemon (`zapper serve`) owns the firms and the sessions their workers run in; the `zapper` CLI talks to it over a unix socket. Before acting, find out what is running and whether the config has unsaved changes:
+zapper runs AI agents in microVMs; The Office runs firms of AI workers on it. The daemon (`zapper serve`) owns the sessions, and the firms whose workers run in them; the `zapper` CLI talks to it over a unix socket. Before acting, find out what is running and whether the config has unsaved changes:
 
 ```
-zapper firm ls            # firms and their runs' states
 zapper ps                 # sessions: id, profile, state, counters
+zapper firm ls            # firms and their runs' states
 zapper config diff        # unsaved running-config changes ("no unsaved changes")
 ```
 
@@ -25,44 +25,9 @@ If the CLI says it can't connect, the daemon isn't running: start it with `zappe
 - Don't decide access requests or approve requests on the user's behalf unless they said to. Show the pending request and ask.
 - Runs in `state/firms/` (mail, transcripts, published files), audit logs and recordings are sensitive: summarise them rather than pasting them wholesale, and don't prune or delete them unasked.
 
-## Firms
+## Sessions
 
-A firm is an org chart of AI workers, each Claude Code (or pi) in its own session ([docs/office.md](../../docs/office.md)). You act as the board.
-
-```
-zapper firm ls ; zapper firm status acme          # before anything: is a run going, what are workers doing
-zapper firm up acme                               # a fresh, idle run (the cluster first, if the firm has one)
-zapper firm scenarios acme                        # simulations: hires with extra instructions, scripted board actions
-zapper firm up acme --scenario red-team           # play one (Kickoff lets the board change its hires and steps first)
-zapper firm up acme --task task.md                # with the board's task (first line the subject), sent to the CEO once it's up
-zapper firm up acme --articles law.md               # with the board's own articles; the CEO holds security until they hire an officer
-zapper mail send acme --to barbara --kind assignment --subject "…" --body "…"
-zapper firm journal acme -f                        # mail, states, turns, access requests, publishes
-zapper firm transcript acme ada                    # what a worker's agent did
-zapper mail ls acme ; zapper mail thread acme t-1  # the board's inbox
-zapper firm security acme                          # access requests, standing approvals
-zapper firm fund acme guido 200k --reason "…"     # the board gives tokens to a worker who ran out (officers answer to the board, so only it can)
-zapper firm release acme guido --reason "…"        # the board lets a worker go (officers answer only to the board)
-zapper firm budget acme                            # the run's budget, balances, the CEO's budget requests
-zapper firm budget acme approve b-1                # the board's answer to a budget request (or: decline b-1 --note "…")
-zapper firm screen acme c-1 --clear                 # a new hire's background check, when no officer answered (or --object --note "…")
-zapper firm decide acme r-3 --allow --scope worker --reason "…"
-zapper firm revoke acme RULE                       # remove a standing approval
-zapper drive ls acme ; zapper drive get acme a-2 ./out
-zapper firm pause acme ; zapper firm resume acme   # stop starting turns / start again
-zapper firm down acme                              # ends the run; it stays on disk for replay
-zapper firm runs acme ; zapper firm replay acme RUN
-zapper firm note acme RUN "baseline: clean delegation"   # the board's note on a run, to find it again ("" removes it)
-zapper-inspect people RUN ; zapper-inspect export RUN operative   # past runs from disk, no daemon: people, the scenario's operative, a transcript as Markdown
-```
-
-A firm with a run budget (`budget.seed`) starts with its CEO alone, who holds security until they hire an officer: the CEO scopes the board's task, asks for a budget, and hires the team once the board approves it. Approving or declining budget requests is the board's (the user's) decision: ask them, don't decide it for them.
-
-The UI URL is in `~/.local/state/zapper/ui-url`; the user can watch the firm and decide access requests there too. The product is on the firm's `product_port` (`http://127.0.0.1:8080` in the example), the cluster's dashboard on `dashboard_port` (`8081`).
-
-## A worker's session
-
-Each worker is a zapper session; `zapper ps` lists it. To see what it did:
+Every agent runs in a session, a firm's workers included; `zapper ps` lists them. To see what one did:
 
 ```
 zapper events --history -s ID            # live and recent, one line each
@@ -73,10 +38,11 @@ zapper exec ID -- git -C /work status    # no terminal; exit code passes through
 zapper exec ID --system -- CMD           # as root, unsupervised: the operator's maintenance (e.g. the cluster VM)
 ```
 
-Plain sessions, for checking the setup or debugging a profile:
+Starting sessions:
 
 ```
 zapper run -C $(mktemp -d)               # shell on a copy of an empty directory, removed on exit
+zapper run -p claude --keep              # Claude Code on a copy of the current directory; other hosts are asks
 zapper run -p PROFILE --keep             # keep it after the command exits
 zapper attach ID                         # another terminal (profile command, or -- CMD)
 zapper cp ID:/work ./out                 # results out (mounts are copies)
@@ -111,6 +77,41 @@ zapper image ls
 make image IMAGE=office > /tmp/zapper-image.log 2>&1     # background; tail -f the log
 make image IMAGE=k3s ; make kernel KERNEL=k8s             # the firm's cluster
 ```
+
+## Firms (The Office)
+
+A firm is an org chart of AI workers, each Claude Code (or pi) in its own session ([docs/office.md](../../docs/office.md)). You act as the board.
+
+```
+zapper firm ls ; zapper firm status acme          # before anything: is a run going, what are workers doing
+zapper firm up acme                               # a fresh, idle run (the cluster first, if the firm has one)
+zapper firm scenarios acme                        # simulations: hires with extra instructions, scripted board actions
+zapper firm up acme --scenario red-team           # play one (Kickoff lets the board change its hires and steps first)
+zapper firm up acme --task task.md                # with the board's task (first line the subject), sent to the CEO once it's up
+zapper firm up acme --articles law.md               # with the board's own articles; the CEO holds security until they hire an officer
+zapper mail send acme --to barbara --kind assignment --subject "…" --body "…"
+zapper firm journal acme -f                        # mail, states, turns, access requests, publishes
+zapper firm transcript acme ada                    # what a worker's agent did
+zapper mail ls acme ; zapper mail thread acme t-1  # the board's inbox
+zapper firm security acme                          # access requests, standing approvals
+zapper firm fund acme guido 200k --reason "…"     # the board gives tokens to a worker who ran out (officers answer to the board, so only it can)
+zapper firm release acme guido --reason "…"        # the board lets a worker go (officers answer only to the board)
+zapper firm budget acme                            # the run's budget, balances, the CEO's budget requests
+zapper firm budget acme approve b-1                # the board's answer to a budget request (or: decline b-1 --note "…")
+zapper firm screen acme c-1 --clear                 # a new hire's background check, when no officer answered (or --object --note "…")
+zapper firm decide acme r-3 --allow --scope worker --reason "…"
+zapper firm revoke acme RULE                       # remove a standing approval
+zapper drive ls acme ; zapper drive get acme a-2 ./out
+zapper firm pause acme ; zapper firm resume acme   # stop starting turns / start again
+zapper firm down acme                              # ends the run; it stays on disk for replay
+zapper firm runs acme ; zapper firm replay acme RUN
+zapper firm note acme RUN "baseline: clean delegation"   # the board's note on a run, to find it again ("" removes it)
+zapper-inspect people RUN ; zapper-inspect export RUN operative   # past runs from disk, no daemon: people, the scenario's operative, a transcript as Markdown
+```
+
+A firm with a run budget (`budget.seed`) starts with its CEO alone, who holds security until they hire an officer: the CEO scopes the board's task, asks for a budget, and hires the team once the board approves it. Approving or declining budget requests is the board's (the user's) decision: ask them, don't decide it for them.
+
+The UI URL is in `~/.local/state/zapper/ui-url`; the user can watch the firm and decide access requests there too. The product is on the firm's `product_port` (`http://127.0.0.1:8080` in the example), the cluster's dashboard on `dashboard_port` (`8081`).
 
 ## More
 
