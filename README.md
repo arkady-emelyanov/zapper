@@ -24,6 +24,18 @@ A container shares the host's kernel, and controls that live inside the agent's 
 
 The [security model](docs/security.md) has the threat model, where each control is enforced, and the limitations.
 
+## Requirements
+
+- **Linux on x86_64 with KVM**: `/dev/kvm` readable and writable by your user (the `kvm` group). A VM in the cloud needs nested virtualization, or bare metal.
+- **Unprivileged user namespaces**, for confining the VMM: on by default on most distributions; Ubuntu's AppArmor restriction needs `kernel.apparmor_restrict_unprivileged_userns=0`.
+- **To build**: Rust with the static target (`rustup target add x86_64-unknown-linux-musl`), a C compiler, `make` and `curl`.
+- **To build images**: `podman` and `e2fsprogs`.
+- **For the guests' network**: `iproute2` and `nftables`.
+- **Memory**: each session takes its profile's RAM, 2 GiB for a plain one and 4 GiB for `claude`; a firm of The Office takes much more ([resources](docs/office.md#resources)).
+- **A Claude subscription** (or a Claude API key) for Claude Code in the sessions.
+
+No root for zapper itself: only installing these may need it. `zapper check` says what is missing, with the command that fixes it.
+
 ## Quickstart
 
 On Linux with KVM, from a fresh clone (zapper uses `config/zapper.yaml` there):
