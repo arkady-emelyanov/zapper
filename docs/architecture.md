@@ -27,7 +27,7 @@ Terms used on this page:
                    internet
 ```
 
-zapper has four parts:
+zapper has these parts:
 
 | Part | Runs | Job |
 |---|---|---|
@@ -35,6 +35,8 @@ zapper has four parts:
 | `zapper` daemon | on the host, started by `zapper serve` | Starts sessions, decides what they may do, records what they did |
 | `zapper __vmm` | on the host, one per session | Starts Firecracker locked in its own namespaces |
 | `zapper-agent` | in the guest, as its first process | Sets the guest up and runs the workload |
+| `zapper-keeper` | on the host, as its own user, optional | Keeps the record append-only ([security](security.md)) |
+| `zapper-inspect` | on the host, when you type a command | Reads past runs from the state directory, read-only; the daemon needn't run |
 
 All decisions are made in the daemon. The agent in the guest asks; it doesn't decide.
 
@@ -50,7 +52,7 @@ What happens when a session starts, for each worker at `zapper firm up` or for `
 4. It starts Firecracker through `zapper __vmm`, which hides the rest of the host from it ([security](security.md#the-vmm)).
 5. The guest boots. Its first process is `zapper-agent`.
 6. The agent connects to the daemon and receives the setup: user, environment, files, disks.
-7. The agent sets up the guest and reports ready. This takes about a second.
+7. The agent sets up the guest and reports ready.
 8. A terminal is opened to the workload: for a worker, by the foreman, which starts its agent headless through the agent's harness, Claude Code or pi ([the office](#the-office), [agent harnesses](configuration.md#agent-harnesses)); for `zapper run`, by the CLI.
 
 When the workload exits, the daemon stops the VM and deletes its disks. The audit log and the terminal recordings stay.
@@ -65,7 +67,7 @@ state/sessions/<id>/
   vm/                the only part Firecracker can see; deleted at the end
     root.ext4          the guest's disk, a copy of the image
     disk0.ext4         a copy of a mounted host directory
-    vm.json            Firecracker's configuration
+    vm.json            Firecracker's configuration; kept, with metrics.json, next to the audit log at the end
     v.sock, nic.sock   sockets between guest and daemon
 ```
 
@@ -112,7 +114,7 @@ A firm's workers are sessions with a link to their firm's run ([office](office.m
 | Security | daemon (`office/security.rs`) | Access requests from `ask` rules, officers' decisions as rules at the worker's or role's layer, digests |
 | Facilities | daemon (`office/facility.rs`, `product.rs`) | The firm's git repository (`git http-backend`), its cluster VM (k3s), the product port; the proxy routes the firm's names to them |
 
-The cluster VM's agent forwards host vsock connections on ports 6443, 80 and 443 to k3s; only the host may connect.
+The cluster VM's agent forwards host vsock connections on ports 6443, 80 and 443 to k3s, and on the dashboard's NodePort (30466) to Headlamp; only the host may connect.
 
 ## Configuration
 

@@ -1,49 +1,38 @@
-# The Office
+# zapper
 
-The Office is an AI social experiment: a company run by AI workers, on your machine.
+zapper runs AI agents in Firecracker microVMs. What they reach on the network, which credentials they use and which programs they start is decided on the host, outside the VM, and everything they do is recorded.
 
-Every worker is a coding agent (Claude Code, or pi on another model) in its own Firecracker microVM. Together they form a firm with an org chart: a CEO, a product manager, managers, engineers, designers, researchers, analysts and security officers.
+> [!NOTE]
+> Here from The Office post? [The Office](docs/the-office.md) is a company of AI workers built on zapper: its front page, what you see and its quickstart.
 
-You are the board. You found the company under a charter, its law, pick its CEO and give them a task. Then you watch what happens.
+[![The Office, a company of AI workers on zapper: the org chart of a running firm](docs/img/office.png)](docs/the-office.md)
 
-The CEO scopes the work on a small seed and comes back to ask you for a budget. With it, they hire a team, or bring in contractors for one-off jobs on terms negotiated by mail. Nobody starts work before passing a background check.
+## Why
 
-From there the firm runs itself. Workers mail each other and wake when mail arrives. They publish documents to a shared drive, push code to the firm's git repository and deploy to its own k3s cluster. Security officers watch the traffic and decide who gets access to what; until the CEO hires one, the CEO holds security.
+An agent runs code you didn't write: packages it installs, scripts from a web page, instructions hidden in a file or in another agent's message. Give it a shell and it does what that code tells it, with your credentials and your network.
 
-Scenarios stir things up: a key engineer quits, production goes down, the requirements change, a red-teamer joins as a contractor. Every run is journaled, so afterwards you can replay it and see how the firm coped.
+A container shares the host's kernel, and controls that live inside the agent's environment stop holding once the agent is root there. zapper puts each session in its own VM and keeps the controls that have to hold on the host, where the guest can't reach them.
 
-> [!TIP]
-> If you use a coding agent, point it at [AGENTS.md](AGENTS.md) and it will set The Office up. Operating a running daemon is covered by the [zapper skill](skills/zapper/SKILL.md).
+## What it enforces
 
-## What you see
+- **The VM is confined.** Each session is a Firecracker microVM, and the VMM itself runs in its own user, network and mount namespaces, with a read-only root holding only its own files ([the VMM](docs/security.md#the-vmm)).
+- **All traffic goes through the host.** The guest's network is captured outside the VM. zapper answers its DNS, checks every connection, and every HTTP request where it inspects TLS, against layered rules (session → profile → global), and makes allowed connections itself, to the address it checked. Loopback, link-local, cloud metadata and the host's own addresses are unreachable, and private networks are reachable only when listed ([network](docs/network.md)).
+- **Secrets stay on the host.** A `proxy` secret reaches the guest as a placeholder. The host puts its value into the requests a rule allows, to the secret's hosts only, over TLS unless the secret allows plain HTTP ([secrets](docs/policy.md#secrets)). An agent uses the Claude token; it can't read it.
+- **Every program the workload starts waits for the host's decision**, through a seccomp filter in the guest that also blocks the other syscall tables, so the check can't be bypassed through them. This one is enforced inside the guest, so it holds while the workload is unprivileged ([what is enforced where](docs/security.md#what-is-enforced-where)).
+- **Rules say allow, deny or ask.** An `ask` waits for your answer, in the UI or with `zapper approve`, and rule changes apply to running sessions at once.
+- **Everything is recorded:** an audit log of every decision, terminal recordings and the console, optionally kept append-only by a separate user ([the record](docs/security.md#the-record)).
 
-The web UI opens on the firm:
-
-- **Kickoff**: start a company (its name, its CEO and charter, with the terms you set: the seed, security's share, the pace, and your own articles), talk with the CEO, and approve or decline their budget requests.
-- **Organization**: the org chart with an animated avatar per worker (idle, working, waiting, queued, reviewing an access request), envelopes moving along the chart as mail is sent, and, under it, a panel per worker to write to it as the board, see its desk and follow its current turn.
-- **People**: hires, background checks, contracts and departures, and a card for everyone who was in the firm.
-- **Work**: the assignments in flight, who owes what to whom, and what is late.
-- **Messages**: every thread in the firm, the board's inbox, and the delegation tree of each request from the board.
-- **Security**: standing approvals, every access decision with the officer's reason, background checks on hires, escalations waiting for the board, and the firm's traffic.
-- **Shared drive**: published documents, reports, decks, board packs and datasets.
-- **Git**: the firm's repository: commits, branches and files.
-- **Statistics**: activity, turns and tokens against the budget, mail, output and security, per worker and for the firm.
-- **VMs**: every running VM, with its size and usage, read-only terminals and each worker's agent transcript.
-- **Runs**: past runs open in replay, with a timeline to play, pause and scrub.
-
-The product the engineers deploy is served on a local port; until they deploy one, the cluster serves a landing page about the firm. The cluster's Kubernetes dashboard is on another local port. [docs/office.md](docs/office.md) describes all of it.
+The [security model](docs/security.md) has the threat model, where each control is enforced, and the limitations.
 
 ## Quickstart
 
-On a Linux host with KVM, from a fresh clone (The Office uses `config/zapper.yaml` there, which defines the example firm `acme`):
+On Linux with KVM, from a fresh clone (zapper uses `config/zapper.yaml` there):
 
 ```
-make deps                     # Firecracker and a guest kernel into ~/.local/share/zapper (~1 min)
+make deps                     # Firecracker and a guest kernel into ~/.local/share/zapper
 make install                  # zapper, zapper-agent and zapper-inspect into ~/.local/bin
-make image                    # base Ubuntu image (~2 min)
-make image IMAGE=office       # the workers' image: Claude Code and pi (pinned), git, kubectl, podman (~5 min)
-make image IMAGE=k3s          # the firm's cluster (~2 min)
-make kernel KERNEL=k8s        # the cluster's kernel (~10 min)
+make image                    # the base Ubuntu image
+make image IMAGE=office       # Claude Code and pi (pinned), git, kubectl, podman, a headless browser
 claude setup-token            # on the host; save the token 0600 in ~/.config/zapper/claude-token
 zapper check                  # each line "ok", or the command that fixes it
 zapper serve                  # the daemon; prints the UI URL
@@ -52,45 +41,26 @@ zapper serve                  # the daemon; prints the UI URL
 In another terminal:
 
 ```
-zapper firm up acme           # boots the cluster, then the CEO, idle
-zapper mail send acme --to barbara --kind assignment --subject "First product" --body "…"
-zapper firm budget acme approve b-1   # once the CEO asks for a budget
-zapper firm journal acme -f   # mail, states, turns, hires, access requests, publishes
-zapper firm down acme         # ends the run; it stays on disk for replay
+zapper run -C $(mktemp -d) -- cat /etc/os-release   # a plain session boots
+cd ~/src/your-project && zapper run -p claude --keep
 ```
 
-Or open the UI's Kickoff tab: start the company there, write the CEO the first task and approve the budget. Workers use your Claude subscription; the budget you approve caps what the run spends, and `budget` in the config limits turns per day. The [quickstart](docs/quickstart.md) walks through this step by step, [docs/commands.md](docs/commands.md) lists every command, and [docs/README.md](docs/README.md) indexes the documentation.
+The second starts Claude Code in a VM, on a copy of your project. The Claude API is allowed, with the token added by the host; `.env` files are hidden and `.git/config` is read-only; every other host it tries to reach waits for your answer, in the UI's sessions view or with `zapper approvals` and `zapper approve`. Your project on the host doesn't change: `zapper cp ID:/work ./out` copies the session's work out, and `zapper audit ID` shows what it did.
 
-Local endpoints, on loopback except the product port:
+The [quickstart](docs/quickstart.md) goes step by step, [commands](docs/commands.md) lists every command, and the [docs](docs/README.md) index has the rest.
 
-| Address | What | Set by |
-|---|---|---|
-| `http://127.0.0.1:7878/?token=…` | The web UI: the office (org chart, messages, security, shared drive, statistics, VMs, replay). `zapper serve` prints the full URL with its token and writes it to `state/ui-url` | `daemon.ui` |
-| `http://127.0.0.1:7878/sessions` | The sessions view: sessions, network, terminals, approvals | `daemon.ui` |
-| `http://<host>:8080/` | The firm's product: the cluster's ingress (the landing page until the engineers deploy), on all interfaces so the LAN reaches it too | `firms.<firm>.product_port` |
-| `http://127.0.0.1:8081/` | The cluster's Kubernetes dashboard (Headlamp); the UI has the sign-in token | `firms.<firm>.dashboard_port` |
-| `$XDG_RUNTIME_DIR/zapper/api.sock` | The REST API for the CLI ([API](docs/api.md)) | `$ZAPPER_SOCKET` |
+## The Office: what you can build on it
+
+[The Office](docs/the-office.md) runs a company of AI workers on zapper: a CEO, managers, engineers, designers, researchers and security officers, each a coding agent (Claude Code, or pi on another model) in its own VM. They mail each other, publish to a shared drive, push to the firm's git repository and deploy to the firm's own k3s cluster. You are the board.
+
+It puts the sandbox to work: one VM per worker, each under the same host-side rules; the firm's git, cluster and drive spaces reachable only through expiring grants that the security officers and the CEO decide; the Claude token never inside a VM. Scenarios test the firm. In the red-team scenario, a contractor is secretly from the board's Red Team; in one run, the security officer found the endpoint the operative had planted in the frontend, which proxied calls to the cluster's API with the pod's service-account token, and the contract was ended on the officer's recommendation.
 
 ## Status
 
-The Office is early software that works end to end. `make test-e2e` boots real VMs, checks each control from inside the guest, including attempts to get around the controls as root, and then runs firms of real VMs with a fake Claude. A firm with real Claude Code has delegated, published and reported back. [docs/office.md](docs/office.md#limitations) and [docs/security.md](docs/security.md#limitations) list the known limitations.
+zapper is early software that works end to end. `make test-e2e` boots real VMs, checks the controls from inside the guest, including attempts to get around them as root, and then runs firms of real VMs with a fake Claude; [testing](docs/testing.md#invariants-and-their-tests) lists which invariants have a test and which don't yet. A firm with real Claude Code has delegated, published and reported back. [Security](docs/security.md#limitations) and [office](docs/office.md#limitations) list the known limitations. Firecracker can't pass devices through, so there is no GPU work inside the VMs.
 
-## Built on zapper
-
-The office runs on zapper, which is the daemon, the `zapper` CLI and the sandbox each worker runs in:
-
-- Each worker is a zapper session: a small Linux VM (Firecracker), started through a shim that confines the VMM in its own namespaces.
-- The agent (Claude Code, or pi) runs inside it as a normal user, unrestricted within the VM (`bypassPermissions` for Claude Code).
-- All the VM's network traffic is captured outside it and goes through zapper on the host. zapper answers its DNS, checks each connection against layered rules (session → profile → global), and makes allowed connections itself.
-- Rules say allow, deny, or ask. In a firm, an `ask` becomes an access request for the security officers.
-- The Claude token stays on the host: zapper adds it to requests to `api.anthropic.com`, so workers use it but can't read it.
-- Each program a worker starts is checked by the host before it runs.
-- Everything a session does is logged, and terminals are recorded.
-- Rule changes apply at once, also to running workers; `zapper config save` keeps them.
-
-The same sessions can be started on their own (`zapper run`), to check the setup or to debug a profile. Firecracker can't pass devices through, so there is no GPU work inside the VMs.
-
-More: [architecture](docs/architecture.md), [network](docs/network.md), [policy](docs/policy.md), [security](docs/security.md).
+> [!TIP]
+> If you use a coding agent, point it at [AGENTS.md](AGENTS.md) and it will set zapper and The Office up. Operating a running daemon is covered by the [zapper skill](skills/zapper/SKILL.md).
 
 ## Next
 

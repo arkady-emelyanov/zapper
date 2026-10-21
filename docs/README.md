@@ -2,13 +2,7 @@
 
 # Documentation
 
-The Office:
-
-- [Office](office.md): firms of AI workers, one VM each: mail and wake-ups, the shared drive, security officers, the cluster, the UI, replay.
-- [Office prompts](office-prompts.md): the preamble, wake prompts, follow-ups, officers' prompts and an example kickoff.
-- [Quickstart](quickstart.md): from a fresh clone to a running firm.
-
-The machinery: zapper, the daemon, CLI and sandbox the office runs on:
+zapper, the daemon, CLI and sandbox:
 
 - [Architecture](architecture.md): components, a session's life, channels, exec supervision, the office's parts in the daemon.
 - [Network](network.md): NIC and vsock modes, DNS, how connections are decided, address checks.
@@ -19,4 +13,11 @@ The machinery: zapper, the daemon, CLI and sandbox the office runs on:
 - [Instrumentation](instrumentation.md): events, audit logs, terminal recordings and the UI.
 - [API](api.md): the REST API on the unix socket, and the UI's API.
 - [Commands](commands.md): `zapper` commands and `make` targets.
-- [Testing](testing.md): unit and end-to-end tiers, the attack probe, manual scenarios.
+- [Testing](testing.md): unit and end-to-end tiers, the attack probe, manual scenarios, and which invariant each test covers.
+
+The Office, a company of AI workers built on zapper:
+
+- [The Office](the-office.md): what it is, what you see, scenarios, and its quickstart.
+- [Quickstart](quickstart.md): from a fresh clone to a running firm, step by step.
+- [Office reference](office.md): firms of AI workers, one VM each: mail and wake-ups, the shared drive, security officers, the cluster, the UI, replay.
+- [Office prompts](office-prompts.md): the preamble, wake prompts, follow-ups, officers' prompts and an example kickoff.

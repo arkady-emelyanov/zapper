@@ -4,7 +4,7 @@
 
 ## Overview
 
-The zapper daemon serves the API, for The Office and the sessions under it, on its unix socket, mode 0600 in a 0700 directory; whoever can open the socket can use the API. Request bodies are YAML or JSON, and responses are JSON unless noted. Errors are `{"error": "…"}` with status 400 or 404. The UI serves the routes marked **ui** under `/api` on its TCP address, behind its token: the reads, answering approvals, and the board's writes to firms ([instrumentation: the UI](instrumentation.md#the-ui)).
+The zapper daemon serves the API, for The Office and the sessions under it, on its unix socket, mode 0600 in a 0700 directory; whoever can open the socket can use the API. Request bodies are YAML or JSON (JSON only for a firm's `up` and `drive/upload`), and responses are JSON unless noted. Errors are `{"error": "…"}` with status 400 or 404. The UI serves the routes marked **ui** under `/api` on its TCP address, behind its token: the reads, answering approvals, and the board's writes to firms ([instrumentation: the UI](instrumentation.md#the-ui)).
 
 ```
 curl --unix-socket $XDG_RUNTIME_DIR/zapper/api.sock http://zapper/v1/status

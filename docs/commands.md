@@ -10,7 +10,7 @@
 | `make build` | Release build of the static musl `zapper-agent`, `zapper` and `zapper-inspect`, in `target/release` |
 | `make install` | Install the three into `~/.local/bin` (set `PREFIX` for another place) |
 | `make image [IMAGE=name]` | Build an image from a recipe in the Makefile: `office` (office workers: Claude Code and pi at pinned versions, git, kubectl, podman, a headless browser), `k3s` (a firm's cluster), and `ubuntu-24.04` (default; the base profiles) |
-| `make kernel [KERNEL=k8s]` | Build a guest kernel from the Firecracker config plus `config/kernel/<name>.config`, in a container; `k8s` is the cluster's (~10 min) |
+| `make kernel [KERNEL=k8s]` | Build a guest kernel from the Firecracker config plus `config/kernel/<name>.config`, in a container; `k8s` is the cluster's |
 | `make check` | `zapper check` |
 | `make test` | Unit tests |
 | `make lint` / `make fmt` / `make hooks` | rustfmt and clippy with warnings as errors / format the code / use the repository's pre-commit hook, which runs `make lint` |
@@ -23,8 +23,8 @@ Reads past runs from disk, read-only; the daemon needn't run. It takes the state
 
 | Command | Purpose |
 |---|---|
-| `zapper-inspect` | On a terminal, a small TUI: the runs; Enter shows a run's people, `o` jumps to the scenario's operative, `e` exports the selected worker's transcript as Markdown and `r` as raw JSONL, into the current directory; ← or Esc goes back, `q` quits |
-| `zapper-inspect runs` | Every firm's runs, newest first: company, scenario, people, mail, the scenario's operatives, the board's task |
+| `zapper-inspect [tui]` | On a terminal (or with `tui`), a small TUI: the runs; Enter shows a run's people, `o` jumps to the scenario's operative, `e` exports the selected worker's transcript as Markdown and `r` as raw JSONL, into the current directory; ← or Esc goes back, `q` quits |
+| `zapper-inspect runs` | (the default when stdout isn't a terminal) Every firm's runs, newest first: company, scenario, people, mail, the scenario's operatives, the board's task |
 | `zapper-inspect people RUN` | A run's people: role, title, model, who hired them, whether they left and why; a scenario's operatives (the red team's contractor) marked ★. RUN is an id or a prefix of one |
 | `zapper-inspect operatives RUN` | The names of a run's operatives, one per line |
 | `zapper-inspect export RUN WORKER [--raw] [-o FILE]` | A worker's transcript (`operative` for the scenario's) as Markdown: their details and, for an operative, the board's instructions to their slot, then each wake with what they thought, said and called and what came back. `--raw` copies the JSONL as recorded; `-o -` writes to stdout. Default file: `RUN-WORKER.md` |
@@ -101,4 +101,5 @@ zapper firm decide acme r-3 --allow --scope worker --reason "package index for t
 zapper events --history -s tusn49            # what one worker's session did so far
 zapper eval -p office-engineer net git.acme.internal:443   # the decision, its rule and layer
 zapper run -C $(mktemp -d)                   # a plain shell session, removed on exit
+zapper run -p claude --keep                  # Claude Code on a copy of the current directory; zapper cp ID:/work ./out
 ```

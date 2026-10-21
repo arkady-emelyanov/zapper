@@ -17,7 +17,7 @@ The office runs on zapper, which provides the sandbox: each worker is a zapper s
 |---|---|
 | Firm | One org chart and everything it produces. Defined under `firms:` in the config. Several can exist; usually one runs. |
 | Worker | One named member of the firm, one VM, one agent (Claude Code or pi). Names are unique in the firm and are its mail address (`barbara`, `dennis`, `ada`, `radia`). |
-| Role | A template for workers: skills, profile, model, avatar. `ceo`, `product-manager`, `manager`, `engineer`, `designer`, `researcher`, `analyst`, `security-officer`, or one defined in the config. |
+| Role | A template for workers: skills, profile, model, avatar. `ceo`, `cto`, `product-manager`, `manager`, `engineer`, `designer`, `researcher`, `analyst`, `security-officer`, or one defined in the config. |
 | Board | The operator. Not a VM; an address (`board`) that can mail anyone and receives reports. |
 | Mail | A message from one address to others, in a thread, with optional attachments from the shared drive. |
 | Desk | A worker's open work: threads assigned to it, threads where it waits for a reply, pending access requests. |
@@ -57,7 +57,7 @@ firms:
         skills: { work: software-engineer }
         avatar: { figure: engineer, color: "#6A9BCC" }
       security-officer:
-        profile: office-security           # wide network, no secrets
+        profile: office-security           # wide network; no secret but the Claude token
         skills: { work: security-review }
         officer: true                      # hired, they take security over once cleared
         avatar: { figure: shield, color: "#788C5D" }
@@ -86,7 +86,7 @@ The office adds to each worker's profile at boot: the preamble (in `~/.claude/CL
 
 ### What a worker knows at the start
 
-Only its skills and who it is. A worker boots with its skills and a short generated preamble in `CLAUDE.md`: its name, title, manager, direct reports, and the firm's services it can reach ([prompts](office-prompts.md#office-preamble)). Nothing in the config says what the firm builds. The product comes from the board's first message to the CEO, and from there through the CEO's and the product manager's decisions, mailed down as assignments and published as documents on the shared drive. Two runs of the same firm with different kickoff messages build different products.
+Only its skills and who it is. A worker boots with its skills and a short generated preamble in `CLAUDE.md`: its name, title, manager, direct reports, the firm's services, and the charter ([prompts](office-prompts.md#office-preamble)). Nothing in the config says what the firm builds. The product comes from the board's first message to the CEO, and from there through the CEO's and the product manager's decisions, mailed down as assignments and published as documents on the shared drive. Two runs of the same firm with different kickoff messages build different products.
 
 ### Validation
 
@@ -240,7 +240,7 @@ An `assignment` from someone without authority over the receiver is rejected wit
 
 | Tool | Does |
 |---|---|
-| `mail_send(to, cc?, subject?, body, kind, expects?, due?, attachments?)` | Start a thread; without a subject, its first line names it |
+| `mail_send(to, cc?, subject?, body, kind, expects?, due?, attachments?, follow_up?)` | Start a thread; without a subject, its first line names it |
 | `mail_reply(message, body, kind?, attachments?, close?, all?)` | Reply in a thread, to the sender (`all`: everyone in it); `close` marks the assignment done |
 | `mail_inbox(unread?)` | List messages with sender, subject, kind, thread, and how many are unread. With nothing unread, and in `desk()` and `credentials()` while answers or decisions are pending, a `note` says that mail wakes the worker and not to check again: agents that poll instead of ending their turn waste it |
 | `mail_read(message)` | One message with its body |
@@ -366,7 +366,7 @@ Mail bodies use the same renderer.
 
 ## Security officers
 
-A security officer is a worker whose profile allows wide internet access (everything except private networks, the host and cloud metadata, which `final` rules keep closed) and holds no secrets. It does two jobs: it **watches all the firm's traffic**, and it **decides access requests**, turning the good ones into standing approvals so the same request doesn't need deciding again.
+A security officer is a worker whose profile allows wide internet access (everything except private networks, the host and cloud metadata, which stay closed) and holds no secret but its Claude token. It does two jobs: it **watches all the firm's traffic**, and it **decides access requests**, turning the good ones into standing approvals so the same request doesn't need deciding again.
 
 ### Watching traffic
 
@@ -445,7 +445,7 @@ Facilities are reached by name under the firm's `domain`, through the same proxy
 A facility VM running k3s on one node, booted first by `firm up`. Workers boot once its API answers.
 
 - **Image** `k3s`: Ubuntu with a pinned k3s release (version and checksum in the Makefile) and its air-gap image bundle, so the cluster starts without the internet. Traefik is the ingress and k3s's service load balancer binds it to ports 80 and 443 on the node; flannel uses `host-gw`.
-- **Kernel** `vmlinux-6.1-k8s`. Firecracker boots one kernel file from the host, not a kernel from the image, and the standard one is built without loadable modules, so nothing can be installed into it. Kubernetes needs netfilter matches (`comment`, `statistic`, `multiport`, `mark`, `addrtype`), ipset and more cgroup controllers, so `make kernel KERNEL=k8s` builds the same 6.1 source and config with a fragment that adds them (`config/kernel/k8s.config`), inside podman, once, in about 10 minutes. `k3s check-config` passing in the VM is an e2e check. Worker VMs keep the standard kernel.
+- **Kernel** `vmlinux-6.1-k8s`. Firecracker boots one kernel file from the host, not a kernel from the image, and the standard one is built without loadable modules, so nothing can be installed into it. Kubernetes needs netfilter matches (`comment`, `statistic`, `multiport`, `mark`, `addrtype`), ipset and more cgroup controllers, so `make kernel KERNEL=k8s` builds the same 6.1 source and config with a fragment that adds them (`config/kernel/k8s.config`), inside podman, once. The office e2e tests boot a cluster on it. Worker VMs keep the standard kernel.
 - **Inbound**: the agent in the cluster VM forwards vsock ports to `127.0.0.1:6443`, `:80` and `:443`. Only the host (CID 2) can connect, as with terminals; the daemon connects when a worker's allowed connection to a facility name arrives.
 - **Egress**: the cluster pulls images through the proxy like any session. The example profile allows the common registries on port 443 (`registry-1.docker.io`, `auth.docker.io`, Docker's blob host, `ghcr.io` and its blob host, `quay.io`); anything else asks the officers. The air-gap bundle includes busybox, which needs no pull. The request names the facility instead of a worker. Kubernetes retries pulls by itself, so an approval takes effect without anyone being woken.
 - **No shell for workers**: engineers get the API and the ingress, nothing on the node. The board can `zapper exec --system` into the cluster VM.
@@ -537,7 +537,7 @@ The first tab, where the UI opens. The board talks only with the CEO here:
 
 While no company is running, every firm tab (Organization, People, Work, Messages, Security, Shared drive, Git, Statistics) shows one page, "The firm is off", with **Go to Kickoff**; Kickoff and Runs work as always, and VMs lists the daemon's VMs under a "No company is running" line with **Go to Kickoff**.
 
-- **Org chart**: the live tree, top to bottom: the founders, and each hire as they join (a node fades in under the hirer); someone let go leaves it. With a run budget, each node has a bar of what they spent of what they were given (amber under 15% left, red when out). Envelopes fly from sender to recipients as mail is sent; the post office's automatic notices fly from its box at the top right. A legend at the right lists the states' colors, the budget bar and the marks on a node (unread mail, a pending access request, overdue work, a contractor's dashed outline, a coloured frame for a worker on another agent than Claude Code). Under each title is the worker's model, and its agent when it isn't Claude Code ("pi · Qwen3.8-27B-NVFP4"); Statistics compares agents and models (workers, turns, tokens, tokens per turn) when a run has more than one. Each node is the worker's animated avatar, name, title and a one-line status ("drafting pricing.md", "waiting for ada", "overdue: 1"). Envelopes animate along the edges as mail is sent, also between workers who aren't directly connected; a badge shows unread mail. The board sits above the CEO as its own node.
+- **Org chart**: the live tree, top to bottom: the founders, and each hire as they join (a node fades in under the hirer); someone let go leaves it. With a run budget, each node has a bar of what they spent of what they were given (amber under 15% left, red when out). Envelopes fly from sender to recipients as mail is sent; the post office's automatic notices fly from its box at the top right. A legend at the right lists the states' colors, the budget bar and the marks on a node (unread mail, a pending access request, overdue work, a contractor's dashed outline, a coloured frame for a worker on another agent than Claude Code). Under each title is the worker's model, and its agent when it isn't Claude Code ("pi · deepseek-v4.1-flash"); Statistics compares agents and models (workers, turns, tokens, tokens per turn) when a run has more than one. Each node is the worker's animated avatar, name, title and a one-line status ("drafting pricing.md", "waiting for ada", "overdue: 1"). Envelopes animate along the edges as mail is sent, also between workers who aren't directly connected; a badge shows unread mail. The board sits above the CEO as its own node.
 - **People**: the log of hiring and firing, newest first (hires with who hired them, the budget and the reason; background checks; contract steps; departures with who let them go and why; a scenario's actions), and below it a card for everyone who was in the firm, including those who left, with a Communication list of every message they sent or received. Live and in replay.
 - **Click a worker** to open their panel, under the org chart in columns (elsewhere, as when Kickoff opens the CEO's, it slides in from the side):
   - **Write as the board**: a message (the subject is optional: the first line names the thread otherwise), kind (`assignment`, `question`, `fyi`), `due`, attachments from the shared drive or small files from the board's computer (up to 10 files, 5 MiB together, stored on the shared drive as the board's artifact). It starts a new thread; to answer in an existing one, reply in the thread in Messages.

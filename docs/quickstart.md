@@ -2,7 +2,7 @@
 
 # Quickstart
 
-From a fresh clone to a running firm: the example firm `acme`, a CEO who hires the team, and a cluster to deploy to. About 30 minutes, most of it downloads and the cluster's kernel build.
+From a fresh clone to a running firm: the example firm `acme`, a CEO who hires the team, and a cluster to deploy to.
 
 ## 1. What you need
 
@@ -20,8 +20,8 @@ From a fresh clone to a running firm: the example firm `acme`, a CEO who hires t
 
 ```
 git clone <this repository> && cd zapper
-make deps         # downloads Firecracker and a guest kernel (~1 min)
-make install      # builds zapper and puts it in ~/.local/bin (~2 min)
+make deps         # downloads Firecracker and a guest kernel
+make install      # builds zapper, zapper-agent and zapper-inspect into ~/.local/bin
 ```
 
 zapper is the daemon and CLI the office runs on. Run it from the repository's root: it uses `config/zapper.yaml` there, and paths in it are relative to that file or under your home. Outside a checkout, `zapper init` copies it to `~/.config/zapper/zapper.yaml`. The config defines the firm `acme` and the profiles its workers run with; a profile is a recipe for a VM: which image, which command, which rules.
@@ -29,10 +29,10 @@ zapper is the daemon and CLI the office runs on. Run it from the repository's ro
 ## 3. Images and the cluster's kernel
 
 ```
-make image                    # the base Ubuntu image (~2 min)
-make image IMAGE=office       # the workers: Claude Code and pi (pinned), git, kubectl, podman (~5 min)
-make image IMAGE=k3s          # the firm's cluster (~2 min)
-make kernel KERNEL=k8s        # the cluster's kernel, built in a container (~10 min)
+make image                    # the base Ubuntu image
+make image IMAGE=office       # the workers: Claude Code and pi (pinned), git, kubectl, podman, a headless browser
+make image IMAGE=k3s          # the firm's cluster
+make kernel KERNEL=k8s        # the cluster's kernel, built in a container
 ```
 
 ## 4. The Claude token
@@ -93,6 +93,8 @@ exit
 ```
 
 The session and its VM are removed when you exit. `zapper events --history` shows what it did, one line per DNS query, connection or exec, with the rule that decided it.
+
+Claude Code works in a sandbox on its own too, without a firm: `zapper run -p claude --keep`, in a project's directory, starts it on a copy of the project. The Claude API is allowed with the token the host adds, `.env` files are hidden, and every other host waits for your answer (`zapper approvals`, `zapper approve ID`, or the UI's sessions view). `zapper cp ID:/work ./out` copies its work out.
 
 ## 8. Start the firm
 

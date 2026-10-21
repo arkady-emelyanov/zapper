@@ -4,11 +4,11 @@
 
 ## Tiers
 
-| Tier | Command | Needs | Time | Checks |
-|---|---|---|---|---|
-| Unit | `make test` | Rust toolchain | seconds | Rule evaluation and layering, final rules, defaults, inspection, DNS answers, config validation and round-trip, rule ids, templates, frame codec, address checks, SNI parsing, certificate minting, sizes |
-| End to end | `make test-e2e` | KVM, network access, user namespaces, the `ubuntu-24.04` image, gcc | ~40 s | Below |
-| Office | `make test-e2e-office` (also run by `make test-e2e`) | The same; for the cluster checks, the `k3s` image and the `k8s` kernel | ~2 min, ~4 with the cluster | [Office: testing](office.md#testing) |
+| Tier | Command | Needs | Checks |
+|---|---|---|---|
+| Unit | `make test` | Rust toolchain | Rule evaluation and layering, final rules, defaults, inspection, DNS answers, config validation and round-trip, rule ids, templates, frame codec, address checks, SNI parsing, certificate minting, sizes |
+| End to end | `make test-e2e` | KVM, network access, user namespaces, the `ubuntu-24.04` image, gcc | Below |
+| Office | `make test-e2e-office` (also run by `make test-e2e`) | The same; for the cluster checks, the `k3s` image and the `k8s` kernel | [Office: testing](office.md#testing) |
 
 `tests/e2e.sh` starts its own daemon with a temporary config, socket and state directory, separate from any running daemon. It removes the sessions it starts, and deletes its directory when all checks pass, or keeps it when `ZAPPER_E2E_KEEP=1` is set. It ends with `all e2e checks passed`, or with the number of failures and the path of the daemon log.
 
@@ -20,12 +20,35 @@
 | Root in the guest | With another DNS server configured, names are still answered by policy. A connection to a real address is denied, and other ports on the gateway are closed. |
 | VMM confinement | A running VMM has its own root. The config file, the audit log and the daemon user's home directory (apart from zapper's own files) are absent from its view, and its root is read-only. Teardown keeps `vm.json` and removes `vm/`. |
 | vsock session | Loopback only, with proxy variables. An allowed connection succeeds through the proxy, and a direct connection fails. |
-| Approvals | A request waits for approval, goes through once approved, and `--remember session` adds a rule. Answering for a profile is rejected, and answers leave the config unchanged. |
+| Approvals | A request waits for approval, goes through once approved, and `--remember session` adds a rule. Answering for a profile is rejected, and answers leave the config unchanged. The UI answers an approval only with the token cookie, `X-Zapper-UI` and a local `Origin`, has no other writes, and replays a terminal's output only to the token's holder. |
 | Request log | Inspected requests and passed-through connections are listed; headers are recorded as the guest sent them; an added secret echoed back by the destination is redacted. A removed session's audit log stays readable, and a malformed session id is refused. |
 | Config | A rule change shows in the diff, a global final rule wins, an invalid change is rejected, and reload discards changes. |
 | Attacks (`tests/attack.c` as the workload) | Impersonating the agent on the control port, opening a shell over vsock loopback or the guest's own CID, and exec through the 32-bit or x32 tables all fail; the last two are killed with SIGSYS. A denied exec fails. |
 
 A new control needs a check here, including one that attacks it from inside the guest.
+
+## Invariants and their tests
+
+The invariants in [AGENTS.md](../AGENTS.md#working-on-the-repository) and where each is checked. "Not yet" is what no test covers so far: it holds by the code's design, and a test for it is owed.
+
+| Invariant | Checked by | Not yet |
+|---|---|---|
+| The VMM runs in its own namespaces and root | e2e: VMM confinement | |
+| Guest traffic goes through zapper, also with root in the guest | e2e: root in the guest, vsock session | |
+| DNS queries and host names are validated; DNS resolves only what could be allowed and never makes up an answer | unit: DNS answers; e2e: NIC session (NXDOMAIN, refused names) | |
+| `proxy` secret values stay on the host and are added only where allowed | e2e: NIC session (the placeholder in the guest, the value in an allowed request), request log (an echoed secret is redacted) | Refused for a host outside the secret's `hosts`; refused over plain HTTP without `plaintext: true`; a `guest` secret kept from profiles that don't use it |
+| The proxy connects to the address it checked; loopback, link-local and host addresses are unreachable | unit: address checks; e2e: NIC session (raw IP), root in the guest (a real address) | |
+| Passthrough is bound to the TLS server name; inspection presents a per-session CA and overrides `Host` | unit: SNI parsing, certificate minting; e2e: NIC session (a TLS name that differs is denied) | The `Host` override |
+| One control connection; terminals only from CID 2 | e2e: attacks | |
+| Foreign-arch and x32 syscalls are killed | e2e: attacks | |
+| Input from the guest is bounded and rendered as text | | Line, frame, connection and approval limits; text-only rendering in the UI |
+| The UI's writes are only approvals and the board's firm actions, each behind the token cookie, a local `Host`, `X-Zapper-UI` and a local `Origin` | e2e: approvals (the cookie, the header and the `Origin`; no config save) | The local-`Host` check; promoting a decision into the running config |
+| In a firm: the sender is the VM; roles and the chart are checked on the host; an `ask` is refused at once and decided by officers or the board; service names are routed by the daemon | office e2e: identity, authority, officer-only tools, access requests, the firm's services | `final` rules within a firm (precedence is unit-tested in rule evaluation) |
+| In a firm: security is always held; nobody decides their own hire's check or their own access request; no turn before clearance; a hired officer decides nothing before clearance; the charter's articles are the same for every run | office e2e: background checks (the CEO's own hire goes to the board, the first officer is cleared by the board, hires are cleared before working) | Nobody deciding their own access request; a hired officer before clearance; the articles across runs |
+| A config change is validated as a whole and applied atomically, or not at all | unit: config validation; e2e: config (an invalid change is rejected, reload discards) | |
+| With a keeper, the record is append-only through it | unit: the keeper's store (hash chains, checkpoints, recovery after a crash) | Appends from the configured uid only; no firm turns while the record can't be written; flushing before acknowledging is covered only by recovery |
+
+Controls in the [security model](security.md#what-is-enforced-where) without a test yet: VMs not reaching each other, facility ports accepting only the host's CID, the lifetime, CPU, memory and disk limits, the console cap, and `no_new_privs`.
 
 ## Manual scenarios
 
@@ -34,7 +57,7 @@ Before a release, walk through these:
 | Scenario | Expected |
 |---|---|
 | `zapper run`, resize the terminal, run `vim`, press Ctrl-C during a command | Full-screen programs redraw, and Ctrl-C stops the command in the guest |
-| A raw TCP connection to `github.com:22` from a session that allows it | The SSH banner arrives within a second |
+| A raw TCP connection to `github.com:22` from a session that allows it | The SSH banner arrives |
 | Kill the daemon with SIGKILL during a session | Its `firecracker` processes exit, and the next `zapper serve` removes the leftover disks |
 | SIGTERM to the daemon | Each session stops with `daemon shutdown` |
 | A profile with `ttl_secs: 60` | The session stops after a minute with `ttl expired` |

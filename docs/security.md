@@ -19,7 +19,7 @@ Each office worker runs in a zapper session, and zapper assumes that whatever ru
 
 | Control | Enforced by | Holds with root in the guest |
 |---|---|---|
-| The VMM runs in its own user, network and mount namespaces, in a read-only root holding its own files: the session's `vm/` directory, the kernel, the initramfs, its binary and four devices ([the VMM](#the-vmm)) | `zapper __vmm` on the host | Yes |
+| The VMM runs in its own user, network and mount namespaces, in a read-only root holding its own files: the session's `vm/` directory, the kernel, the initramfs, its binary and its devices (three, four with a NIC) ([the VMM](#the-vmm)) | `zapper __vmm` on the host | Yes |
 | Guest traffic goes through zapper. With a NIC, the VMM runs in a network namespace whose only interfaces are loopback and the guest's tap, and nftables there sends TCP to the daemon and DNS to its resolver and drops the rest. In vsock mode the guest has loopback only ([network](network.md)) | Network namespace and nftables outside the VM; Firecracker's device model | Yes |
 | DNS queries are validated (standard query, one question, class IN, a well-formed name) and rate-limited. A name is looked up on the host only if some request to it could be allowed, outright or after an `ask`; others are refused. Answers are never made up. With a broad `allow` or `ask` (`*`, or such a default), any name reaches the host's resolver, so queries could carry data out ([network: DNS](network.md#dns)) | Host resolver | Yes |
 | Host names from the guest (`CONNECT` targets, `Host` headers, TLS server names) are validated before any rule sees them | Host proxy | Yes |
@@ -77,7 +77,7 @@ In a firm ([office](office.md)), each worker is a session, so everything above h
 
 What the office does not defend: workers are free to persuade, mislead or instruct each other through mail and access-request reasons. That is deliberate ([workers manipulating workers](office.md#workers-manipulating-workers)); the controls above are what holds regardless.
 
-Workers hold credentials for the firm's services only as grants: a git identity whose rights the git server checks on every request, and, with a cluster grant, a token for their own service account with RoleBindings in `dev` (and `prod` for admin). Grants are decided by the policy owners (the security officers and the CEO, never the requester), expire, and are revoked when the worker leaves; revoking deletes the service account, which voids the token. Nobody holds cluster-admin but the daemon (and the board's dashboard). The UI's writes also cover the board's actions: the board's mail, firm start/stop/pause, security decisions, background checks, budget decisions, deleting past runs and notes on runs, under the same guards as answering approvals.
+Workers hold credentials for the firm's services only as grants: a git identity whose rights the git server checks on every request, and, with a cluster grant, a token for their own service account with RoleBindings in `dev` (and `prod` for admin). Grants are decided by the policy owners (the security officers and the CEO, never the requester), expire, and are revoked when the worker leaves; revoking deletes the service account, which voids the token. Nobody holds cluster-admin but the daemon (and the board's dashboard). The UI's writes also cover the board's actions: the board's mail and marking it read, firm start/stop/pause, security decisions and promoting them into the running config, background checks, credential grants and decisions, budget decisions, funding and releasing workers, drive uploads, deleting past runs and notes on runs, under the same guards as answering approvals.
 
 ## Secrets given to a session can be used by it
 
@@ -116,7 +116,7 @@ From there, the VMM sees none of the daemon user's other files: the config, secr
 make test-e2e      # ends with "all e2e checks passed"
 ```
 
-`tests/e2e.sh` checks each host-side control, and `tests/e2e-office.sh` the office's: from inside a worker it tries to give its manager an assignment, send as another worker, read another worker's mail, use officer tools, publish a symlink to a host file, and reach the post office from outside a firm; a worker without a grant tries the cluster API and git. As root in the guest, it tries to get around the NIC capture by using another DNS server, connecting to a real address, and connecting to other ports on the gateway. With `tests/attack.c` as the workload, it tries to:
+`tests/e2e.sh` checks the host-side controls from a guest, with unit tests for the parsers and address checks, and `tests/e2e-office.sh` the office's: from inside a worker it tries to give its manager an assignment, send as another worker, read another worker's mail, use officer tools, publish a symlink to a host file, and reach the post office from outside a firm; a worker without a grant tries the cluster API and git. As root in the guest, it tries to get around the NIC capture by using another DNS server, connecting to a real address, and connecting to other ports on the gateway. With `tests/attack.c` as the workload, it tries to:
 
 - impersonate the agent on the control port
 - open a root shell over vsock loopback and through the guest's own CID
@@ -129,7 +129,7 @@ make test-e2e      # ends with "all e2e checks passed"
 - **`fs` rules apply at boot.** Files created later aren't covered, and root in the guest can undo the rules.
 - **The VMM keeps the daemon user's uid.** Its namespaces hide the daemon user's files and the host network from it, but kernel interfaces it keeps (`/dev/kvm`, and `/dev/net/tun` with a NIC) are shared with the host. Running it as a separate uid would need `/etc/subuid` entries, a one-time root step.
 - **The daemon is one process that holds the secrets and runs the proxy.** It parses HTTP, TLS, JSON and frames from the guest with memory-safe libraries, and a bug in that code would be a bug in the boundary.
-- **Rate and volume limits** for network traffic are the next item: see [the README](../README.md#next).
+- **Rate and volume limits** for network traffic are planned: see [the README](../README.md#next).
 - **Sessions end when the daemon restarts.** Their audit logs stay on disk. So does a firm's run, which can be replayed but not resumed.
 
 Network-specific limitations are on the [network](network.md#limitations) page.

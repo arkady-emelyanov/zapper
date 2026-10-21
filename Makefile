@@ -6,7 +6,7 @@
 #   make image             the base image (IMAGE=ubuntu-24.04, see IMAGES below)
 #   make image IMAGE=office  office workers: Claude Code and pi (pinned), git, kubectl, podman, a headless browser
 #   make image IMAGE=k3s     the cluster facility (pinned k3s, air-gap images)
-#   make kernel KERNEL=k8s   a guest kernel with Kubernetes support (~10 min)
+#   make kernel KERNEL=k8s   a guest kernel with Kubernetes support
 #   make check             report missing prerequisites with the fix; changes nothing
 #   make test              unit tests (no VMs)
 #   make lint              rustfmt and clippy (warnings are errors), as the pre-commit hook runs them

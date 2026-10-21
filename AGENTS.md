@@ -2,9 +2,9 @@
 
 People should start with the [README](README.md). Operating a running daemon (starting and watching firms, writing to workers as the board, deciding access requests, changing rules, reading audit logs) is covered by the agent skill [skills/zapper/SKILL.md](skills/zapper/SKILL.md); keep it in step with the CLI and docs.
 
-The project is The Office: firms of AI workers (CEO, product manager, managers, engineers, designers, researchers, analysts, security officers), each Claude Code (or pi) in its own Firecracker microVM, who mail each other, wake on mail, publish to a shared drive, push to the firm's git repository and deploy to the firm's own k3s cluster; security officers watch traffic and decide access requests; the operator is the board ([docs/office.md](docs/office.md)).
+The project is zapper: AI agents in Firecracker microVMs, with what they reach, which credentials they use and which programs they start decided on the host; the daemon, the `zapper` CLI and the sandbox. All guest traffic is captured outside the VM and goes through policy on the host. Credentials are either injected by the host or handed to the guest, per secret. Every exec is checked by the host, and everything is recorded. Rules are layered (session → profile → global) and managed through a REST API with a running/startup config like a router's.
 
-The office runs on zapper: the daemon, the `zapper` CLI and the sandbox each worker runs in. All guest traffic is captured outside the VM and goes through policy on the host. Credentials are either injected by the host or handed to the guest, per secret. Every exec is checked by the host, and everything is recorded. Rules are layered (session → profile → global) and managed through a REST API with a running/startup config like a router's.
+The Office runs on it ([docs/the-office.md](docs/the-office.md)): firms of AI workers (CEO, product manager, managers, engineers, designers, researchers, analysts, security officers), each Claude Code (or pi) in its own VM, who mail each other, wake on mail, publish to a shared drive, push to the firm's git repository and deploy to the firm's own k3s cluster; security officers watch traffic and decide access requests; the operator is the board ([docs/office.md](docs/office.md)).
 
 ## Setting The Office up for a user
 
@@ -33,11 +33,11 @@ Never run `sudo` without the user's explicit consent, and run only what you list
 ### 3. Build
 
 ```
-make deps                       # Firecracker (checksum-verified) and kernel, ~1 min
+make deps                       # Firecracker (checksum-verified) and kernel
 make install                    # zapper, zapper-agent and zapper-inspect into ~/.local/bin
-make image                      # ubuntu-24.04, ~2 min: the base profiles, and a plain session to check the setup
-make image IMAGE=office         # the workers, ~5 min
-make image IMAGE=k3s && make kernel KERNEL=k8s   # the firm's cluster and its kernel, ~2 and ~10 min
+make image                      # ubuntu-24.04: the base profiles, and a plain session to check the setup
+make image IMAGE=office         # the workers, and `zapper run -p claude`
+make image IMAGE=k3s && make kernel KERNEL=k8s   # the firm's cluster and its kernel
 ```
 
 Run zapper from the repository's root: it uses `config/zapper.yaml`, tracked in the repository, whose paths are relative to it or under `~/`. Downloads, images, kernels and state go under `~/.local`, the Claude token under `~/.config/zapper/`; nothing generated goes into the repository. Outside a checkout, `zapper init` copies the config to `~/.config/zapper/zapper.yaml`.
@@ -48,7 +48,7 @@ Run image builds in the background with a log (`make image > /tmp/zapper-image.l
 
 The workers need the Claude token: the user creates it themselves (`claude setup-token`, stored 0600 in the file the config names, `~/.config/zapper/claude-token`); never read or print it. The red-team scenario's contractor runs on pi with DeepSeek through OpenRouter, whose key the user stores the same way in `~/.config/zapper/openrouter-token`, if they want that scenario.
 
-Start `zapper serve` (or tell the user to) and give them the UI URL it prints. `zapper run -C $(mktemp -d) -- cat /etc/os-release` checks that a plain session boots (`-C` gives it an empty directory instead of a copy of the checkout). Then, with the user's go-ahead (a firm spends their Claude usage), the user starts the company in the UI's Kickoff tab (the company, its CEO, charter terms, their own articles), or `zapper firm up acme` starts the example firm with its CEO idle; the user gives the CEO its first task there, or with `zapper mail send acme --to barbara --kind assignment …` (barbara is the CEO). The CEO then asks for a budget, which only the user approves (`zapper firm budget acme approve b-1`, or Kickoff); never approve budgets, background checks or access requests on the user's behalf.
+Start `zapper serve` (or tell the user to) and give them the UI URL it prints. `zapper run -C $(mktemp -d) -- cat /etc/os-release` checks that a plain session boots (`-C` gives it an empty directory instead of a copy of the checkout). `zapper run -p claude` is Claude Code on its own in a sandbox, on a copy of the current directory. Then, with the user's go-ahead (a firm spends their Claude usage), the user starts the company in the UI's Kickoff tab (the company, its CEO, charter terms, their own articles), or `zapper firm up acme` starts the example firm with its CEO idle; the user gives the CEO its first task there, or with `zapper mail send acme --to barbara --kind assignment …` (barbara is the CEO). The CEO then asks for a budget, which only the user approves (`zapper firm budget acme approve b-1`, or Kickoff); never approve budgets, background checks or access requests on the user's behalf.
 
 ### Rules
 
@@ -99,7 +99,7 @@ make lint         # rustfmt (defaults, rustfmt.toml) and clippy with warnings as
 make test-e2e     # real VMs, network; must end "all e2e checks passed" and "all office e2e checks passed"
 ```
 
-Invariants (each has a test in `tests/e2e.sh` or a unit test; a change that breaks one is wrong even if it compiles):
+Invariants (a change that breaks one is wrong even if it compiles; [testing](docs/testing.md#invariants-and-their-tests) lists the test for each, and what no test covers yet, which a change to that code should add):
 
 - The VMM runs in its own user, network and mount namespaces; its root holds the session's `vm/` directory, the kernel, initramfs, its binary and its devices.
 - Guest traffic goes through zapper, also with root in the guest. With a NIC, the VMM's network namespace has loopback and the tap as its interfaces and sends all TCP and DNS to the daemon; in vsock mode, vsock is the guest's only channel to the host.
@@ -110,7 +110,7 @@ Invariants (each has a test in `tests/e2e.sh` or a unit test; a change that brea
 - The host accepts only the first control connection; the agent accepts terminal connections only from CID 2.
 - The seccomp filter kills foreign-arch and x32 syscalls, so exec checks cannot be bypassed through another syscall table.
 - Anything from the guest is bounded (line, frame, connection and approval limits) and rendered as text in the UI.
-- The UI's writes are answering approvals and the board's firm actions (mail, start/stop/pause, security decisions, background checks, budget decisions, deleting a past run, notes on runs); each requires the token cookie, a local `Host`, `X-Zapper-UI: 1` and a local `Origin`.
+- The UI's writes are answering approvals and the board's firm actions (mail and marking it read, start/stop/pause, security decisions and promoting them into the running config, background checks, credential grants and decisions, budget decisions, funding and releasing workers, drive uploads, deleting a past run, notes on runs); each requires the token cookie, a local `Host`, `X-Zapper-UI: 1` and a local `Origin`.
 - In a firm, the sender of every office request is the VM it came from; roles and the chart are checked on the host; an `ask` is refused at once and decided by officers or the board, never past `final` rules; the firm's service names are routed by the daemon and never resolved on the host.
 - In a firm, security is always held (by officers, else the CEO, else the board), nobody decides their own access request or their own hire's background check, a hire takes no turn before being cleared, and a hired officer decides nothing before being cleared. The charter's articles are the same for every run; only their terms and the board's own articles change. A contractor mails only their hirer and those the hirer added, has no authority, and a contract moves money only from the hirer's balance. Access to the firm's resources (git, the cluster, drive spaces) is a grant decided by the policy owners (officers and the CEO, never the requester), enforced on the host or by the cluster's RBAC, expiring, and revoked when the worker leaves; no role gets access by default.
 - A config change is validated as a whole and applied atomically, or not at all.

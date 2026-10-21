@@ -7,7 +7,7 @@
 #   scripts/build-kernel.sh k8s      # → ~/.local/share/zapper/kernels/vmlinux-6.1-k8s
 #
 # Builds in a container (podman, or $ZAPPER_OCI), so the host needs no
-# toolchain. The source is checked against kernel.org's checksum. ~10 min.
+# toolchain. The source is checked against kernel.org's checksum.
 set -eu
 
 NAME=${1:-k8s}

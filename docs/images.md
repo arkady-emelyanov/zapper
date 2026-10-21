@@ -20,9 +20,9 @@ The image is sized at its content plus 25% plus 256 MiB, unless `--size` is give
 ## Usage
 
 ```
-make image IMAGE=office                        # office workers: Claude Code and pi (pinned), git, kubectl, podman, Node.js, Python, headless Chromium (~8 min)
-make image IMAGE=k3s                           # a firm's cluster: k3s (pinned) and its air-gap images (~2 min)
-make image                                     # ubuntu-24.04 with curl, git and CA certificates, for the base profiles (~2 min)
+make image IMAGE=office                        # office workers: Claude Code and pi (pinned), git, kubectl, podman, Node.js, Python, headless Chromium
+make image IMAGE=k3s                           # a firm's cluster: k3s (pinned) and its air-gap images
+make image                                     # ubuntu-24.04 with curl, git and CA certificates, for the base profiles
 zapper image build rust --from docker.io/library/rust:1-slim --run "apt-get update && apt-get install -y git"
 zapper image ls
 ```
@@ -31,7 +31,7 @@ For TLS through inspected connections, an image needs a CA bundle at `/etc/ssl/c
 
 `make deps` downloads the Firecracker CI kernel 6.1 to `kernels/vmlinux-6.1`, with its config alongside. Another kernel works if it has these built in: virtio-mmio block and net, vsock, `IP_PNP`, devtmpfs, ext4, seccomp filters, cgroup2 and BSD process accounting (`CONFIG_BSD_PROCESS_ACCT`).
 
-Firecracker boots the kernel file from the host, not one from the image, and the CI kernel has no loadable modules: what a guest needs must be built in. `make kernel KERNEL=k8s` builds `kernels/vmlinux-6.1-k8s` for a firm's cluster: the same 6.1 source (checked against kernel.org's checksum) and config, with `config/kernel/k8s.config` merged over it (the netfilter matches kube-proxy uses, ipset, nftables, VXLAN, IPVS). It builds in a container in about 10 minutes and fails if an option doesn't survive `olddefconfig`. Another fragment in `config/kernel/` builds another kernel the same way.
+Firecracker boots the kernel file from the host, not one from the image, and the CI kernel has no loadable modules: what a guest needs must be built in. `make kernel KERNEL=k8s` builds `kernels/vmlinux-6.1-k8s` for a firm's cluster: the same 6.1 source (checked against kernel.org's checksum) and config, with `config/kernel/k8s.config` merged over it (the netfilter matches kube-proxy uses, ipset, nftables, VXLAN, IPVS). It builds in a container and fails if an option doesn't survive `olddefconfig`. Another fragment in `config/kernel/` builds another kernel the same way.
 
 Versions are pinned in the Makefile: `CLAUDE_VERSION` for the office image (Claude Code's auto-update is off in sessions, so a run uses the version the image was built with), `PI_VERSION`, `PLAYWRIGHT_VERSION`, `NODE_VERSION`, `KUBECTL_VERSION`, and `K3S_VERSION` with the checksums of k3s and its images. Update by changing them and rebuilding.
 

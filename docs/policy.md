@@ -9,6 +9,7 @@ A policy layer holds three ordered rule lists, `net`, `exec` and `fs`, and optio
 ```
 final rules  every layer's final rules, global first
 session      rules added to a running session (approvals, `zapper rule add session:ID`)
+role         in a firm, standing approvals for the worker's role (`role:FIRM/ROLE`)
 profile      the session's profile
 parents      the profiles it extends, nearest first
 global       `policy:` at the top of the config

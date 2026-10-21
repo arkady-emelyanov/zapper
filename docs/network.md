@@ -76,9 +76,9 @@ The daemon connects only to addresses that pass these checks, whatever the rules
 
 | Address | Reachable |
 |---|---|
-| Loopback, link-local (including cloud metadata `169.254.169.254`), multicast, unspecified | Never |
+| Loopback, link-local (including cloud metadata `169.254.169.254`), multicast, broadcast, unspecified, `0/8` | Never |
 | The host's own addresses | Never |
-| Private and unique-local ranges (`10/8`, `172.16/12`, `192.168/16`, `100.64/10`, `198.18/15`, `fc00::/7`) | If listed in `daemon.private_networks` |
+| Private and unique-local ranges (`10/8`, `172.16/12`, `192.168/16`, `100.64/10`, `198.18/15`, `fc00::/7`, `fec0::/10`) | If listed in `daemon.private_networks` |
 | Public addresses | Yes |
 
 ## Usage
