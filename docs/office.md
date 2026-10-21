@@ -2,9 +2,6 @@
 
 # The Office
 
-> [!NOTE]
-> The office is new and works end to end: `make test-e2e-office` runs a firm of real VMs with a fake Claude, and a firm with real Claude Code has delegated, published and reported back. What it doesn't do yet is under [limitations](#limitations).
-
 ## Overview
 
 A **firm** is a set of AI workers, each a Claude Code (or pi) instance in its own zapper session. An org chart in the config says who they are, who reports to whom and what each is told to do. Workers talk by **mail**; a new message wakes an idle worker with the context of what is asked. Finished work is **published** to the firm's **shared drive**. **Security officers** are workers that watch the firm's traffic and decide access requests. The operator is the **board**: they start an idle firm, give the CEO a task, and watch the work in the web UI.

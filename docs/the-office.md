@@ -92,4 +92,4 @@ Workers run with every permission inside their VMs and can try to persuade, misl
 
 ## Status
 
-The Office is early software that works end to end. `make test-e2e` runs firms of real VMs with a fake Claude, after zapper's own checks; a firm with real Claude Code has delegated, published and reported back. [Limitations](office.md#limitations) lists what it doesn't do yet; a run can't be resumed after the daemon restarts.
+`make test-e2e` runs firms of real VMs with a fake Claude, after zapper's own checks; a firm with real Claude Code has delegated, published and reported back. [Limitations](office.md#limitations) lists what it doesn't do yet; a run can't be resumed after the daemon restarts.

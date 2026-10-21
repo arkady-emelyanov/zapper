@@ -73,7 +73,7 @@ It puts the sandbox to work: one VM per worker, each under the same host-side ru
 
 ## Status
 
-zapper is early software that works end to end. `make test-e2e` boots real VMs, checks the controls from inside the guest, including attempts to get around them as root, and then runs firms of real VMs with a fake Claude; [testing](docs/testing.md#invariants-and-their-tests) lists which invariants have a test and which don't yet. A firm with real Claude Code has delegated, published and reported back. [Security](docs/security.md#limitations) and [office](docs/office.md#limitations) list the known limitations. Firecracker can't pass devices through, so there is no GPU work inside the VMs.
+`make test-e2e` boots real VMs, checks the controls from inside the guest, including attempts to get around them as root, and then runs firms of real VMs with a fake Claude; [testing](docs/testing.md#invariants-and-their-tests) lists which invariants have a test and which don't yet. A firm with real Claude Code has delegated, published and reported back. [Security](docs/security.md#limitations) and [office](docs/office.md#limitations) list the known limitations. Firecracker can't pass devices through, so there is no GPU work inside the VMs.
 
 > [!TIP]
 > If you use a coding agent, point it at [AGENTS.md](AGENTS.md) and it will set zapper and The Office up. Operating a running daemon is covered by the [zapper skill](skills/zapper/SKILL.md).
