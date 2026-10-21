@@ -9,9 +9,11 @@ zapper runs AI agents in Firecracker microVMs. What they reach on the network, w
 
 ## Why
 
-An agent runs code you didn't write: packages it installs, scripts from a web page, instructions hidden in a file or in another agent's message. Give it a shell and it does what that code tells it, with your credentials and your network.
+A coding agent runs commands on your machine, and some of what it runs comes from places nobody checked: a package it installs, a script from a web page, or instructions hidden in a file it reads (prompt injection). Whatever that code does, it does with your files, your credentials and your network.
 
-A container shares the host's kernel, and controls that live inside the agent's environment stop holding once the agent is root there. zapper puts each session in its own VM and keeps the controls that have to hold on the host, where the guest can't reach them.
+A container doesn't stop this. It runs on your machine's own kernel, so one kernel bug lets the code out. And any guard placed next to the agent, like a firewall, a proxy or the agent's own permission prompts, can be switched off by code that gets root there.
+
+zapper runs each agent in its own small VM, with its own kernel, and keeps the guards outside it, on your machine, where code inside the VM can't touch them.
 
 ## What it enforces
 
