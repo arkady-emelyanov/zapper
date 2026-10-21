@@ -1251,4 +1251,26 @@ mod tests {
         );
         assert!(acme.scenarios["red-team"].hires[0].board_line);
     }
+
+    /// `zapper run -p claude`, the README's quickstart: Claude Code on a
+    /// copy of the working directory, `default`'s fs rules, the token added
+    /// by the host, everything else asked.
+    #[test]
+    fn claude_profile() {
+        let c = zapper_policy::Config::from_yaml(super::EXAMPLE).unwrap();
+        let p = c.resolve("claude").unwrap();
+        assert_eq!(p.agent.kind, "claude-code");
+        assert_eq!(p.agent.command, ["claude"]);
+        assert_eq!(p.agent.user, "agent");
+        assert_eq!(p.engine.image, "office");
+        assert!(p
+            .mounts
+            .iter()
+            .any(|m| m.host == "{workdir}" && m.guest == "/work"));
+        let yaml = serde_yaml::to_string(&p.layers).unwrap();
+        assert!(yaml.contains("/work/**/.env"), "{yaml}");
+        assert!(yaml.contains("api.anthropic.com"), "{yaml}");
+        assert!(yaml.contains("net: ask"), "{yaml}");
+        assert_eq!(p.agent.env["CLAUDE_CODE_OAUTH_TOKEN"], "{{secret:claude}}");
+    }
 }

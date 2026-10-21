@@ -110,6 +110,25 @@ profiles:
         - { path: "/work/**/.env", access: hidden }
         - { path: "/work/.git/config", access: ro }
 
+  # `zapper run -p claude`: Claude Code on a copy of the current directory.
+  # The Claude API is allowed with the token the host adds; every other
+  # host waits for an answer (the UI, or zapper approve). Image: make image
+  # IMAGE=office.
+  claude:
+    extends: default
+    description: Claude Code on a copy of the current directory
+    engine: { image: office, memory_mib: 4096, disk: 8GiB }
+    agent:
+      kind: claude-code
+      command: [claude]
+      user: agent
+      env:
+        CLAUDE_CODE_OAUTH_TOKEN: "{{secret:claude}}"
+    policy:
+      net:
+        - { action: allow, host: api.anthropic.com, ports: [443], secrets: [claude] }
+      defaults: { net: ask }
+
   # ── The office ────────────────────────────────────────────────────────────
   # Profiles for the example firm below (docs/office.md). Workers run Claude
   # Code headless on your subscription (for API billing instead, uncomment the
