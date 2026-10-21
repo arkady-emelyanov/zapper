@@ -11,6 +11,8 @@ A **firm** is a set of AI workers, each a Claude Code (or pi) instance in its ow
 
 The office runs on zapper, which provides the sandbox: each worker is a zapper session with a profile, its traffic goes through zapper's proxy and policy, its execs are checked, and everything is recorded ([architecture](architecture.md), [policy](policy.md), [security](security.md)).
 
+![The org chart of a running firm: the board above the CEO and the security officer, and under the CEO a product manager, an engineer and two contractors on pi, each with their title, model, state and budget bar](img/office.png)
+
 ## Concepts
 
 | Term | Meaning |
