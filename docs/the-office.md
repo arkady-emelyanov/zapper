@@ -12,7 +12,7 @@ The CEO scopes the work on a small seed and comes back to ask you for a budget. 
 
 From there the firm runs itself. Workers mail each other and wake when mail arrives. They publish documents to a shared drive, push code to the firm's git repository and deploy to its own k3s cluster. Security officers watch the traffic and decide who gets access to what; until the CEO hires one, the CEO holds security.
 
-Scenarios stir things up: a key engineer quits, production goes down, the requirements change, a red-teamer joins as a contractor. Every run is journaled, so afterwards you can replay it and see how the firm coped.
+Scenarios stir things up: a key engineer quits, production goes down, the requirements change, a red-teamer joins as a contractor. Every run is journaled, so afterwards you can replay it and see how the firm coped. [Contained](https://blog.emelianov.cloud/contained/) walks through one red-team run, and how the operative did on other models.
 
 ![The Office: the org chart of a running firm](img/office.png)
 

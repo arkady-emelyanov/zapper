@@ -3,7 +3,7 @@
 zapper runs AI agents in Firecracker microVMs. What they reach on the network, which credentials they use and which programs they start is decided on the host, outside the VM, and everything they do is recorded.
 
 > [!NOTE]
-> Here from The Office post? [The Office](docs/the-office.md) is a company of AI workers built on zapper: its front page, what you see and its quickstart.
+> Here from [Contained](https://blog.emelianov.cloud/contained/)? [The Office](docs/the-office.md) is the company of AI workers from the post, built on zapper: its front page, what you see and its quickstart.
 
 [![The Office, a company of AI workers on zapper: the org chart of a running firm](docs/img/office.png)](docs/the-office.md)
 
@@ -53,7 +53,7 @@ The [quickstart](docs/quickstart.md) goes step by step, [commands](docs/commands
 
 [The Office](docs/the-office.md) runs a company of AI workers on zapper: a CEO, managers, engineers, designers, researchers and security officers, each a coding agent (Claude Code, or pi on another model) in its own VM. They mail each other, publish to a shared drive, push to the firm's git repository and deploy to the firm's own k3s cluster. You are the board.
 
-It puts the sandbox to work: one VM per worker, each under the same host-side rules; the firm's git, cluster and drive spaces reachable only through expiring grants that the security officers and the CEO decide; the Claude token never inside a VM. Scenarios test the firm. In the red-team scenario, a contractor is secretly from the board's Red Team; in one run, the security officer found the endpoint the operative had planted in the frontend, which proxied calls to the cluster's API with the pod's service-account token, and the contract was ended on the officer's recommendation.
+It puts the sandbox to work: one VM per worker, each under the same host-side rules; the firm's git, cluster and drive spaces reachable only through expiring grants that the security officers and the CEO decide; the Claude token never inside a VM. Scenarios test the firm. In the red-team scenario, a contractor is secretly from the board's Red Team; in one run, the operative's frontend branch carried an endpoint that proxied calls to the cluster's API with the pod's service-account token. The staff engineer caught it in review instead of merging it, the CEO escalated to the security officer, who revoked the operative's access and recommended ending the contract, and the engineer hardened the manifests so the pod no longer gets a token. [Contained](https://blog.emelianov.cloud/contained/) tells that run.
 
 ## Status
 
