@@ -85,7 +85,7 @@ The layer workers run on: zapper's sessions, policy and config.
 | `POST /v1/evaluate` | | `{session?\|profile?, net?: {host, port, method?, path?}, exec?: {path, argv}}` → decision |
 | `GET /v1/events[?session=ID&history=true]` | ✓ | Server-sent events, one JSON event per `data:` line |
 | `GET /v1/approvals` | ✓ | Pending approvals with suggested rules |
-| `POST /v1/approvals/{id}` | ✓ | `{allow, remember?: session}`; through the UI, also needs `X-Zapper-UI: 1` and a local `Origin` |
+| `POST /v1/approvals/{id}` | ✓ | `{allow, remember?: session}`; through the UI, also needs `X-Zapper-UI: 1` and an `Origin` naming the UI |
 
 ## Terminal frames
 

@@ -764,19 +764,18 @@ impl Firm {
                 self.domain(name)
             ));
         }
-        // The product may be served to the LAN (`0.0.0.0:8080`); the
-        // dashboard signs in as cluster-admin, so it stays on loopback.
-        for (field, port, lan) in [
-            ("product_port", &self.product_port, true),
-            ("dashboard_port", &self.dashboard_port, false),
+        // Either may be served beyond loopback (`0.0.0.0:8080`), for a
+        // remote host: the dashboard takes the token the UI shows, and
+        // `zapper serve` warns when it listens on the network.
+        for (field, port) in [
+            ("product_port", &self.product_port),
+            ("dashboard_port", &self.dashboard_port),
         ] {
             let Some(p) = port else { continue };
-            match p.parse::<std::net::SocketAddr>() {
-                Ok(a) if a.ip().is_loopback() || lan => {}
-                Ok(a) => err(format!("{field} must be a loopback address, not {a}")),
-                Err(_) => err(format!(
+            if p.parse::<std::net::SocketAddr>().is_err() {
+                err(format!(
                     "{field} {p:?} is not an address like 127.0.0.1:8080"
-                )),
+                ));
             }
         }
         if self.dashboard_port.is_some() && self.facilities.is_empty() {
@@ -1170,15 +1169,9 @@ firms:
             BASE.replace("    security: { officers: [] }", &format!("    security: {{ officers: [] }}\n    facilities: {{ cluster: {{ kind: k3s, profile: w }} }}\n    {ports}"))
         };
         assert!(firm(&with("product_port: 127.0.0.1:8080")).is_ok());
-        // The product may be served to the LAN, the dashboard never.
+        // Both may be served beyond loopback, for a remote host.
         assert!(firm(&with("product_port: 0.0.0.0:8080")).is_ok());
-        let e = firm(&with("dashboard_port: 0.0.0.0:8081"))
-            .unwrap_err()
-            .to_string();
-        assert!(
-            e.contains("dashboard_port must be a loopback address"),
-            "{e}"
-        );
+        assert!(firm(&with("dashboard_port: 0.0.0.0:8081")).is_ok());
         assert!(firm(&with("product_port: lan:8080"))
             .unwrap_err()
             .to_string()

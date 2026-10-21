@@ -995,19 +995,29 @@ async fn serve(config_path: PathBuf) -> Result<()> {
         let addr: std::net::SocketAddr = ui_addr
             .parse()
             .with_context(|| format!("daemon.ui {ui_addr:?}"))?;
-        if !addr.ip().is_loopback() {
-            bail!("daemon.ui must be a loopback address, not {addr}");
-        }
+        let remote = !addr.ip().is_loopback();
         let tcp = tokio::net::TcpListener::bind(addr)
             .await
             .with_context(|| format!("UI on {addr}"))?;
         let bound = tcp.local_addr()?;
         let port = bound.port();
         // The bound address: with port 0 in the config, the kernel picks one.
-        let url = format!("http://{bound}/?token={}", d.ui_token);
+        // Bound to every interface, the URL names this machine instead.
+        let shown = if bound.ip().is_unspecified() {
+            format!("{}:{port}", host_name())
+        } else {
+            bound.to_string()
+        };
+        let url = format!("http://{shown}/?token={}", d.ui_token);
         daemon::write_private(&d.paths.state.join("ui-url"), format!("{url}\n").as_bytes())?;
+        if remote {
+            eprintln!(
+                "{}",
+                exposed_warning(&format!("the UI (daemon.ui) listens on {bound}"))
+            );
+        }
         eprintln!("zapper: UI at {url}");
-        let app = daemon::api::ui(d.clone(), port);
+        let app = daemon::api::ui(d.clone(), port, remote);
         tokio::spawn(async move {
             if let Err(e) = axum::serve(tcp, app).await {
                 tracing::error!("UI: {e}");
@@ -1044,6 +1054,34 @@ async fn serve(config_path: PathBuf) -> Result<()> {
 }
 
 /// Reports what is missing, with the command that fixes it. Changes nothing.
+/// This machine's host name, for a URL to a UI on every interface.
+fn host_name() -> String {
+    let mut buf = [0u8; 256];
+    // SAFETY: gethostname writes at most buf.len() bytes into buf.
+    let ok = unsafe { libc::gethostname(buf.as_mut_ptr().cast(), buf.len()) } == 0;
+    let end = buf.iter().position(|&b| b == 0).unwrap_or(0);
+    match std::str::from_utf8(&buf[..end]) {
+        Ok(h) if ok && !h.is_empty() => h.to_string(),
+        _ => "localhost".into(),
+    }
+}
+
+/// What `zapper serve` prints when an operator's port is reachable from
+/// the network: the UI (`daemon.ui`) or a firm's Kubernetes dashboard.
+pub(crate) fn exposed_warning(what: &str) -> String {
+    format!(
+        "\n\
+         ################################################################\n\
+         WARNING: {what}, reachable from the network.\n\
+         Whoever has the token controls zapper: sessions, rules, approvals,\n\
+         firms, and the firm's cluster as cluster-admin. It is plain HTTP:\n\
+         use it on a network you trust, or reach it through an SSH tunnel\n\
+         or a TLS proxy. zapper is not built for production. The VMs still\n\
+         can't reach it: the host's own addresses are closed to them.\n\
+         ################################################################\n"
+    )
+}
+
 async fn check(config_path: &Path) -> Result<i32> {
     let mut bad = 0;
     let mut report = |ok: bool, what: &str, fix: &str| {

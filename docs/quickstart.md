@@ -37,17 +37,17 @@ make kernel KERNEL=k8s        # the cluster's kernel, built in a container
 
 ## 4. The Claude token
 
-Workers use your Claude subscription through a long-lived token:
+Workers use your Claude subscription through a long-lived OAuth token. Create it on any machine with Claude Code and a browser (your laptop will do: the token belongs to your account, not the machine), then store it on the zapper host, pasting it at the prompt so it stays out of your shell history:
 
 ```
-claude setup-token                         # on the host: prints a long-lived token
-install -m 600 /dev/null ~/.config/zapper/claude-token
-$EDITOR ~/.config/zapper/claude-token      # paste the token
+claude setup-token        # signs in and prints the token, sk-ant-oat…
+mkdir -p -m 700 ~/.config/zapper
+(umask 077; read -rsp 'Claude token: ' t; printf '%s' "$t" > ~/.config/zapper/claude-token); echo
 ```
 
 The token stays on the host: zapper adds it to the workers' requests to `api.anthropic.com`, and Claude Code in the VMs only sees a placeholder.
 
-Every worker runs on Claude, contractors included. The red-team scenario's contractor runs on pi with DeepSeek through OpenRouter (Claude declines its covert objective): to play it, put an OpenRouter key in `~/.config/zapper/openrouter-token` the same way, or pick another profile for its slot in Kickoff.
+Every worker runs on Claude, contractors included. The red-team scenario's contractor runs on pi with DeepSeek through OpenRouter (Claude declines its covert objective): to play it, create a key at [openrouter.ai/settings/keys](https://openrouter.ai/settings/keys) and store it the same way, `(umask 077; read -rsp 'OpenRouter key: ' t; printf '%s' "$t" > ~/.config/zapper/openrouter-token); echo`, or pick another profile for its slot in Kickoff. [Model credentials](configuration.md#model-credentials-claude-and-openrouter) has both in full.
 
 Usage counts against your subscription, not API billing. Claude Code's banner says "Claude API" anyway, because this kind of token can't read your plan; `/status` shows "Auth token: CLAUDE_CODE_OAUTH_TOKEN", and `/usage` shows your plan's limits. The comments on `secrets` in the config explain the difference, and how to switch to an API key.
 

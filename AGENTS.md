@@ -45,7 +45,11 @@ Run image builds in the background with a log (`make image > /tmp/zapper-image.l
 
 ### 4. Hand over a running zapper
 
-The agent sessions need the Claude token: the user creates it themselves (`claude setup-token`, stored 0600 in the file the config names, `~/.config/zapper/claude-token`); never read or print it.
+The agent sessions need the Claude token, which the user creates and stores themselves; never ask for it, read it or print it. Give them these steps ([configuration: model credentials](docs/configuration.md#model-credentials-claude-and-openrouter) has the details):
+
+1. On any machine with Claude Code and a browser (their laptop will do), `claude setup-token`: it signs in and prints a long-lived OAuth token (`sk-ant-oat…`) for their Claude subscription.
+2. On the zapper host, without the token reaching shell history: `mkdir -p -m 700 ~/.config/zapper && (umask 077; read -rsp 'Claude token: ' t; printf '%s' "$t" > ~/.config/zapper/claude-token); echo`
+3. `zapper check`. No restart is needed: the host reads the file on each request.
 
 Start `zapper serve` (or tell the user to) and give them the UI URL it prints. `zapper run -C $(mktemp -d) -- cat /etc/os-release` checks that a plain session boots (`-C` gives it an empty directory instead of a copy of the checkout). `zapper run -p claude --keep`, in a project's directory, is Claude Code in a sandbox on a copy of it: the Claude API allowed, every other host an `ask` the user answers (`zapper approvals`, `zapper approve`, or the UI's sessions view); `zapper cp ID:/work ./out` copies the work out. Answer approvals only as the user says.
 
@@ -57,9 +61,16 @@ A firm needs the cluster's image and kernel too:
 make image IMAGE=k3s && make kernel KERNEL=k8s   # the firm's cluster and its kernel
 ```
 
-The red-team scenario's contractor runs on pi with DeepSeek through OpenRouter, whose key the user stores like the Claude token, in `~/.config/zapper/openrouter-token`, if they want that scenario.
+The red-team scenario's contractor runs on pi with DeepSeek through OpenRouter, and so do the other `office-*` profiles on pi. If the user wants them, they create a key at https://openrouter.ai/settings/keys (`sk-or-v1-…`; credits, or `:free` models only; if the key is limited to some models, it must allow the ones those profiles name), and store it like the Claude token: `(umask 077; read -rsp 'OpenRouter key: ' t; printf '%s' "$t" > ~/.config/zapper/openrouter-token); echo`.
 
 With the user's go-ahead (a firm spends their Claude usage), the user starts the company in the UI's Kickoff tab (the company, its CEO, charter terms, their own articles), or `zapper firm up acme` starts the example firm with its CEO idle; the user gives the CEO its first task there, or with `zapper mail send acme --to barbara --kind assignment …` (barbara is the CEO). The CEO then asks for a budget, which only the user approves (`zapper firm budget acme approve b-1`, or Kickoff); never approve budgets, background checks or access requests on the user's behalf.
+
+### A remote host
+
+If zapper runs on a machine other than the user's, the UI (`daemon.ui`, `127.0.0.1:7878`) and a firm's dashboard (`dashboard_port`, `127.0.0.1:8081`) are on that machine's loopback. Offer, in this order:
+
+1. An SSH tunnel from the user's machine, no config change: `ssh -L 7878:127.0.0.1:7878 -L 8081:127.0.0.1:8081 user@host`, then the URL `zapper serve` printed.
+2. Serving them to the network: `daemon.ui: 0.0.0.0:7878` and the firm's `dashboard_port: 0.0.0.0:8081` in the config, then restart the daemon (see Rules). Say plainly before changing it: whoever has the token controls zapper, and the dashboard's token is cluster-admin; it is plain HTTP, for a trusted network or behind a TLS proxy; zapper isn't built for production. The VMs can't reach either way. [Configuration: a remote host](docs/configuration.md#a-remote-host) has the details.
 
 ### Rules
 
@@ -121,7 +132,7 @@ Invariants (a change that breaks one is wrong even if it compiles; [testing](doc
 - The host accepts only the first control connection; the agent accepts terminal connections only from CID 2.
 - The seccomp filter kills foreign-arch and x32 syscalls, so exec checks cannot be bypassed through another syscall table.
 - Anything from the guest is bounded (line, frame, connection and approval limits) and rendered as text in the UI.
-- The UI's writes are answering approvals and the board's firm actions (mail and marking it read, start/stop/pause, security decisions and promoting them into the running config, background checks, credential grants and decisions, budget decisions, funding and releasing workers, drive uploads, deleting a past run, notes on runs); each requires the token cookie, a local `Host`, `X-Zapper-UI: 1` and a local `Origin`.
+- The UI's writes are answering approvals and the board's firm actions (mail and marking it read, start/stop/pause, security decisions and promoting them into the running config, background checks, credential grants and decisions, budget decisions, funding and releasing workers, drive uploads, deleting a past run, notes on runs); each requires the token cookie and `X-Zapper-UI: 1`; on loopback (the default) a local `Host` and `Origin`, and listening elsewhere (`daemon.ui`, for a remote host) an `Origin` naming the `Host` the request came to. Whatever the UI and the dashboard listen on, the VMs can't reach them: the host's own addresses are closed to them.
 - In a firm, the sender of every office request is the VM it came from; roles and the chart are checked on the host; an `ask` is refused at once and decided by officers or the board, never past `final` rules; the firm's service names are routed by the daemon and never resolved on the host.
 - In a firm, security is always held (by officers, else the CEO, else the board), nobody decides their own access request or their own hire's background check, a hire takes no turn before being cleared, and a hired officer decides nothing before being cleared. The charter's articles are the same for every run; only their terms and the board's own articles change. A contractor mails only their hirer and those the hirer added, has no authority, and a contract moves money only from the hirer's balance. Access to the firm's resources (git, the cluster, drive spaces) is a grant decided by the policy owners (officers and the CEO, never the requester), enforced on the host or by the cluster's RBAC, expiring, and revoked when the worker leaves; no role gets access by default.
 - A config change is validated as a whole and applied atomically, or not at all.

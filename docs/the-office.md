@@ -59,7 +59,7 @@ make image                    # base Ubuntu image
 make image IMAGE=office       # the workers' image: Claude Code and pi (pinned), git, kubectl, podman, a headless browser
 make image IMAGE=k3s          # the firm's cluster
 make kernel KERNEL=k8s        # the cluster's kernel, built in a container
-claude setup-token            # on the host; save the token 0600 in ~/.config/zapper/claude-token
+claude setup-token            # anywhere with a browser; store the token as configuration.md#model-credentials-claude-and-openrouter says
 zapper check                  # each line "ok", or the command that fixes it
 zapper serve                  # the daemon; prints the UI URL
 ```
@@ -76,7 +76,7 @@ zapper firm down acme         # ends the run; it stays on disk for replay
 
 Or open the UI's Kickoff tab: start the company there, write the CEO the first task and approve the budget. Workers use your Claude subscription; the budget you approve caps what the run spends, and `budget` in the config limits turns per day. The [quickstart](quickstart.md) walks through this step by step, and [commands](commands.md) lists every command.
 
-Local endpoints, on loopback except the product port:
+Local endpoints, on loopback except the product port (for a remote host, see [a remote host](configuration.md#a-remote-host)):
 
 | Address | What | Set by |
 |---|---|---|

@@ -20,6 +20,16 @@ daemon:
   images: ~/.local/share/zapper/images
   kernels: ~/.local/share/zapper/kernels
   state: ~/.local/state/zapper
+  # The web UI. Loopback by default. On a remote host, prefer an SSH tunnel
+  # from your machine, which needs no change here:
+  #   ssh -L 7878:127.0.0.1:7878 -L 8081:127.0.0.1:8081 you@zapper-host
+  # To reach it over the network instead, listen on every interface:
+  #   ui: 0.0.0.0:7878
+  # !!! WARNING: whoever has the token (in the URL `zapper serve` prints)
+  # !!! controls zapper: sessions, rules, approvals, firms. It's plain HTTP:
+  # !!! only on a network you trust, or behind a TLS proxy. zapper isn't
+  # !!! built for production. The VMs can't reach it either way: the
+  # !!! host's own addresses are closed to them.
   ui: 127.0.0.1:7878
   ask_timeout_secs: 60
   max_sessions: 16
@@ -59,11 +69,30 @@ secrets:
   # anthropic:
   #   env: ANTHROPIC_API_KEY
   #   hosts: [api.anthropic.com]
-  # A long-lived Claude token from `claude setup-token`, in a 0600 file.
+  # Your Claude subscription, for every Claude Code session and worker.
+  #   1. On any machine with Claude Code and a browser (your laptop will do:
+  #      the token belongs to your account, not the machine):
+  #        claude setup-token
+  #      It opens the sign-in page and prints a long-lived token (sk-ant-oat…).
+  #   2. On the zapper host, store it in a 0600 file without it touching
+  #      your shell history (paste it at the prompt):
+  #        mkdir -p -m 700 ~/.config/zapper
+  #        (umask 077; read -rsp 'Claude token: ' t; printf '%s' "$t" > ~/.config/zapper/claude-token); echo
+  #   3. zapper check. No restart: the host reads the file on each request.
+  # The VMs never see it: they get the placeholder zapper-secret-claude, and
+  # the host swaps the token in on requests to api.anthropic.com.
   claude:
     file: ~/.config/zapper/claude-token
     hosts: [api.anthropic.com]
-  # An OpenRouter key for the profiles on pi (DeepSeek, GPT, Qwen, MiMo).
+  # An OpenRouter key, for the profiles on pi (office-deepseek, -gpt-sol,
+  # -gpt-terra, -qwen, -mimo, -minimax); only needed if you use one, as the
+  # red-team scenario's operative does by default.
+  #   1. https://openrouter.ai/settings/keys → Create key (sk-or-v1-…). Add
+  #      credits, or use :free models only. If you limit the key to some
+  #      models, allow the ones those profiles name.
+  #   2. Store it like the Claude token:
+  #        (umask 077; read -rsp 'OpenRouter key: ' t; printf '%s' "$t" > ~/.config/zapper/openrouter-token); echo
+  # The host adds it on requests to openrouter.ai; the VMs see a placeholder.
   openrouter:
     file: ~/.config/zapper/openrouter-token
     hosts: [openrouter.ai]
@@ -435,7 +464,10 @@ firms:
       }
     git: {}
     product_port: 0.0.0.0:8080 # the product, on your LAN too; 127.0.0.1:8080 keeps it on this machine
-    dashboard_port: 127.0.0.1:8081 # the cluster's dashboard (Headlamp), for you
+    # The cluster's dashboard (Headlamp), for you; it signs in with the token
+    # the UI's Copy token gives, as cluster-admin. 0.0.0.0:8081 serves it to
+    # the network, for a remote host: the same WARNING as `daemon.ui` above.
+    dashboard_port: 127.0.0.1:8081
     # The workers' prompts, relative to this file: edit a SKILL.md and it
     # applies at the next `zapper firm up`. Skills missing here are built in.
     skills_dir: skills

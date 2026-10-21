@@ -21,7 +21,8 @@ If the CLI says it can't connect, the daemon isn't running: start it with `zappe
 - A firm spends the user's Claude usage: check `zapper firm status` (turns and tokens today) and the budget before starting one, and say what you are about to start.
 - API changes edit the running config only. Run `zapper config save` when the user wants a change kept, and show `zapper config diff` first.
 - Prefer the narrowest change: a session rule (`session:ID`) over a profile rule, and a profile rule over a global one. Prefer `methods`/`path` limits over allowing a whole host.
-- Keep secret values out of rules, profiles and commands. Secrets come from `env` or `file` sources in the config: `proxy` secrets are bound to `hosts`, `guest` secrets are delivered into the session. The user creates the files (the Claude token included); don't read or print them.
+- On a remote host, the UI and a firm's dashboard are on its loopback: offer an SSH tunnel first, and serving them to the network (`daemon.ui`, `dashboard_port`) only with its warning ([a remote host](../../docs/configuration.md#a-remote-host)).
+- Keep secret values out of rules, profiles and commands. Secrets come from `env` or `file` sources in the config: `proxy` secrets are bound to `hosts`, `guest` secrets are delivered into the session. The user creates the files (the Claude token and the OpenRouter key, as [model credentials](../../docs/configuration.md#model-credentials-claude-and-openrouter) describes); don't ask for them, read or print them.
 - Don't decide access requests or approve requests on the user's behalf unless they said to. Show the pending request and ask.
 - Runs in `state/firms/` (mail, transcripts, published files), audit logs and recordings are sensitive: summarise them rather than pasting them wholesale, and don't prune or delete them unasked.
 

@@ -33,7 +33,7 @@ make deps                     # Firecracker and a guest kernel into ~/.local/sha
 make install                  # zapper, zapper-agent and zapper-inspect into ~/.local/bin
 make image                    # the base Ubuntu image
 make image IMAGE=office       # Claude Code and pi (pinned), git, kubectl, podman, a headless browser
-claude setup-token            # on the host; save the token 0600 in ~/.config/zapper/claude-token
+claude setup-token            # anywhere with a browser; store the token: docs/configuration.md#model-credentials-claude-and-openrouter
 zapper check                  # each line "ok", or the command that fixes it
 zapper serve                  # the daemon; prints the UI URL
 ```
@@ -47,7 +47,7 @@ cd ~/src/your-project && zapper run -p claude --keep
 
 The second starts Claude Code in a VM, on a copy of your project. The Claude API is allowed, with the token added by the host; `.env` files are hidden and `.git/config` is read-only; every other host it tries to reach waits for your answer, in the UI's sessions view or with `zapper approvals` and `zapper approve`. Your project on the host doesn't change: `zapper cp ID:/work ./out` copies the session's work out, and `zapper audit ID` shows what it did.
 
-The [quickstart](docs/quickstart.md) goes step by step, [commands](docs/commands.md) lists every command, and the [docs](docs/README.md) index has the rest.
+On a remote host, reach the UI through an SSH tunnel, or serve it to the network ([a remote host](docs/configuration.md#a-remote-host)). The [quickstart](docs/quickstart.md) goes step by step, [commands](docs/commands.md) lists every command, and the [docs](docs/README.md) index has the rest.
 
 ## The Office: what you can build on it
 

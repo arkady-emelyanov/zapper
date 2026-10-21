@@ -117,8 +117,9 @@ pub fn api(daemon: Arc<Daemon>) -> Router {
         .with_state(daemon)
 }
 
-/// The UI: the read routes, plus answering approvals.
-pub fn ui(daemon: Arc<Daemon>, port: u16) -> Router {
+/// The UI: the read routes, plus answering approvals. `remote`: it listens
+/// on an address other than loopback (`daemon.ui`), for a remote host.
+pub fn ui(daemon: Arc<Daemon>, port: u16, remote: bool) -> Router {
     Router::new()
         .route("/", get(super::ui::index))
         .route("/sessions", get(super::ui::sessions))
@@ -133,20 +134,58 @@ pub fn ui(daemon: Arc<Daemon>, port: u16) -> Router {
                 .merge(super::office::http::board_routes()),
         )
         .layer(middleware::from_fn_with_state(
-            (daemon.clone(), port),
+            (daemon.clone(), port, remote),
             ui_guard,
         ))
         .with_state(daemon)
 }
 
-/// The UI is local, but a browser can be tricked into talking to it. Every
-/// request needs the token (in the query once, then a strict cookie) and a
-/// local Host header, which defeats DNS rebinding. A request that changes
-/// something also needs the `X-Zapper-UI` header, which another site's page
-/// can't send without a CORS preflight that is never granted, and an Origin
-/// naming the UI itself.
+/// The names a loopback UI answers to.
+fn local_hosts(port: u16) -> [String; 3] {
+    [
+        format!("127.0.0.1:{port}"),
+        format!("localhost:{port}"),
+        format!("[::1]:{port}"),
+    ]
+}
+
+/// Whether a request's `Host` may reach the UI. On loopback, only a local
+/// name, which defeats DNS rebinding. Listening elsewhere, any well-formed
+/// host: the UI is reached by whatever name or address the operator uses,
+/// and the token cookie, set for that name only, is what keeps others out.
+fn host_ok(host: &str, port: u16, remote: bool) -> bool {
+    if remote {
+        !host.is_empty()
+            && host.len() <= 300
+            && host
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b".-:[]".contains(&b))
+    } else {
+        local_hosts(port).iter().any(|l| l == host)
+    }
+}
+
+/// Whether a write's `Origin` is the UI itself: a local name on loopback,
+/// else the very host the request was sent to, over http or https (behind
+/// a TLS proxy).
+fn origin_ok(origin: &str, host: &str, port: u16, remote: bool) -> bool {
+    if remote {
+        origin == format!("http://{host}") || origin == format!("https://{host}")
+    } else {
+        local_hosts(port)
+            .iter()
+            .any(|l| origin == format!("http://{l}"))
+    }
+}
+
+/// A browser can be tricked into talking to the UI. Every request needs the
+/// token (in the query once, then a strict cookie) and an acceptable Host
+/// header (`host_ok`). A request that changes something also needs the
+/// `X-Zapper-UI` header, which another site's page can't send without a
+/// CORS preflight that is never granted, and an Origin naming the UI itself
+/// (`origin_ok`).
 async fn ui_guard(
-    State((d, port)): State<(Arc<Daemon>, u16)>,
+    State((d, port, remote)): State<(Arc<Daemon>, u16, bool)>,
     req: Request,
     next: Next,
 ) -> Response {
@@ -154,13 +193,9 @@ async fn ui_guard(
         .headers()
         .get(header::HOST)
         .and_then(|h| h.to_str().ok())
-        .unwrap_or("");
-    let local = [
-        format!("127.0.0.1:{port}"),
-        format!("localhost:{port}"),
-        format!("[::1]:{port}"),
-    ];
-    if !local.iter().any(|l| l == host) {
+        .unwrap_or("")
+        .to_string();
+    if !host_ok(&host, port, remote) {
         return (StatusCode::FORBIDDEN, "bad Host header").into_response();
     }
     let query: HashMap<String, String> =
@@ -199,7 +234,7 @@ async fn ui_guard(
             .and_then(|h| h.to_str().ok())
             .unwrap_or("");
         let marked = req.headers().get("x-zapper-ui").is_some_and(|v| v == "1");
-        if !marked || !local.iter().any(|l| origin == format!("http://{l}")) {
+        if !marked || !origin_ok(origin, &host, port, remote) {
             return (
                 StatusCode::FORBIDDEN,
                 "missing X-Zapper-UI or a local Origin",
@@ -764,4 +799,58 @@ async fn answer(State(d): D, Path(id): Path<String>, body: String) -> R<Json<Val
     let a: Answer = parse_body(&body)?;
     d.answer(&id, a.allow, a.remember)?;
     Ok(Json(json!({ "ok": true })))
+}
+
+#[cfg(test)]
+mod guard_tests {
+    use super::{host_ok, origin_ok};
+
+    #[test]
+    fn loopback_ui_takes_local_names_only() {
+        assert!(host_ok("127.0.0.1:7878", 7878, false));
+        assert!(host_ok("localhost:7878", 7878, false));
+        assert!(!host_ok("127.0.0.1:7879", 7878, false));
+        assert!(!host_ok("evil.example:7878", 7878, false), "DNS rebinding");
+        assert!(origin_ok(
+            "http://localhost:7878",
+            "localhost:7878",
+            7878,
+            false
+        ));
+        assert!(!origin_ok(
+            "http://evil.example",
+            "localhost:7878",
+            7878,
+            false
+        ));
+        assert!(!origin_ok(
+            "https://zapper.lan:7878",
+            "zapper.lan:7878",
+            7878,
+            false
+        ));
+    }
+
+    #[test]
+    fn remote_ui_takes_its_own_origin_only() {
+        assert!(host_ok("zapper.lan:7878", 7878, true));
+        assert!(host_ok("192.168.1.20:7878", 7878, true));
+        assert!(host_ok("[fd00::1]:7878", 7878, true));
+        assert!(!host_ok("", 7878, true));
+        assert!(!host_ok("a b", 7878, true));
+        let h = "zapper.lan:7878";
+        assert!(origin_ok("http://zapper.lan:7878", h, 7878, true));
+        assert!(
+            origin_ok("https://zapper.lan:7878", h, 7878, true),
+            "behind a TLS proxy"
+        );
+        assert!(!origin_ok("http://evil.example", h, 7878, true));
+        assert!(!origin_ok(
+            "http://zapper.lan:7878.evil.example",
+            h,
+            7878,
+            true
+        ));
+        assert!(!origin_ok("", h, 7878, true));
+    }
 }

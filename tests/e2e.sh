@@ -182,6 +182,7 @@ post() { curl -s -o /dev/null -w '%{http_code}' -X POST -H 'content-type: applic
 [ "$(post -H 'x-zapper-ui: 1' -H "Origin: $base")" = 401 ] && pass "UI write without the token cookie is refused" || fail "UI write without the token cookie is refused" "not 401"
 [ "$(post -b "zapper_token=$token" -H "Origin: $base")" = 403 ] && pass "UI write without X-Zapper-UI is refused" || fail "UI write without X-Zapper-UI is refused" "not 403"
 [ "$(post -b "zapper_token=$token" -H 'x-zapper-ui: 1' -H 'Origin: http://evil.example')" = 403 ] && pass "UI write from another origin is refused" || fail "UI write from another origin is refused" "not 403"
+[ "$(curl -s -o /dev/null -w '%{http_code}' -b "zapper_token=$token" -H "Host: evil.example:${base##*:}" "$base/api/sessions")" = 403 ] && pass "the loopback UI refuses another Host (DNS rebinding)" || fail "the loopback UI refuses another Host (DNS rebinding)" "not 403"
 [ "$(curl -s -o /dev/null -w '%{http_code}' -X POST -b "zapper_token=$token" -H 'x-zapper-ui: 1' -H "Origin: $base" "$base/api/config/save")" = 404 ] && pass "the UI has no other writes" || fail "the UI has no other writes" "config/save reachable"
 [ "$(post -b "zapper_token=$token" -H 'x-zapper-ui: 1' -H "Origin: $base")" = 200 ] && pass "the UI answers an approval" || fail "the UI answers an approval" "not 200"
 wait "$asker"

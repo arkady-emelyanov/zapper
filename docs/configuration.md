@@ -43,7 +43,7 @@ firms:      name → org chart, budgets, officers, the firm's services  (office.
 | `images` | `~/.local/share/zapper/images` | Root filesystem images, `<name>.ext4` |
 | `kernels` | `~/.local/share/zapper/kernels` | Guest kernels |
 | `state` | `~/.local/state/zapper` | Session directories with audit logs, recordings, and disks while running |
-| `ui` | `127.0.0.1:7878` | Address of the UI (state and approvals), which must be loopback; empty turns the UI off |
+| `ui` | `127.0.0.1:7878` | Address of the UI (state and approvals); empty turns the UI off. Loopback by default; another address serves it to the network, for a remote host ([a remote host](#a-remote-host)) |
 | `ask_timeout_secs` | `60` | How long an `ask` waits before it denies |
 | `max_sessions` | `16` | Sessions starting or running at the same time |
 | `private_networks` | `[]` | CIDRs of private networks sessions may reach ([network](network.md#address-checks)) |
@@ -115,6 +115,60 @@ The agent keys above are neutral: each harness (`crates/zapper/src/daemon/harnes
 ### firms
 
 The office's org charts: roles, workers, budgets, security officers and the firm's services. They are described on the [office](office.md#configuration) page. Each role names a profile; the office adds the worker's preamble, skills, the `office` MCP server, the model and credentials to it at boot, and the profile decides the image, the VM's size, the network rules and the secrets.
+
+### Model credentials: Claude and OpenRouter
+
+Both are `proxy` secrets in files you create: the VMs see a placeholder, and the host puts the value into requests to the secret's hosts. zapper never asks for them, and an agent setting zapper up must not read or print them.
+
+**Claude subscription** (secret `claude`, every Claude Code session and worker). Usage counts against your Pro, Max, Team or Enterprise plan, not API billing.
+
+1. On any machine with Claude Code and a browser (your laptop will do: the token belongs to your account, not to the machine), run `claude setup-token`. It opens the sign-in page and prints a long-lived OAuth token, `sk-ant-oat…`.
+2. On the zapper host, store it in a 0600 file, without it reaching your shell history (paste it at the prompt):
+
+   ```
+   mkdir -p -m 700 ~/.config/zapper
+   (umask 077; read -rsp 'Claude token: ' t; printf '%s' "$t" > ~/.config/zapper/claude-token); echo
+   ```
+
+3. `zapper check`. No restart is needed: the host reads the file on each request that uses it.
+
+Claude Code's banner says "Claude API" with this token, because the token can't read your plan; `/status` shows "Auth token: CLAUDE_CODE_OAUTH_TOKEN" and `/usage` your plan's limits. To bill a Claude Console API key instead, the comments on `secrets` in the config show the `anthropic` secret; don't set both, as Claude Code prefers the API key.
+
+**OpenRouter** (secret `openrouter`, only for the profiles on pi: `office-deepseek`, `office-gpt-sol`, `office-gpt-terra`, `office-qwen`, `office-mimo`, `office-minimax`, and their `-engineer` variants; the red-team scenario's operative uses one by default).
+
+1. Create a key at [openrouter.ai/settings/keys](https://openrouter.ai/settings/keys) (`sk-or-v1-…`). Add credits, or use only `:free` models. If you limit the key to some models, allow the ones those profiles name (their `model` in the config).
+2. Store it the same way:
+
+   ```
+   (umask 077; read -rsp 'OpenRouter key: ' t; printf '%s' "$t" > ~/.config/zapper/openrouter-token); echo
+   ```
+
+The host reads a `proxy` secret's file on each request that uses it, so a new or replaced token applies at once. With the file missing, those requests fail with the secret's name, in `zapper events` and the audit log.
+
+### A remote host
+
+zapper's UI (`daemon.ui`) and a firm's Kubernetes dashboard (`dashboard_port`) listen on loopback by default. On a remote host, the simplest way in needs no config change, an SSH tunnel from your machine:
+
+```
+ssh -L 7878:127.0.0.1:7878 -L 8081:127.0.0.1:8081 you@zapper-host
+```
+
+Then open the URL `zapper serve` printed (it is also in `state/ui-url`) on your machine; the product port (`0.0.0.0:8080` in the example firm) is already on the network.
+
+To serve them to the network instead:
+
+```
+daemon:
+  ui: 0.0.0.0:7878
+firms:
+  acme:
+    dashboard_port: 0.0.0.0:8081
+```
+
+> [!CAUTION]
+> **Whoever has the UI's token controls zapper**: sessions, rules, approvals and firms, and with the dashboard's token the firm's cluster as cluster-admin. Listening on the network, both are **plain HTTP**: the tokens cross it unencrypted. Use this on a network you trust, or put a TLS proxy in front. **zapper isn't built for production**, and `zapper serve` prints a warning when either listens beyond loopback.
+
+What still holds: the UI takes the token (as a cookie set for the name you reached it by), and its writes need the `X-Zapper-UI` header and an `Origin` naming the host the request came to, so another site can't write through your browser. The VMs can't reach the UI or the dashboard whatever they listen on: the host's own addresses are closed to them, and their rules are unchanged. For a TLS proxy in front, have the UI listen on an address other than loopback that the proxy reaches, and let the proxy pass the browser's `Host` through: on loopback, the UI takes only local names in `Host` and `Origin`.
 
 ## Verification
 

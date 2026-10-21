@@ -108,6 +108,7 @@ From there, the VMM sees none of the daemon user's other files: the config, secr
 - Bind each `proxy` secret to the hosts that need it. A destination that echoes request headers back, such as an echo service, returns the value to the guest; `tests/e2e.sh` shows this with a test secret.
 - Use a `final: true` deny in the global layer for destinations that must stay unreachable from every profile.
 - Leave `daemon.private_networks` empty unless a session needs a private network, and then list that network only.
+- Keep the UI (`daemon.ui`) and a firm's dashboard (`dashboard_port`) on loopback, and reach a remote host through an SSH tunnel. Listening on the network, they are plain HTTP and whoever has the token controls zapper ([a remote host](configuration.md#a-remote-host)). The VMs can't reach them either way: the host's own addresses are closed to them.
 - Use inspection rules (`methods`, `path`) when a host-level rule is too broad. A passed-through TLS connection to an allowed CDN host can still carry requests for another site on that CDN in its `Host` header.
 
 ## Verification

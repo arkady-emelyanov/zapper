@@ -655,6 +655,18 @@ pub async fn start(d: &Arc<Daemon>, run: &Arc<FirmRun>, config: &Config) -> Resu
     }
     if let Some(addr) = &run.config.dashboard_port {
         let task = forward_port(run, addr, DASHBOARD_PORT, "dashboard").await?;
+        if addr
+            .parse::<std::net::SocketAddr>()
+            .is_ok_and(|a| !a.ip().is_loopback())
+        {
+            eprintln!(
+                "{}",
+                crate::exposed_warning(&format!(
+                    "firm {}'s Kubernetes dashboard (dashboard_port) listens on {addr}",
+                    run.firm
+                ))
+            );
+        }
         *run.facility.dashboard.lock().unwrap() = Some(task);
         let (run, s) = (run.clone(), s.clone());
         tokio::spawn(async move { deploy_dashboard(&run, &s).await });

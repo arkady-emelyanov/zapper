@@ -2914,11 +2914,15 @@ async function promote(id) {
   try { const r = await write('POST', F() + '/security/rules/' + enc(id) + '/promote'); toast('Promoted ' + id + ' to ' + str(r && r.scope)); pollSecurity(); } catch (e) { toast(e.message, true); }
 }
 
-// A link to a loopback address from the config; anything else is no link.
-function localLink(addr, label) {
-  if (!/^(127\.0\.0\.1|localhost|\[::1\]):\d{1,5}$/.test(str(addr))) return null;
+// A link to an address from the config: loopback as it is, an address
+// for every interface (0.0.0.0, [::]) at the host this page came from, so
+// it works on a remote host too; anything else is no link.
+function addrLink(addr, label) {
+  const m = /^(127\.0\.0\.1|localhost|\[::1\]|0\.0\.0\.0|\[::\]):(\d{1,5})$/.exec(str(addr));
+  if (!m) return null;
+  const any = m[1] === '0.0.0.0' || m[1] === '[::]';
   const a = el('a', { target: '_blank', rel: 'noopener noreferrer', class: 'btn small' }, label);
-  a.href = 'http://' + addr + '/';
+  a.href = 'http://' + (any ? location.hostname : m[1]) + ':' + m[2] + '/';
   return a;
 }
 // The product's address from the config, as a link: an IP literal, and
@@ -2942,7 +2946,7 @@ function dashboardSig() { const d = dashboardInfo(); return [d.addr, d.on, !!d.t
 function dashboardButtons() {
   const d = dashboardInfo();
   if (!d.on || !d.addr) return [];
-  const a = localLink(d.addr, 'Kubernetes dashboard ↗');
+  const a = addrLink(d.addr, 'Kubernetes dashboard ↗');
   if (!a) return [];
   if (!d.token) return [a, el('span', { class: 'muted small' }, 'starting…')];
   const copy = el('button', { class: 'btn small', type: 'button', title: 'Headlamp asks for a token: paste this one (cluster-admin, this run only)',
