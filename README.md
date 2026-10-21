@@ -72,4 +72,4 @@ zapper is early software that works end to end. `make test-e2e` boots real VMs, 
 
 ## License
 
-Apache-2.0
+[Apache-2.0](LICENSE)
