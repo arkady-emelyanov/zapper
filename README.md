@@ -5,7 +5,7 @@ zapper runs AI agents in Firecracker microVMs. What they reach on the network, w
 > [!NOTE]
 > Here from [Contained](https://blog.emelianov.cloud/contained/)? [The Office](docs/the-office.md) is the company of AI workers from the post, built on zapper: its front page, what you see and its quickstart.
 
-[![The Office, a company of AI workers on zapper: the org chart of a running firm](docs/img/office.png)](docs/the-office.md)
+![Seven Firecracker microVMs of one firm on zapper, each with its vCPUs, memory, kernel and counts of network connections and program starts; every VM's traffic goes through the daemon](docs/img/vms.png)
 
 ## Why
 
@@ -50,6 +50,8 @@ The second starts Claude Code in a VM, on a copy of your project. The Claude API
 The [quickstart](docs/quickstart.md) goes step by step, [commands](docs/commands.md) lists every command, and the [docs](docs/README.md) index has the rest.
 
 ## The Office: what you can build on it
+
+[![The Office: the org chart of a running firm](docs/img/office.png)](docs/the-office.md)
 
 [The Office](docs/the-office.md) runs a company of AI workers on zapper: a CEO, managers, engineers, designers, researchers and security officers, each a coding agent (Claude Code, or pi on another model) in its own VM. They mail each other, publish to a shared drive, push to the firm's git repository and deploy to the firm's own k3s cluster. You are the board.
 
