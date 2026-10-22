@@ -42,7 +42,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Write the example config to --config if it does not exist.
+    /// Write the example config to --config if it does not exist; with the
+    /// office, also the default skills of its workers into `skills/` next to
+    /// it, keeping those already there.
     Init,
     /// Check prerequisites; prints the fix for anything missing.
     Check,
@@ -405,6 +407,20 @@ async fn run(cli: Cli) -> Result<i32> {
                 std::fs::create_dir_all(config_path.parent().unwrap())?;
                 daemon::write_private(&config_path, example().as_bytes())?;
                 println!("wrote {}", config_path.display());
+            }
+            // Skills are the office's workers'.
+            #[cfg(feature = "office")]
+            {
+                let dir = config_path
+                    .parent()
+                    .unwrap()
+                    .join(daemon::office::skills::DEFAULT_DIR);
+                let written = daemon::office::skills::install(&dir)?;
+                if written.is_empty() {
+                    println!("{}: the default skills are all there", dir.display());
+                } else {
+                    println!("wrote skills to {}: {}", dir.display(), written.join(", "));
+                }
             }
         }
         Cmd::Check => return check(&config_path).await,
@@ -1195,6 +1211,19 @@ async fn check(config_path: &Path) -> Result<i32> {
                 "make deps",
             );
         }
+    }
+    #[cfg(feature = "office")]
+    for (name, firm) in &config.firms {
+        let dir = daemon::office::skills::dir(firm);
+        let missing = daemon::office::skills::missing(firm);
+        report(
+            missing.is_empty(),
+            &format!("firm {name}: skills in {}", dir.display()),
+            &format!(
+                "zapper init (writes the default skills), or add <name>/SKILL.md there for: {}",
+                missing.join(", ")
+            ),
+        );
     }
     let probe = |nic: bool| {
         let mut cmd = std::process::Command::new(std::env::current_exe()?);
